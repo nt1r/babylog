@@ -1,0 +1,14 @@
+schema: babylog
+
+rules:
+  specs:
+    - 涉及后端需求或测试场景时，先阅读并遵守 AGENTS.md 中的测试与验证约束。
+  test-plan:
+    - 编写测试计划前，先阅读并遵守 AGENTS.md 中的测试与验证约束。
+  tasks:
+    - 安排测试任务前，先阅读并遵守 AGENTS.md 中的测试与验证约束。
+
+operations:
+  apply:
+    guidance:
+      - 实施或修改测试前，先阅读并遵守 AGENTS.md 中的测试与验证约束。
