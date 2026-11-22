@@ -20,14 +20,16 @@
   "scripts": {
     "dev": "concurrently -k -n api,web \"pnpm dev:server\" \"pnpm dev:web\"",
     "dev:web": "vite",
-    "dev:server": "node --watch server/index.ts",
-    "admin:init": "node scripts/init-admin.ts",
-    "lint": "biome check .",
-    "format": "biome check --write .",
+    "dev:server": "BABYLOG_WORK_DIR=\"$PWD\" sh -c 'cd backend && exec go run github.com/air-verse/air@v1.67.4 -c .air.toml'",
+    "admin:init": "BABYLOG_WORK_DIR=\"$PWD\" sh -c 'cd backend && exec go run ./cmd/babylog admin init \"$@\"' --",
+    "lint": "biome check . && (cd backend && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go vet -tags embedwebui ./...)",
+    "format": "biome check --write . && (cd backend && gofmt -w .)",
     "check": "tsc --noEmit",
-    "test": "node --test server/auth.test.ts scripts/init-admin.test.ts server/index.test.ts",
-    "build": "vite build",
-    "start": "node server/index.ts"
+    "test": "cd backend && CGO_ENABLED=0 go test -v ./...",
+    "build": "pnpm build:web && pnpm build:server",
+    "build:web": "vite build",
+    "build:server": "sh -c 'set -e; test -f dist/index.html || { echo \"请先运行 pnpm build:web 构建前端产物\" >&2; exit 1; }; trap \"find backend/internal/webui/dist -mindepth 1 ! -name .gitkeep -delete\" EXIT; mkdir -p backend/internal/webui/dist bin; find backend/internal/webui/dist -mindepth 1 ! -name .gitkeep -delete; cp -R dist/. backend/internal/webui/dist/; (cd backend && CGO_ENABLED=0 go build -tags embedwebui -trimpath -ldflags=\"-s -w\" -o ../bin/babylog ./cmd/babylog)'",
+    "start": "./bin/babylog serve"
   },
   "dependencies": {
     "@base-ui/react": "1.9.0",

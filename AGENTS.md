@@ -5,9 +5,9 @@
 ## 技术栈与架构边界
 
 - 前端：React 19、Vite 8、TypeScript 7、shadcn（`base-nova` 风格）+ `@base-ui/react`、Tailwind CSS v4、TanStack Router / TanStack Query、Zustand、Recharts、`lucide-react`。
-- 后端：Node.js LTS（见 `.node-version`），直接使用原生 `node:http`、`node:sqlite`、`node:crypto` 运行 `.ts` 源码，保持零运行时框架依赖；未经明确讨论不引入 Express/Fastify/ORM 等重依赖。
-- TypeScript 严格遵守 `tsconfig.json` 中的 `strict`、`erasableSyntaxOnly`、`verbatimModuleSyntax` 与 `allowImportingTsExtensions`（Node 原生类型剥离执行要求）。
-- 包管理器固定为 `pnpm`（见 `package.json` 的 `packageManager`），依赖版本按项目既有风格精确固定。
+- 后端：Go（见 `backend/go.mod`）、Gin、GORM + 纯 Go 零 CGO SQLite 驱动（`github.com/glebarez/sqlite` / `modernc.org/sqlite`）、`goose` 内嵌迁移、`cobra` CLI、`log/slog`、`embed.FS` 静态前端单二进制打包；构建与测试保持 `CGO_ENABLED=0`。
+- TypeScript 严格遵守 `tsconfig.json` 中的 `strict`、`erasableSyntaxOnly`、`verbatimModuleSyntax` 与 `allowImportingTsExtensions`。
+- 前端包管理器固定为 `pnpm`（见 `package.json` 的 `packageManager`），依赖版本按项目既有风格精确固定；后端模块根目录为 `backend/`。
 
 ## shadcn / Base UI 与前端样式约束
 
@@ -17,15 +17,23 @@
 - 所有亮/暗双色语义变量在 `src/styles/tokens.css` 中成对维护，亮色覆写限定在 `:root:not(.dark):not([data-theme="dark"]), .light, [data-theme="light"]`，暗色覆写限定在 `.dark, [data-theme="dark"]`，禁止用无条件的 `:root` 亮色规则覆盖暗色作用域。
 - 中文界面须确保组件无障碍文本（如 `Spinner` 的 `aria-label`、抽屉/弹窗关闭按钮的 `aria-label`、面包屑 `aria-label`）使用中文，避免嵌套 live region 或中英文混播。
 
+## Go 后端工程原则
+
+- 构建与依赖边界：后端开发、静态检查、测试与发布全链路保持 `CGO_ENABLED=0`；使用条件编译标签时，静态检查须覆盖所有标签，开发态与发布态内嵌资源互不污染，开发工具不写入主 `backend/go.mod` 依赖。
+- 配置、路径与持久化：环境变量在入口阶段显式校验，避免非法配置触发 `panic`；跨目录脚本调用的相对路径统一基于调用方工作目录解析；SQLite 连接参数、WAL 配置与 `goose` 迁移保持单一事实来源，不在业务层重复配置。
+- 响应与日志边界：HTTP 错误与异常恢复统一返回结构化中文 JSON，CLI 提示保持中文一致；服务端日志统一经 `log/slog` 输出，禁止将原始请求头、Cookie、凭据或个人敏感数据写入日志或 `stderr`。
+- 模块边界与中文注释：按职责分层组织 `backend/internal/`，不在路由或组件构造函数中修改包级全局状态；所有 Go 包及关键安全或反直觉设计须提供简明中文注释，说明意图而非复述代码。
+
 ## 安全与隐私红线
 
 - 禁止将 `data/`、`*.sqlite`、密码文件、`.env` 或任何真实凭据/个人数据写入仓库、测试或日志。
 - 所有 SQL 必须使用参数化查询，禁止拼接用户输入。
-- 认证、会话、文件访问与写操作接口须维持既有安全基线：密码加盐派生与常量时间比较（`timingSafeEqual`）、`HttpOnly; SameSite=Strict` Cookie、Same-Origin 校验、静态文件 `realpath` 防路径穿越、请求体大小与 `Content-Type` 限制。
+- 认证、会话、文件访问与写操作接口须维持既有安全基线：密码加盐 `scrypt` 派生与常量时间比较（`subtle.ConstantTimeCompare`）、`HttpOnly; SameSite=Strict` Cookie、Same-Origin 校验、静态文件 `os.OpenRoot` / `embed.FS` 防路径穿越、请求体大小与 `Content-Type` 限制。
 
 ## OpenSpec 与变更工作流
 
 - 涉及新增或修改系统对外行为、接口契约、认证逻辑或数据结构时，先按 `openspec/` 流程（`proposal` -> `specs` -> `design` -> `test-plan` -> `tasks`）推进，并保持 `openspec/specs/` 为系统行为的单一事实来源。
+- 涉及后端框架、数据库或整体架构切换等重大工程重构时，动工前先与维护者确认是否需要通过 `openspec/` 留档记录。
 - 纯样式微调、文案修正、工程配置或局部缺陷修复可直接实施，但仍须执行对应验证。
 - 仓库内 `.omp/` 与 `.pi/` 为不同客户端工具的 OpenSpec 命令与技能目录；调整 OpenSpec 工作流时注意保持一致，不随意单边删除。
 
@@ -62,10 +70,10 @@
 
 - 只运行本次变更需要的验证，优先复用现有命令；不默认执行全仓测试或完整构建。
 - 常用项目校验命令：
-  - 代码规范与格式：`pnpm lint`（自动修复：`pnpm format`）
+  - 代码规范与格式：`pnpm lint`（Biome + `go vet`，自动修复：`pnpm format`）
   - 类型检查：`pnpm check`
-  - 后端测试：`pnpm test`
-  - 前端构建：`pnpm build`
+  - 后端测试：`pnpm test`（`CGO_ENABLED=0 go test -v ./...`）
+  - 全量构建：`pnpm build`（前端 `vite build` + 内嵌静态资源的单二进制 `bin/babylog`）
   - OpenSpec 规格校验：`openspec validate --specs --strict`
 - 验证结论描述实际执行的命令和观察到的结果，未验证的部分如实说明。
 - PR 保留简短的测试与验证说明即可。

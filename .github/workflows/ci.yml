@@ -30,7 +30,13 @@ jobs:
           node-version-file: ".node-version"
           cache: "pnpm"
 
-      - name: Install dependencies
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "backend/go.mod"
+          cache-dependency-path: "backend/go.sum"
+
+      - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Lint & format check
@@ -39,8 +45,8 @@ jobs:
       - name: Typecheck
         run: pnpm check
 
-      - name: Backend tests
+      - name: Backend vet & tests
         run: pnpm test
 
-      - name: Build frontend
+      - name: Build frontend & single binary
         run: pnpm build
