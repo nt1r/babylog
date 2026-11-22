@@ -9,7 +9,9 @@ import { fileURLToPath } from 'node:url';
 import { AuthStore, MAX_PASSWORD_LENGTH, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from './auth.ts';
 
 const MAX_BODY_BYTES = 16 * 1024;
-const distDirectory = fileURLToPath(new URL('../dist/', import.meta.url));
+const distDirectory = process.env.BABYLOG_DIST_DIR
+  ? resolve(process.env.BABYLOG_DIST_DIR)
+  : fileURLToPath(new URL('../dist/', import.meta.url));
 const mimeTypes: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -141,6 +143,27 @@ function isInside(directory: string, path: string): boolean {
   return remainder !== '..' && !remainder.startsWith(`..${sep}`) && !isAbsolute(remainder);
 }
 
+async function sendDistFile(request: IncomingMessage, response: ServerResponse, relativePath: string): Promise<void> {
+  const candidate = resolve(distDirectory, `.${relativePath}`);
+  if (!isInside(distDirectory, candidate)) throw new HttpError(404, '文件不存在');
+  const [root, file] = await Promise.all([realpath(distDirectory), realpath(candidate)]);
+  if (!isInside(root, file)) throw new HttpError(404, '文件不存在');
+  const information = await stat(file);
+  if (!information.isFile()) throw new HttpError(404, '文件不存在');
+  response.writeHead(200, {
+    'Content-Type': mimeTypes[extname(file).toLowerCase()] ?? 'application/octet-stream',
+    'Content-Length': information.size,
+  });
+  if (request.method === 'HEAD') response.end();
+  else await pipeline(createReadStream(file), response);
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return Boolean(
+    error && typeof error === 'object' && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'),
+  );
+}
+
 async function serveStatic(request: IncomingMessage, response: ServerResponse, pathname: string): Promise<void> {
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     throw new HttpError(405, '不支持此请求方法');
@@ -152,32 +175,30 @@ async function serveStatic(request: IncomingMessage, response: ServerResponse, p
     throw new HttpError(400, '请求路径无效');
   }
   if (decoded.includes('\0')) throw new HttpError(400, '请求路径无效');
-  const path = resolve(distDirectory, `.${decoded === '/' ? '/index.html' : decoded}`);
-  if (!isInside(distDirectory, path)) throw new HttpError(404, '文件不存在');
+  const targetPath = decoded === '/' ? '/index.html' : decoded;
+  const candidate = resolve(distDirectory, `.${targetPath}`);
+  if (!isInside(distDirectory, candidate)) throw new HttpError(404, '文件不存在');
+
   try {
-    const [root, file] = await Promise.all([realpath(distDirectory), realpath(path)]);
-    if (!isInside(root, file)) throw new HttpError(404, '文件不存在');
-    const information = await stat(file);
-    if (!information.isFile()) throw new HttpError(404, '文件不存在');
-    response.writeHead(200, {
-      'Content-Type': mimeTypes[extname(file).toLowerCase()] ?? 'application/octet-stream',
-      'Content-Length': information.size,
-    });
-    if (request.method === 'HEAD') response.end();
-    else await pipeline(createReadStream(file), response);
+    await sendDistFile(request, response, targetPath);
   } catch (error) {
-    if (
-      error &&
-      typeof error === 'object' &&
-      'code' in error &&
-      (error.code === 'ENOENT' || error.code === 'ENOTDIR')
-    ) {
-      throw new HttpError(
-        404,
-        pathname === '/' ? '页面尚未构建，请先运行 pnpm build；开发时请访问 Vite 开发服务器' : '文件不存在',
-      );
+    if (!isNotFoundError(error)) throw error;
+    // 无扩展名的前端路由回退到 index.html，缺失的静态资源仍返回 404
+    const allowSpaFallback = extname(decoded) === '' && decoded !== '/';
+    if (allowSpaFallback) {
+      try {
+        await sendDistFile(request, response, '/index.html');
+        return;
+      } catch (fallbackError) {
+        if (!isNotFoundError(fallbackError)) throw fallbackError;
+      }
     }
-    throw error;
+    throw new HttpError(
+      404,
+      pathname === '/' || allowSpaFallback
+        ? '页面尚未构建，请先运行 pnpm build；开发时请访问 Vite 开发服务器'
+        : '文件不存在',
+    );
   }
 }
 
@@ -225,7 +246,7 @@ async function handleRequest(store: AuthStore, request: IncomingMessage, respons
 
 function startServer(): void {
   const host = process.env.HOST ?? '127.0.0.1';
-  const port = Number(process.env.PORT ?? '3001');
+  const port = Number(process.env.PORT ?? '21115');
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     console.error('PORT 必须为 0 至 65535 之间的整数');
     process.exitCode = 1;

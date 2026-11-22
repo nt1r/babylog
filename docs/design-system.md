@@ -1,41 +1,39 @@
 # BabyLog 前端设计规范
 
-本文档定义 BabyLog Web 端的配色、排版、圆角间距与组件复用约定。所有设计 Token 以 [src/styles/tokens.css](../src/styles/tokens.css) 为代码级单一事实来源，供后续喂养、健康、提醒与数据看板页面统一复用。
+本文档定义 BabyLog Web 端的配色、排版、圆角间距、双色主题与组件复用约定。所有设计 Token 以 [src/styles/tokens.css](../src/styles/tokens.css) 与 [src/styles/globals.css](../src/styles/globals.css) 为代码级单一事实来源，前端组件架构对齐 `shadcn`（`base-nova`）+ `@base-ui/react`。
 
 ## 设计原则
 
-- **温暖克制**：以暖米白与鼠尾草绿为基底，搭配低饱和度绘本暖色，避免刺眼纯白高对比或生硬后台模板感。
-- **高频单手友好**：面向父母日常及夜间单手操作，优先保证核心入口在移动端首屏清晰可达、触控目标充足。
-- **语义优先**：业务代码禁止硬编码十六进制色值或 Tailwind 原始色阶（如 `bg-blue-500`、`text-gray-500`），统一使用语义 Token 与工具类，确保未来扩展暗色模式时零重构。
+- **温暖克制**：保留暖米白与鼠尾草绿的品牌调性，搭配低饱和度绘本暖色与清晰细边框层级，兼顾现代仪表盘质感与亲子温度。
+- **昼夜护眼与单手友好**：同时提供浅色暖米白与深色深森绿灰护眼主题（支持跟随系统、首屏无闪烁注入）；移动端提供底部导航与底部滑出录入抽屉，保证核心入口单手可达、触控目标充足。
+- **语义优先**：业务代码禁止硬编码十六进制色值或 Tailwind 原始色阶（如 `bg-blue-500`、`text-gray-500`），统一使用语义 Token 与工具类。
 
-## 色彩体系（OKLCH）
+## 色彩体系（OKLCH · 亮/暗双色）
 
 ### 1. 基础表面与品牌色
 
 | 用途 | CSS 变量 | Tailwind 工具类示例 | 说明 |
 | --- | --- | --- | --- |
-| 页面画布 | `--background` | `bg-background` | 暖米白画布，降低长时间阅读疲劳 |
-| 卡片表面 | `--surface` | `bg-surface` | 卡片、抽屉等前景承载面 |
-| 主文字 | `--foreground` | `text-foreground` | 深森绿墨色，替代纯黑 |
-| 次要文字 | `--muted` | `text-muted` | 辅助说明、时间戳、次级标签 |
-| 品牌主色 | `--accent` / `--accent-foreground` | `bg-accent` / `text-accent` | 鼠尾草绿，用于主按钮、焦点环、关键强调 |
-| 弱交互底色 | `--default` / `--default-foreground` | `bg-default` | 次级按钮、轻量胶囊底色 |
-| 边框与分割线 | `--border` / `--separator` | `border-border` | 低存在感灰绿细线 |
-| 输入框 | `--field-background` / `--field-border` / `--field-placeholder` | `bg-field` / `border-field-border` | 柔和浅底，无重阴影 |
+| 页面画布 | `--background` | `bg-background` | 浅色暖米白 / 深色柔和深森绿灰 |
+| 卡片与浮层表面 | `--card` / `--popover` | `bg-card` / `bg-popover` | 卡片、抽屉、下拉菜单前景承载面 |
+| 主文字 | `--foreground` | `text-foreground` | 浅色深森绿墨色 / 深色柔暖象牙白 |
+| 次要文字 | `--muted-foreground` | `text-muted-foreground` | 辅助说明、时间戳、次级标签 |
+| 品牌主色 | `--primary` / `--primary-foreground` | `bg-primary` / `text-primary` | 鼠尾草绿，用于主按钮、焦点环、关键强调 |
+| 次级与弱交互底色 | `--secondary` / `--accent` / `--muted` | `bg-secondary` / `bg-accent` | 次级按钮、导航高亮、轻底块 |
+| 侧边栏表面 | `--sidebar` / `--sidebar-accent` / `--sidebar-border` | `bg-sidebar` | Inset 侧边栏独立画布层 |
+| 边框与输入框 | `--border` / `--input` / `--ring` | `border-border` / `border-input` | 低存在感灰绿细线与鼠尾草绿聚焦环 |
 
 ### 2. 语义状态色
 
-在 HeroUI 默认状态色基础上调整为与鼠尾草绿和谐的低饱和暖调（对应 `*-soft`、`*-soft-foreground`、`*-hover` 由 HeroUI 自动派生）：
-
 | 状态 | CSS 变量 | Tailwind 工具类示例 | 适用场景 |
 | --- | --- | --- | --- |
-| 成功 / 正常 | `--success` | `bg-success-soft text-success-soft-foreground` | 记录已保存、提醒已完成、正常指标 |
-| 提醒 / 注意 | `--warning` | `bg-warning-soft text-warning-soft-foreground` | 即将到期提醒、低烧或轻度波动提示 |
-| 错误 / 异常 | `--danger` | `bg-danger-soft text-danger-soft-foreground` | 表单校验、网络错误、高热预警、删除确认 |
+| 成功 / 正常 | `--success` / `--success-soft` | `bg-success-soft text-success-soft-foreground` | 记录已保存、提醒已完成、正常指标 |
+| 提醒 / 注意 | `--warning` / `--warning-soft` | `bg-warning-soft text-warning-soft-foreground` | 即将到期提醒、低烧或轻度波动提示 |
+| 错误 / 异常 | `--destructive` / `--destructive-soft` | `bg-destructive-soft text-destructive-soft-foreground` | 表单校验、网络错误、高热预警、删除确认 |
 
 ### 3. 育儿业务分类色
 
-直接从品牌插画调色盘提炼，用于记录类型标签、时间线节点、快捷卡片与统计图表系列色：
+直接从品牌插画调色盘提炼，并针对亮/暗主题分别校准对比度，用于记录类型徽章、快捷入口与 Recharts 图表系列色：
 
 | 业务分类 | CSS 变量 | Tailwind 工具类示例 | 覆盖场景 |
 | --- | --- | --- | --- |
@@ -44,43 +42,38 @@
 | 健康（暖蜜桃） | `--health` / `--health-soft` / `--health-soft-foreground` | `bg-health-soft text-health-soft-foreground` | 体温、用药、疫苗、体检、长牙 |
 | 护理（柔木棕） | `--care` / `--care-soft` / `--care-soft-foreground` | `bg-care-soft text-care-soft-foreground` | 大小便、洗澡、身高体重生长记录 |
 
-> 折线图/柱状图多系列对比优先按 `feeding -> sleep -> health -> care -> accent` 顺序取色，避免在同一视图引入未登记的临时色值。
+> 图表多系列色板通过 `--chart-1` 至 `--chart-5` 按 `feeding -> sleep -> health -> care -> primary` 顺序映射，避免在同一视图引入未登记的临时色值。
 
 ### 4. 插画专用色
 
-`--art-*`（`--art-meadow`、`--art-ink`、`--art-honey`、`--art-peach`、`--art-mint` 等）仅用于品牌插画、空状态与引导 SVG，不直接用于常规 UI 控件背景或文字。
+`--art-*`（`--art-meadow`、`--art-ink`、`--art-honey`、`--art-peach`、`--art-mint` 等）仅用于品牌插画、空状态与引导 SVG（[src/components/brand/little-moments.tsx](../src/components/brand/little-moments.tsx)），并同步维护亮/暗两套调色盘。
 
 ## 排版与数据规范
 
+- **字体栈**：英文与数字优先使用 `@fontsource-variable/geist`（`Geist Variable`），中文自然回落至 `PingFang SC`、`Hiragino Sans GB`、`Microsoft YaHei`。
 - **字号阶梯**：
-  - 页面主标题：`24px–26px`（移动端 `22px–24px`），字重 `650`
+  - 页面主标题：`24px–28px`，字重 `600`
   - 区块/卡片标题：`16px–18px`，字重 `600`
   - 正文与列表项：`14px–15px`
   - 辅助说明/标签：`12px–13px`（**全站最小字号不低于 `12px`**）
-  - 移动端输入框：固定 `16px`，避免 iOS Safari 聚焦缩放
-- **数值展示**：奶量（`ml`）、时长（`min`）、体温（`℃`）、身高体重与时间轴刻度统一使用 `tabular-nums`，防止数值变化时横向跳动。
+  - 移动端输入框：`16px`（`text-base md:text-sm`），避免 iOS Safari 聚焦缩放
+- **数值展示**：奶量（`ml`）、时长（`h`/`min`）、体温（`℃`）、身高体重与时间刻度统一使用 `tabular-nums`。
 
-## 圆角、阴影与触控尺寸
+## 布局壳层与交互范式
 
-| 元素类型 | 圆角 | 表面与阴影 |
-| --- | --- | --- |
-| 顶级页面主卡片 | `var(--card-radius)`（桌面 `28px` / 移动端 `24px`） | `bg-surface` + `shadow-card` + 淡边框 |
-| 内容卡片 / 列表项 | `16px`（`rounded-2xl`） | `bg-surface` + `border border-border`（无重阴影） |
-| 输入框 / 主按钮 | `var(--field-radius)`（`14px`） | 遵循 HeroUI 语义变体 |
-| 提示条 / 紧凑模块 | `12px`（`rounded-xl`） | `*-soft` 浅底 + 20% 透明边框 |
-| 分类标签 / 徽章 | `rounded-full` | `bg-<category>-soft text-<category>-soft-foreground` |
-
-- **移动端触控底线**：常用交互控件（切换按钮、快捷记一笔、列表操作项）点击区域不低于 `44px × 44px`。
+- **桌面端主框架**：采用 `Inset Sidebar` + 吸顶 `AdminHeader`（侧栏折叠、面包屑、快捷「记一笔」、主题切换、用户菜单），支持 `Ctrl/Cmd + B` 折叠侧栏至图标态。
+- **移动端主框架**：顶部保留抽屉导航与主题/账号入口，底部提供 5 槽位单手导航栏（核心 4 个入口 + 中央突出「快速记一笔」按钮，点击区不低于 `44px × 44px`）。
+- **页面与抽屉模板**：
+  - 看板页：使用 `@container/main` 响应式栅格（问候区 -> 4 列 KPI 卡 -> `2:1` Recharts 图表 -> 快捷录入与绘本卡片）；
+  - 记录列表页：统一复用 [ListPageCard](../src/components/list-page-card.tsx) + `Tabs` 筛选 + [Empty](../src/components/ui/empty.tsx)；
+  - 录入/详情抽屉：统一复用 [EntityDrawer](../src/components/entity-drawer.tsx)（桌面端右侧滑出、移动端底部滑出）；
+  - 危险操作确认：统一复用 [DeleteConfirmDialog](../src/components/delete-confirm-dialog.tsx)。
 
 ## 样式组织与组件复用约定
 
-1. **交互组件优先 HeroUI v3**：按钮、输入框、表单、卡片、弹窗、抽屉、标签页、下拉选择、Toast 等一律使用 `@heroui/react`，并同步在 [src/styles.css](../src/styles.css) 顶部按需补充对应的 `@import "@heroui/styles/components/*.css" layer(components)`。
-2. **页面布局优先 Tailwind v4 Utilities**：新建业务页面优先使用语义化工具类（如 `flex`、`gap-4`、`p-4`、`bg-surface`、`text-muted`、`rounded-2xl`），不在 `src/styles.css` 为每个页面堆积一次性 class。
-3. **样式文件职责划分**：
-   - [src/styles/tokens.css](../src/styles/tokens.css)：全局设计 Token 与 `@theme inline` 映射；
-   - [src/styles.css](../src/styles.css)：HeroUI 按需引入、全局基础重置、跨页共享原语及插画/动效样式。
-4. **图标与品牌视觉**：
-   - UI 图标统一使用 `lucide-react`，线宽保持 `1.7–1.8`，尺寸通过 Tailwind `size-*` 工具类控制；
-   - 品牌标识统一使用摇摇小木马（`BrandMark` / `public/favicon.svg`），空状态或引导插画延续鼠尾草描边（`--art-ink`）+ 低饱和暖色绘本风格；
-   - 所有装饰动效必须包裹在 `@media (prefers-reduced-motion: no-preference)` 中。
-5. **暗色模式预留**：亮色覆写始终限定在 `:root:not(.dark):not([data-theme="dark"]), .light, [data-theme="light"]`；后续新增暗色主题只需在 `tokens.css` 中补充 `.dark, [data-theme="dark"]` 变量块，无需修改组件代码。
+1. **基础 UI 原语**：统一放在 `src/components/ui/`，基于 `@base-ui/react` 与 `class-variance-authority` 编写（配置见 [components.json](../components.json)）。
+2. **主题启动无闪烁**：主题模式（`light` / `dark` / `system`）由 [src/scripts/theme-boot-script.ts](../src/scripts/theme-boot-script.ts) 在 HTML 渲染前同步写入 `<html>` 与 `<meta name="theme-color">`。
+3. **品牌与动效**：
+   - UI 图标统一使用 `lucide-react`，线宽保持 `1.75–1.8`；
+   - 品牌标识统一使用摇摇小木马（[BrandMark](../src/components/brand/brand-mark.tsx) / [public/favicon.svg](../public/favicon.svg)）；
+   - 所有装饰动效包裹在 `@media (prefers-reduced-motion: no-preference)` 中。

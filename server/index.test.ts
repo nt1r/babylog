@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
@@ -12,12 +12,18 @@ const ADMIN_USER = 'admin';
 const ADMIN_PASS = 'babylog-integration-secret';
 
 describe('HTTP auth server integration', () => {
+  let tempRoot = '';
   let dataDir = '';
+  let distDir = '';
   let baseUrl = '';
   let serverProcess: ReturnType<typeof spawn> | undefined;
 
   before(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), 'babylog-http-test-'));
+    tempRoot = mkdtempSync(join(tmpdir(), 'babylog-http-test-'));
+    dataDir = join(tempRoot, 'data');
+    distDir = join(tempRoot, 'dist');
+    mkdirSync(distDir, { recursive: true });
+    writeFileSync(join(distDir, 'index.html'), '<!doctype html><title>BabyLog Test</title>', 'utf8');
     const previous = process.env.BABYLOG_DATA_DIR;
     process.env.BABYLOG_DATA_DIR = dataDir;
     const store = new AuthStore();
@@ -33,7 +39,7 @@ describe('HTTP auth server integration', () => {
     }
 
     const child = spawn(process.execPath, [serverEntry], {
-      env: { ...process.env, BABYLOG_DATA_DIR: dataDir, HOST: '127.0.0.1', PORT: '0' },
+      env: { ...process.env, BABYLOG_DATA_DIR: dataDir, BABYLOG_DIST_DIR: distDir, HOST: '127.0.0.1', PORT: '0' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     serverProcess = child;
@@ -67,7 +73,7 @@ describe('HTTP auth server integration', () => {
         serverProcess?.kill('SIGTERM');
       });
     }
-    if (dataDir) rmSync(dataDir, { recursive: true, force: true });
+    if (tempRoot) rmSync(tempRoot, { recursive: true, force: true });
   });
 
   it('supports login, session restoration, cookie clearing, and logout lifecycle', async () => {
@@ -139,5 +145,18 @@ describe('HTTP auth server integration', () => {
       body: JSON.stringify({ username: ADMIN_USER, password: 'x'.repeat(20 * 1024) }),
     });
     assert.equal(oversized.status, 413);
+  });
+
+  it('serves SPA fallback for client routes while returning 404 for missing assets and traversal paths', async () => {
+    const spaRoute = await fetch(`${baseUrl}/dashboard`);
+    assert.equal(spaRoute.status, 200);
+    assert.match(spaRoute.headers.get('content-type') ?? '', /^text\/html/);
+    assert.match(await spaRoute.text(), /BabyLog Test/);
+
+    const missingAsset = await fetch(`${baseUrl}/assets/missing.js`);
+    assert.equal(missingAsset.status, 404);
+
+    const traversal = await fetch(`${baseUrl}/%2e%2e/package.json`);
+    assert.equal(traversal.status, 404);
   });
 });

@@ -32,6 +32,6 @@ pnpm dev
 
 欢迎使用 AI 编码助手参与开发，但提交 PR 前请确保：
 
-- 遵守 [AGENTS.md](./AGENTS.md) 中的架构、HeroUI v3、安全与测试约束；
+- 遵守 [AGENTS.md](./AGENTS.md) 中的架构、shadcn / Base UI、安全与测试约束；
 - 改动聚焦于当前目标，不夹带无关重构或无意义格式变更；
 - 本地实际执行与本次变更相关的检查命令并确认通过。
