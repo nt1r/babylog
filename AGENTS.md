@@ -4,21 +4,18 @@
 
 ## 技术栈与架构边界
 
-- 前端：React 19、Vite 8、TypeScript 7、HeroUI v3（`@heroui/react` + `@heroui/styles`）、Tailwind CSS v4。
+- 前端：React 19、Vite 8、TypeScript 7、shadcn（`base-nova` 风格）+ `@base-ui/react`、Tailwind CSS v4、TanStack Router / TanStack Query、Zustand、Recharts、`lucide-react`。
 - 后端：Node.js LTS（见 `.node-version`），直接使用原生 `node:http`、`node:sqlite`、`node:crypto` 运行 `.ts` 源码，保持零运行时框架依赖；未经明确讨论不引入 Express/Fastify/ORM 等重依赖。
 - TypeScript 严格遵守 `tsconfig.json` 中的 `strict`、`erasableSyntaxOnly`、`verbatimModuleSyntax` 与 `allowImportingTsExtensions`（Node 原生类型剥离执行要求）。
 - 包管理器固定为 `pnpm`（见 `package.json` 的 `packageManager`），依赖版本按项目既有风格精确固定。
 
-## HeroUI v3 与前端样式约束
+## shadcn / Base UI 与前端样式约束
 
-- 配色、排版、圆角与业务分类色以 `docs/design-system.md` 和 `src/styles/tokens.css` 为准；业务组件须复用语义 Token（含 `feeding`/`sleep`/`health`/`care` 分类色）与 Tailwind v4 工具类，禁止硬编码十六进制色值或 Tailwind 原始色阶（如 `bg-blue-500`、`text-gray-500`）。
-- 仅使用 HeroUI v3 与 Tailwind CSS v4 API；禁止套用 v2/NextUI 的旧模式（如 `NextUIProvider`、`tailwind.config.js`）。
-- 在 `src/styles.css` 中按需引入当前实际使用的 `@heroui/styles/components/*.css`，新增组件时同步补充对应样式导入；新页面布局优先使用 Tailwind 语义工具类，避免在 `src/styles.css` 堆积一次性页面样式类。
-- 优先使用 HeroUI 语义化设计 Token 与 Tailwind `@layer utilities`；覆写组件样式前须先核对 `node_modules/@heroui/styles` 中的真实选择器、变量与层顺序，避免：
-  - 使用低优先级类硬盖 HeroUI 内部状态样式或破坏 `--input-group-bg` 等自动填充变量；
-  - 编写匹配不到真实 DOM 结构的死规则（如依赖子元素隐藏 `::after` 伪元素）；
-  - 用无条件的 `:root` 亮色规则覆盖 `.dark` / `[data-theme="dark"]` 作用域。
-- 中文界面须核对 HeroUI 组件自带的默认英文无障碍文本（如 `Spinner` 默认的 `role="status"` 与 `aria-label="Loading"`），避免嵌套 live region 或中英文混播。
+- 配色、排版、圆角与业务分类色以 `docs/design-system.md`、`src/styles/tokens.css` 与 `src/styles/globals.css` 为准；业务组件须复用语义 Token（含 `feeding`/`sleep`/`health`/`care` 分类色）与 Tailwind v4 工具类，禁止硬编码十六进制色值或 Tailwind 原始色阶（如 `bg-blue-500`、`text-gray-500`）。
+- 基础交互原语统一放在 `src/components/ui/`，基于 `@base-ui/react` 与 `class-variance-authority` 构建（配置见 `components.json`）；页面布局优先使用 Tailwind v4 语义工具类与 `@container` 响应式栅格，避免在全局 CSS 中堆积一次性页面样式类。
+- 状态管理边界：TanStack Query 负责服务端业务数据查询与缓存，Zustand 负责认证会话与本地 UI 偏好；`src/routeTree.gen.ts` 由 `@tanstack/router-plugin` 自动生成并纳入版本控制以保证直接运行 `pnpm check`，禁止手动编辑。
+- 所有亮/暗双色语义变量在 `src/styles/tokens.css` 中成对维护，亮色覆写限定在 `:root:not(.dark):not([data-theme="dark"]), .light, [data-theme="light"]`，暗色覆写限定在 `.dark, [data-theme="dark"]`，禁止用无条件的 `:root` 亮色规则覆盖暗色作用域。
+- 中文界面须确保组件无障碍文本（如 `Spinner` 的 `aria-label`、抽屉/弹窗关闭按钮的 `aria-label`、面包屑 `aria-label`）使用中文，避免嵌套 live region 或中英文混播。
 
 ## 安全与隐私红线
 

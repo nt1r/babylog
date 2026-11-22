@@ -6,7 +6,18 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!dist", "!data", "!public", "!.omp", "!.pi", "!openspec", "!pnpm-lock.yaml", "!**/*.md"]
+    "includes": [
+      "**",
+      "!dist",
+      "!data",
+      "!public",
+      "!.omp",
+      "!.pi",
+      "!openspec",
+      "!pnpm-lock.yaml",
+      "!src/routeTree.gen.ts",
+      "!**/*.md"
+    ]
   },
   "formatter": {
     "enabled": true,
