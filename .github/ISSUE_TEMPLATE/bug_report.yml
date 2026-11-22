@@ -1,0 +1,33 @@
+name: Bug 报告
+description: 反馈程序缺陷、界面异常或安全/兼容性问题
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 简明扼要地描述遇到的问题。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 启动服务 / 打开页面 ...
+        2. 执行操作 ...
+        3. 观察到异常 ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 运行环境
+      description: 操作系统、Node.js 版本、浏览器及设备信息
+      placeholder: "macOS / Node 26.13.1 / Chrome 130"
