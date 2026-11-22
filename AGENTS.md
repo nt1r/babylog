@@ -1,6 +1,36 @@
 # AGENTS.md
 
-以下原则适用于本项目的测试规划、编写和执行。
+以下原则适用于本项目的人工与 Agent 协作开发、测试规划、编写和执行。
+
+## 技术栈与架构边界
+
+- 前端：React 19、Vite 8、TypeScript 7、HeroUI v3（`@heroui/react` + `@heroui/styles`）、Tailwind CSS v4。
+- 后端：Node.js LTS（见 `.node-version`），直接使用原生 `node:http`、`node:sqlite`、`node:crypto` 运行 `.ts` 源码，保持零运行时框架依赖；未经明确讨论不引入 Express/Fastify/ORM 等重依赖。
+- TypeScript 严格遵守 `tsconfig.json` 中的 `strict`、`erasableSyntaxOnly`、`verbatimModuleSyntax` 与 `allowImportingTsExtensions`（Node 原生类型剥离执行要求）。
+- 包管理器固定为 `pnpm`（见 `package.json` 的 `packageManager`），依赖版本按项目既有风格精确固定。
+
+## HeroUI v3 与前端样式约束
+
+- 配色、排版、圆角与业务分类色以 `docs/design-system.md` 和 `src/styles/tokens.css` 为准；业务组件须复用语义 Token（含 `feeding`/`sleep`/`health`/`care` 分类色）与 Tailwind v4 工具类，禁止硬编码十六进制色值或 Tailwind 原始色阶（如 `bg-blue-500`、`text-gray-500`）。
+- 仅使用 HeroUI v3 与 Tailwind CSS v4 API；禁止套用 v2/NextUI 的旧模式（如 `NextUIProvider`、`tailwind.config.js`）。
+- 在 `src/styles.css` 中按需引入当前实际使用的 `@heroui/styles/components/*.css`，新增组件时同步补充对应样式导入；新页面布局优先使用 Tailwind 语义工具类，避免在 `src/styles.css` 堆积一次性页面样式类。
+- 优先使用 HeroUI 语义化设计 Token 与 Tailwind `@layer utilities`；覆写组件样式前须先核对 `node_modules/@heroui/styles` 中的真实选择器、变量与层顺序，避免：
+  - 使用低优先级类硬盖 HeroUI 内部状态样式或破坏 `--input-group-bg` 等自动填充变量；
+  - 编写匹配不到真实 DOM 结构的死规则（如依赖子元素隐藏 `::after` 伪元素）；
+  - 用无条件的 `:root` 亮色规则覆盖 `.dark` / `[data-theme="dark"]` 作用域。
+- 中文界面须核对 HeroUI 组件自带的默认英文无障碍文本（如 `Spinner` 默认的 `role="status"` 与 `aria-label="Loading"`），避免嵌套 live region 或中英文混播。
+
+## 安全与隐私红线
+
+- 禁止将 `data/`、`*.sqlite`、密码文件、`.env` 或任何真实凭据/个人数据写入仓库、测试或日志。
+- 所有 SQL 必须使用参数化查询，禁止拼接用户输入。
+- 认证、会话、文件访问与写操作接口须维持既有安全基线：密码加盐派生与常量时间比较（`timingSafeEqual`）、`HttpOnly; SameSite=Strict` Cookie、Same-Origin 校验、静态文件 `realpath` 防路径穿越、请求体大小与 `Content-Type` 限制。
+
+## OpenSpec 与变更工作流
+
+- 涉及新增或修改系统对外行为、接口契约、认证逻辑或数据结构时，先按 `openspec/` 流程（`proposal` -> `specs` -> `design` -> `test-plan` -> `tasks`）推进，并保持 `openspec/specs/` 为系统行为的单一事实来源。
+- 纯样式微调、文案修正、工程配置或局部缺陷修复可直接实施，但仍须执行对应验证。
+- 仓库内 `.omp/` 与 `.pi/` 为不同客户端工具的 OpenSpec 命令与技能目录；调整 OpenSpec 工作流时注意保持一致，不随意单边删除。
 
 ## 测试范围
 
@@ -34,5 +64,11 @@
 ## 执行与记录
 
 - 只运行本次变更需要的验证，优先复用现有命令；不默认执行全仓测试或完整构建。
+- 常用项目校验命令：
+  - 代码规范与格式：`pnpm lint`（自动修复：`pnpm format`）
+  - 类型检查：`pnpm check`
+  - 后端测试：`pnpm test`
+  - 前端构建：`pnpm build`
+  - OpenSpec 规格校验：`openspec validate --specs --strict`
 - 验证结论描述实际执行的命令和观察到的结果，未验证的部分如实说明。
 - PR 保留简短的测试与验证说明即可。

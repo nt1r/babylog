@@ -1,0 +1,109 @@
+@theme inline {
+  /* BabyLog domain category colors */
+  --color-feeding: var(--feeding);
+  --color-feeding-soft: var(--feeding-soft);
+  --color-feeding-soft-foreground: var(--feeding-soft-foreground);
+
+  --color-sleep: var(--sleep);
+  --color-sleep-soft: var(--sleep-soft);
+  --color-sleep-soft-foreground: var(--sleep-soft-foreground);
+
+  --color-health: var(--health);
+  --color-health-soft: var(--health-soft);
+  --color-health-soft-foreground: var(--health-soft-foreground);
+
+  --color-care: var(--care);
+  --color-care-soft: var(--care-soft);
+  --color-care-soft-foreground: var(--care-soft-foreground);
+
+  /* BabyLog elevated card tokens */
+  --shadow-card: var(--card-shadow);
+  --radius-card: var(--card-radius);
+}
+
+@layer base {
+  :root {
+    font-family:
+      "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+      "Microsoft YaHei", sans-serif;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+
+    --card-radius: 1.75rem;
+  }
+
+  :root:not(.dark):not([data-theme="dark"]),
+  .light,
+  [data-theme="light"] {
+    color-scheme: light;
+
+    /* Base surfaces & ink */
+    --background: oklch(0.981 0.008 100);
+    --foreground: oklch(0.29 0.029 166);
+    --surface: oklch(1 0 0);
+    --surface-foreground: var(--foreground);
+    --muted: oklch(0.49 0.018 160);
+    --default: oklch(0.95 0.012 160);
+    --default-foreground: var(--foreground);
+
+    /* Brand & interaction */
+    --accent: oklch(0.505 0.078 175);
+    --accent-foreground: oklch(0.995 0.003 100);
+    --focus: var(--accent);
+    --link: var(--accent);
+    --border: oklch(0.9 0.012 160);
+    --separator: var(--border);
+
+    /* Harmonized semantic status colors */
+    --success: oklch(0.56 0.11 155);
+    --success-foreground: var(--accent-foreground);
+    --warning: oklch(0.72 0.125 78);
+    --warning-foreground: var(--foreground);
+    --danger: oklch(0.57 0.165 25);
+    --danger-foreground: var(--accent-foreground);
+
+    /* Form fields */
+    --field-background: oklch(0.978 0.004 160);
+    --field-foreground: var(--foreground);
+    --field-placeholder: oklch(0.53 0.014 160);
+    --field-border: var(--border);
+    --field-radius: 0.875rem;
+    --field-shadow: none;
+
+    /* Elevated card shadow */
+    --card-shadow:
+      0 16px 56px -20px color-mix(in oklch, var(--foreground) 10%, transparent),
+      0 2px 8px -4px color-mix(in oklch, var(--foreground) 6%, transparent);
+
+    /* Domain category palette (feeding / sleep / health / care) */
+    --feeding: oklch(0.64 0.125 78);
+    --feeding-soft: color-mix(in oklab, var(--feeding) 15%, transparent);
+    --feeding-soft-foreground: oklch(0.45 0.095 72);
+
+    --sleep: oklch(0.54 0.085 170);
+    --sleep-soft: color-mix(in oklab, var(--sleep) 14%, transparent);
+    --sleep-soft-foreground: oklch(0.39 0.068 170);
+
+    --health: oklch(0.61 0.12 36);
+    --health-soft: color-mix(in oklab, var(--health) 15%, transparent);
+    --health-soft-foreground: oklch(0.44 0.095 32);
+
+    --care: oklch(0.56 0.072 68);
+    --care-soft: color-mix(in oklab, var(--care) 15%, transparent);
+    --care-soft-foreground: oklch(0.42 0.058 64);
+
+    /* Storybook illustration palette */
+    --art-meadow: oklch(0.94 0.029 162);
+    --art-ground: oklch(0.9 0.026 162);
+    --art-ink: oklch(0.43 0.038 160);
+    --art-honey: oklch(0.89 0.075 87);
+    --art-wood: oklch(0.79 0.055 76);
+    --art-mane: oklch(0.82 0.068 72);
+    --art-hoof: oklch(0.69 0.056 64);
+    --art-cream: oklch(0.976 0.021 88);
+    --art-peach: oklch(0.91 0.041 59);
+    --art-blush: oklch(0.79 0.065 41);
+    --art-mint: oklch(0.83 0.056 160);
+  }
+}
