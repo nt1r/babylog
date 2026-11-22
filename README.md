@@ -6,7 +6,9 @@
 
 ## 开发与使用
 
-技术栈：React 19、Vite 8、TypeScript 7、shadcn（`base-nova`）+ `@base-ui/react`、Tailwind CSS v4、TanStack Router / Query、Zustand、Recharts；运行时为 Node 26.13.1 LTS（见 `.node-version`）与 pnpm 12.21.0。已安装 NVS 时，`nvs use` 会按 `.node-version` 切换版本，缺失版本按 NVS 文档自动安装。
+技术栈：
+- 前端：React 19、Vite 8、TypeScript 7、shadcn（`base-nova`）+ `@base-ui/react`、Tailwind CSS v4、TanStack Router / Query、Zustand、Recharts；Node 26.13.1 LTS（见 `.node-version`）与 pnpm 12.21.0。已安装 NVS 时，`nvs use` 会按 `.node-version` 切换版本。
+- 后端：Go（见 `backend/go.mod`）、Gin、GORM + 零 CGO SQLite（`glebarez/sqlite` / `modernc.org/sqlite`）、`goose` 内嵌迁移、`cobra` CLI、`embed.FS` 单二进制打包。
 
 ```bash
 pnpm install
@@ -18,11 +20,13 @@ pnpm dev
 
 数据写入 `data/babylog.sqlite`（已被 `.gitignore` 忽略）；设置 `BABYLOG_DATA_DIR` 可改用其他目录，初始化与运行需使用同一取值。
 
-开发页面为 http://127.0.0.1:11115，API 默认监听 21115；可用 `PORT` 覆盖端口，Vite 代理同步使用该值。
+开发页面为 http://127.0.0.1:11115，Go 后端（经 `air` 热重载）默认监听 21115；可用 `PORT` 覆盖端口，Vite 代理同步使用该值。
 
+- `pnpm lint`：执行 Biome 检查与 `go vet`。
 - `pnpm check`：执行 TypeScript 类型检查。
-- `pnpm build`：构建前端产物。
-- `pnpm start`：用构建产物提供 UI 与 API（21115 端口）。
+- `pnpm test`：执行 Go 后端单元与集成测试（`CGO_ENABLED=0`）。
+- `pnpm build`：构建前端产物并内嵌打包为单二进制 `bin/babylog`。
+- `pnpm start`：运行 `bin/babylog serve` 提供 UI 与 API（21115 端口）。
 
 ## 功能计划
 

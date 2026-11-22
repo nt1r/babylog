@@ -1,6 +1,10 @@
 node_modules/
-dist/
-data/
+/dist/
+/bin/
+/data/
+backend/tmp/
+backend/internal/webui/dist/*
+!backend/internal/webui/dist/.gitkeep
 .secrets/
 .env
 .env.*

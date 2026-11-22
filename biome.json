@@ -9,6 +9,8 @@
     "includes": [
       "**",
       "!dist",
+      "!bin",
+      "!backend",
       "!data",
       "!public",
       "!.omp",

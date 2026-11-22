@@ -4,7 +4,7 @@
 
 ## 开发环境准备
 
-运行时版本以仓库根目录的 `.node-version` 与 `package.json` 中的 `packageManager` 为准。
+运行时版本以仓库根目录的 `.node-version`、`package.json` 中的 `packageManager` 与 `backend/go.mod` 中的 Go 版本为准。
 
 ```bash
 pnpm install
@@ -14,10 +14,10 @@ pnpm dev
 
 常用校验命令：
 
-- `pnpm lint`：运行 Biome 代码规范与格式检查（`pnpm format` 可自动格式化）
+- `pnpm lint`：运行 Biome 代码规范检查与 `go vet`（`pnpm format` 可自动格式化前后端代码）
 - `pnpm check`：运行 TypeScript 类型检查（`tsc --noEmit`）
-- `pnpm test`：运行后端单元与集成测试（`node --test`）
-- `pnpm build`：构建前端生产产物
+- `pnpm test`：运行 Go 后端单元与集成测试（`CGO_ENABLED=0 go test`）
+- `pnpm build`：构建前端生产产物并打包单二进制 `bin/babylog`
 
 ## 分支与 PR 流程
 
