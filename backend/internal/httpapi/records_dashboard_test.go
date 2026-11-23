@@ -46,7 +46,7 @@ func setupFullTestServer(t *testing.T, clock func() time.Time) *fullTestEnv {
 
 	babyStore := baby.NewStore(db.Gorm())
 	recordStore := records.NewStore(db.Gorm())
-	dashSvc := dashboard.NewService(db.Gorm())
+	dashSvc := dashboard.NewService(recordStore)
 	if clock != nil {
 		babyStore.WithClock(clock)
 		recordStore.WithClock(clock)
@@ -324,7 +324,7 @@ func TestRecordsCRUDFilteringPaginationAndSmartDefaults(t *testing.T) {
 	if feedList.Total != 3 || !feedList.HasMore || len(feedList.Items) != 1 {
 		t.Fatalf("unexpected feeding pagination: total=%d hasMore=%v len=%d", feedList.Total, feedList.HasMore, len(feedList.Items))
 	}
-	if sum := feedList.DailySummaries["2026-11-23"]; sum.TotalML != 270 || sum.FormulaCount != 2 {
+	if sum := feedList.DailySummaries["2026-11-23"]; sum.TotalML != 270 || sum.TotalCount != 2 {
 		t.Fatalf("expected non-truncated 2026-11-23 summary 270ml/2, got %+v", sum)
 	}
 

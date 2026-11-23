@@ -23,7 +23,7 @@ func newBabyHandler(store *baby.Store, logger *slog.Logger) *babyHandler {
 func (h *babyHandler) getProfile(c *gin.Context) {
 	profile, err := h.store.GetFirst(c.Request.Context())
 	if err != nil {
-		h.logError("getBabyProfile failed", err)
+		h.logger.Error("getBabyProfile failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 		return
 	}
@@ -54,7 +54,7 @@ func (h *babyHandler) createProfile(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 			return
 		}
-		h.logError("createBabyProfile failed", err)
+		h.logger.Error("createBabyProfile failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 		return
 	}
@@ -85,15 +85,9 @@ func (h *babyHandler) updateProfile(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 			return
 		}
-		h.logError("updateBabyProfile failed", err)
+		h.logger.Error("updateBabyProfile failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"baby": profile})
-}
-
-func (h *babyHandler) logError(msg string, err error) {
-	if h.logger != nil {
-		h.logger.Error(msg, "error", err)
-	}
 }

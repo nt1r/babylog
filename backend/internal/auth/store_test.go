@@ -153,6 +153,8 @@ func TestStoreLifecycle(t *testing.T) {
 
 	t.Run("creates, restores, rotates, expires, and revokes SQLite sessions", func(t *testing.T) {
 		store, gormDB, _ := openTestStore(t)
+		currentNow := time.Date(2026, 11, 23, 10, 0, 0, 0, time.UTC)
+		store.WithClock(func() time.Time { return currentNow })
 		if err := store.InitializeAdministrator(ctx, "dad", "super-secret-password"); err != nil {
 			t.Fatalf("initialize admin: %v", err)
 		}
@@ -184,11 +186,8 @@ func TestStoreLifecycle(t *testing.T) {
 			t.Errorf("expected new token valid, got (%+v, %v)", newUser, err)
 		}
 
-		// 过期会话查询时拒绝并清理记录。
-		expiredAt := time.Now().Add(-time.Second).UnixMilli()
-		if err := gormDB.Model(&auth.Session{}).Where("token = ?", secondToken).Update("expires_at", expiredAt).Error; err != nil {
-			t.Fatalf("expire session: %v", err)
-		}
+		// 通过注入时钟推进至过期后，查询时拒绝并清理记录。
+		currentNow = currentNow.Add(time.Duration(auth.SessionMaxAgeSeconds+1) * time.Second)
 		if expiredUser, err := store.GetSession(ctx, secondToken); err != nil || expiredUser != nil {
 			t.Errorf("expected expired token rejected, got (%+v, %v)", expiredUser, err)
 		}

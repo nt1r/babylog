@@ -16,19 +16,19 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/nt1r/babylog/backend/internal/config"
 	"github.com/nt1r/babylog/backend/internal/webui"
 )
 
 const notBuiltMessage = "页面尚未构建，请先运行 pnpm build；开发时请访问 Vite 开发服务器"
 
 type staticHandler struct {
-	distDir    string
-	embeddedFS fs.FS
-	logger     *slog.Logger
+	distDir         string
+	fallbackDistDir string
+	embeddedFS      fs.FS
+	logger          *slog.Logger
 }
 
-func newStaticHandler(distDir string, logger *slog.Logger) *staticHandler {
+func newStaticHandler(distDir, fallbackDistDir string, logger *slog.Logger) *staticHandler {
 	var embedded fs.FS
 	if distDir == "" {
 		if sub, err := webui.DistFS(); err == nil {
@@ -39,9 +39,10 @@ func newStaticHandler(distDir string, logger *slog.Logger) *staticHandler {
 		}
 	}
 	return &staticHandler{
-		distDir:    distDir,
-		embeddedFS: embedded,
-		logger:     logger,
+		distDir:         distDir,
+		fallbackDistDir: fallbackDistDir,
+		embeddedFS:      embedded,
+		logger:          logger,
 	}
 }
 
@@ -85,7 +86,7 @@ func (h *staticHandler) serve(c *gin.Context) {
 		return
 	}
 	if serveErr != nil {
-		h.logStaticError("serve static file failed", targetRel, serveErr)
+		h.logger.Error("serve static file failed", "path", targetRel, "error", serveErr)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 		return
 	}
@@ -98,7 +99,7 @@ func (h *staticHandler) serve(c *gin.Context) {
 			return
 		}
 		if fallbackErr != nil {
-			h.logStaticError("serve SPA fallback failed", "index.html", fallbackErr)
+			h.logger.Error("serve SPA fallback failed", "path", "index.html", "error", fallbackErr)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 			return
 		}
@@ -109,12 +110,6 @@ func (h *staticHandler) serve(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusNotFound, gin.H{"error": "文件不存在"})
-}
-
-func (h *staticHandler) logStaticError(msg, relPath string, err error) {
-	if h.logger != nil {
-		h.logger.Error(msg, "path", relPath, "error", err)
-	}
 }
 
 // hasUnsafePathSegment 拒绝包含反斜杠或相对段（. / ..）的请求路径。
@@ -146,8 +141,11 @@ func (h *staticHandler) serveFile(c *gin.Context, relPath string) (bool, error) 
 		return serveFromFS(c, h.embeddedFS, relPath)
 	}
 
-	// 3. 本地构建前端后直接运行时回退检查调用方工作目录下的 dist/。
-	return serveFromDiskRoot(c, config.DefaultDistDir(), relPath)
+	// 3. 本地构建前端后直接运行时回退检查调用方注入的默认产物目录（如工作目录下的 dist/）。
+	if h.fallbackDistDir == "" {
+		return false, nil
+	}
+	return serveFromDiskRoot(c, h.fallbackDistDir, relPath)
 }
 
 // serveFromDiskRoot 通过 os.OpenRoot 在受限根目录内打开普通文件，防止符号链接与父目录逃逸。

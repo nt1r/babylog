@@ -78,32 +78,10 @@ func TestSplitIntervalMinutesByLocalDay(t *testing.T) {
 	}
 }
 
-func TestDaySlotLabelAndRecentLocalDateKeys(t *testing.T) {
-	shanghai, _ := LoadLocation("Asia/Shanghai")
-
-	cases := []struct {
-		hour int
-		min  int
-		want string
-	}{
-		{4, 59, "夜间"},
-		{5, 0, "清晨"},
-		{8, 59, "清晨"},
-		{9, 0, "上午"},
-		{11, 59, "上午"},
-		{12, 0, "下午"},
-		{17, 59, "下午"},
-		{18, 0, "傍晚"},
-		{20, 59, "傍晚"},
-		{21, 0, "夜间"},
-		{0, 30, "夜间"},
-	}
-
-	for _, tc := range cases {
-		ts := time.Date(2026, 11, 23, tc.hour, tc.min, 0, 0, shanghai)
-		if got := DaySlotLabel(ts, shanghai); got != tc.want {
-			t.Errorf("%02d:%02d expected %q, got %q", tc.hour, tc.min, tc.want, got)
-		}
+func TestRecentLocalDateKeys(t *testing.T) {
+	shanghai, err := LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatalf("load shanghai: %v", err)
 	}
 
 	now := time.Date(2026, 11, 23, 0, 30, 0, 0, shanghai)

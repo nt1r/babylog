@@ -58,14 +58,15 @@ func runServe(parentCtx context.Context) error {
 	store := auth.NewStore(db.Gorm())
 	babyStore := baby.NewStore(db.Gorm())
 	recordStore := records.NewStore(db.Gorm())
-	dashboardSvc := dashboard.NewService(db.Gorm())
+	dashboardSvc := dashboard.NewService(recordStore)
 	router := httpapi.NewRouter(httpapi.Options{
-		Store:        store,
-		BabyStore:    babyStore,
-		RecordStore:  recordStore,
-		DashboardSvc: dashboardSvc,
-		DistDir:      cfg.DistDir,
-		Logger:       logger,
+		Store:           store,
+		BabyStore:       babyStore,
+		RecordStore:     recordStore,
+		DashboardSvc:    dashboardSvc,
+		DistDir:         cfg.DistDir,
+		FallbackDistDir: config.DefaultDistDir(),
+		Logger:          logger,
 	})
 
 	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))

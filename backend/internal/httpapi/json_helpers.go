@@ -20,25 +20,36 @@ import (
 // maxAPIBodyBytes 限制常规业务 JSON 请求体最大为 64 KiB，防止恶意超大载荷。
 const maxAPIBodyBytes = 64 * 1024
 
-// decodeJSONBody 严格校验 JSON Content-Type、载荷大小与语法结构，精确区分 415/413/400。
-func decodeJSONBody(c *gin.Context, dst any) (int, string) {
+// readJSONBytes 统一校验 JSON Content-Type 与载荷上限（精确区分 415/413/400），
+// 供登录接口（16 KiB）与常规业务写入接口（64 KiB）共用同一道安全守卫。
+func readJSONBytes(c *gin.Context, maxBytes int64, wrongCTMsg string) ([]byte, int, string) {
 	mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
 	if err != nil || mediaType != "application/json" {
-		return http.StatusUnsupportedMediaType, "请使用 JSON 格式提交数据"
+		return nil, http.StatusUnsupportedMediaType, wrongCTMsg
 	}
 
-	if c.Request.ContentLength > maxAPIBodyBytes {
-		return http.StatusRequestEntityTooLarge, "请求内容过大"
+	if c.Request.ContentLength > maxBytes {
+		return nil, http.StatusRequestEntityTooLarge, "请求内容过大"
 	}
 
-	limited := http.MaxBytesReader(c.Writer, c.Request.Body, maxAPIBodyBytes)
+	limited := http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
 	body, err := io.ReadAll(limited)
 	if err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
-			return http.StatusRequestEntityTooLarge, "请求内容过大"
+			return nil, http.StatusRequestEntityTooLarge, "请求内容过大"
 		}
-		return http.StatusBadRequest, "请求内容读取失败"
+		return nil, http.StatusBadRequest, "请求内容读取失败"
+	}
+
+	return body, 0, ""
+}
+
+// decodeJSONBody 严格校验 JSON Content-Type、载荷大小与语法结构，精确区分 415/413/400。
+func decodeJSONBody(c *gin.Context, dst any) (int, string) {
+	body, status, msg := readJSONBytes(c, maxAPIBodyBytes, "请使用 JSON 格式提交数据")
+	if status != 0 {
+		return status, msg
 	}
 
 	dec := json.NewDecoder(bytes.NewReader(body))

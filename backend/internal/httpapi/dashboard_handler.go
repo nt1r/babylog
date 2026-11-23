@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -37,7 +38,7 @@ func (h *dashboardHandler) getSummary(c *gin.Context) {
 	}
 	res, err := h.svc.GetSummary(c.Request.Context(), babyID, loc)
 	if err != nil {
-		h.logError("dashboard getSummary failed", err)
+		h.logger.Error("dashboard getSummary failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 		return
 	}
@@ -55,11 +56,13 @@ func (h *dashboardHandler) getTrends(c *gin.Context) {
 		return
 	}
 
-	days := 7
+	days := dashboard.DefaultTrendDays
 	if rawDays := strings.TrimSpace(c.Query("days")); rawDays != "" {
 		parsed, err := strconv.Atoi(rawDays)
-		if err != nil || parsed < 1 || parsed > 90 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "趋势天数应在 1 至 90 之间"})
+		if err != nil || parsed < dashboard.MinTrendDays || parsed > dashboard.MaxTrendDays {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf("趋势天数应在 %d 至 %d 之间", dashboard.MinTrendDays, dashboard.MaxTrendDays),
+			})
 			return
 		}
 		days = parsed
@@ -67,15 +70,9 @@ func (h *dashboardHandler) getTrends(c *gin.Context) {
 
 	res, err := h.svc.GetTrends(c.Request.Context(), babyID, days, loc)
 	if err != nil {
-		h.logError("dashboard getTrends failed", err)
+		h.logger.Error("dashboard getTrends failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 		return
 	}
 	c.JSON(http.StatusOK, res)
-}
-
-func (h *dashboardHandler) logError(msg string, err error) {
-	if h.logger != nil {
-		h.logger.Error(msg, "error", err)
-	}
 }

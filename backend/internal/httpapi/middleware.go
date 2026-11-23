@@ -22,9 +22,7 @@ func requireAuthMiddleware(store *auth.Store, logger *slog.Logger) gin.HandlerFu
 		token, hasCookie := readSessionCookie(c.Request)
 		user, err := store.GetSession(c.Request.Context(), token)
 		if err != nil {
-			if logger != nil {
-				logger.Error("requireAuth getSession failed", "error", err)
-			}
+			logger.Error("requireAuth getSession failed", "error", err)
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 			return
 		}
@@ -35,7 +33,6 @@ func requireAuthMiddleware(store *auth.Store, logger *slog.Logger) gin.HandlerFu
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "请先登录"})
 			return
 		}
-		c.Set("adminUser", user)
 		c.Next()
 	}
 }
@@ -46,9 +43,7 @@ func requireBabyProfileMiddleware(babyStore *baby.Store, logger *slog.Logger) gi
 	return func(c *gin.Context) {
 		profile, err := babyStore.GetFirst(c.Request.Context())
 		if err != nil {
-			if logger != nil {
-				logger.Error("requireBabyProfile failed", "error", err)
-			}
+			logger.Error("requireBabyProfile failed", "error", err)
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 			return
 		}
@@ -125,9 +120,6 @@ func requestLoggerMiddleware(logger *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		c.Next()
-		if logger == nil {
-			return
-		}
 		logger.Info("http request",
 			"method", c.Request.Method,
 			"path", c.Request.URL.Path,
@@ -141,13 +133,11 @@ func requestLoggerMiddleware(logger *slog.Logger) gin.HandlerFunc {
 // 改为统一通过 slog 记录脱敏信息并返回中文 JSON 500 响应。
 func recoveryMiddleware(logger *slog.Logger) gin.HandlerFunc {
 	return gin.CustomRecoveryWithWriter(io.Discard, func(c *gin.Context, recovered any) {
-		if logger != nil {
-			logger.Error("http panic recovered",
-				"method", c.Request.Method,
-				"path", c.Request.URL.Path,
-				"panic", recovered,
-			)
-		}
+		logger.Error("http panic recovered",
+			"method", c.Request.Method,
+			"path", c.Request.URL.Path,
+			"panic", recovered,
+		)
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 	})
 }
