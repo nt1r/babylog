@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Empty, EmptyActions, EmptyDescription, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Toaster } from '@/components/ui/toast';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { setUnauthorizedHandler } from '@/lib/http';
 import { queryClient } from '@/lib/query-client';
 import { useAuthStore } from '@/stores/auth';
 import { usePreferencesStore } from '@/stores/preferences';
@@ -24,6 +25,14 @@ function RootComponent() {
   useEffect(() => {
     void restoreSession();
   }, [restoreSession]);
+
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      useAuthStore.getState().setUser(null);
+      queryClient.clear();
+    });
+    return () => setUnauthorizedHandler(null);
+  }, []);
 
   useEffect(() => {
     const mql = window.matchMedia('(prefers-color-scheme: dark)');

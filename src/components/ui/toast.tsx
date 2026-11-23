@@ -3,6 +3,20 @@ import { CircleCheckIcon, InfoIcon, OctagonXIcon, TriangleAlertIcon, XIcon } fro
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
+interface ToastAction {
+  readonly label: string;
+  readonly onClick: () => void | Promise<void>;
+}
+
+interface ToastData {
+  readonly action?: ToastAction;
+}
+
+export interface ToastOptions {
+  readonly action?: ToastAction;
+  readonly timeout?: number;
+}
+
 const toastManager = ToastPrimitive.createToastManager();
 
 function ToastList() {
@@ -15,6 +29,8 @@ function ToastList() {
     >
       {toasts.map((item) => {
         const type = item.type ?? 'info';
+        const data = item.data as ToastData | undefined;
+        const action = data?.action;
         const Icon =
           type === 'success'
             ? CircleCheckIcon
@@ -53,6 +69,20 @@ function ToastList() {
                 </ToastPrimitive.Description>
               ) : null}
             </div>
+            {action ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                className="shrink-0"
+                onClick={() => {
+                  toastManager.close(item.id);
+                  void action.onClick();
+                }}
+              >
+                {action.label}
+              </Button>
+            ) : null}
             <ToastPrimitive.Close
               render={
                 <Button
@@ -82,11 +112,29 @@ function Toaster() {
   );
 }
 
+function addToast(
+  type: 'success' | 'error' | 'warning' | 'info',
+  title: string,
+  description?: string,
+  options?: ToastOptions,
+) {
+  return toastManager.add({
+    title,
+    description,
+    type,
+    timeout: options?.timeout ?? (options?.action ? 5000 : undefined),
+    data: options?.action ? ({ action: options.action } satisfies ToastData) : undefined,
+  });
+}
+
 const toast = {
-  success: (title: string, description?: string) => toastManager.add({ title, description, type: 'success' }),
-  error: (title: string, description?: string) => toastManager.add({ title, description, type: 'error' }),
-  warning: (title: string, description?: string) => toastManager.add({ title, description, type: 'warning' }),
-  info: (title: string, description?: string) => toastManager.add({ title, description, type: 'info' }),
+  success: (title: string, description?: string, options?: ToastOptions) =>
+    addToast('success', title, description, options),
+  error: (title: string, description?: string, options?: ToastOptions) =>
+    addToast('error', title, description, options),
+  warning: (title: string, description?: string, options?: ToastOptions) =>
+    addToast('warning', title, description, options),
+  info: (title: string, description?: string, options?: ToastOptions) => addToast('info', title, description, options),
 };
 
 export { Toaster, toast };

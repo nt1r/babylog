@@ -9,4 +9,5 @@ backend/internal/webui/dist/*
 .env
 .env.*
 .DS_Store
+.idea/
 *.tsbuildinfo
