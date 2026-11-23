@@ -93,6 +93,15 @@ DEPLOY_DOMAIN=baby.example.com
 ./scripts/deploy.sh --no-cache
 ```
 
+### 4. 本地一键备份数据库
+
+复用上述 `.env.deploy` 中的 `DEPLOY_HOST`，执行 [scripts/backup.sh](./scripts/backup.sh) 即可从远程运行中的容器拉取 SQLite 数据库（含 WAL），在本地合并为单文件并校验完整性后保存到 `~/Desktop/babylog-backups/`：
+
+```sh
+./scripts/backup.sh
+./scripts/backup.sh -o /custom/backup/dir
+```
+
 ## 功能计划
 
 1. **喂养记录**：支持母乳、奶粉混合喂养和辅食，记录喂养时间、时长、奶量等信息。
