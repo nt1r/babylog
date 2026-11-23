@@ -37,7 +37,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     ./cmd/babylog
 
 # Stage 3: 最小非 root 运行镜像
-FROM alpine:3.21
+FROM alpine:3.24
 
 ARG VERSION=dev
 ARG COMMIT=unknown
