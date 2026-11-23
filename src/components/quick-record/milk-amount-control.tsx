@@ -1,4 +1,6 @@
+import { FEEDING_BOUNDS } from '@/components/quick-record/codecs/feeding';
 import { NumberStepperCard, QuickChip } from '@/components/quick-record/record-controls';
+import { parseStrictInt } from '@/lib/number';
 
 interface MilkAmountControlProps {
   readonly valueText: string;
@@ -8,14 +10,7 @@ interface MilkAmountControlProps {
 
 /** 极简奶量步进卡片（左右 -10/+10 + 大号可编辑数字）与常用档位轻胶囊。 */
 export function MilkAmountControl({ valueText, onChange, presets }: MilkAmountControlProps) {
-  const parsed = Number.parseInt(valueText, 10);
-  const currentNum = Number.isNaN(parsed) ? 0 : parsed;
-
-  function stepBy(delta: number) {
-    const base = currentNum > 0 ? currentNum : 90;
-    const next = Math.max(10, Math.min(1000, base + delta));
-    onChange(String(next));
-  }
+  const currentNum = parseStrictInt(valueText) ?? 0;
 
   return (
     <div className="space-y-2.5">
@@ -23,18 +18,15 @@ export function MilkAmountControl({ valueText, onChange, presets }: MilkAmountCo
       <NumberStepperCard
         valueText={valueText}
         unit="ml"
-        placeholder="120"
+        unitAriaLabel="毫升"
+        placeholder={String(FEEDING_BOUNDS.milkDefault)}
         inputAriaLabel="奶量毫升数"
-        decrementLabel="-10"
-        incrementLabel="+10"
-        decrementAriaLabel="减少 10 毫升"
-        incrementAriaLabel="增加 10 毫升"
-        inputMode="numeric"
-        min={1}
-        max={1000}
+        min={FEEDING_BOUNDS.milkMin}
+        stepMin={FEEDING_BOUNDS.milkStepMin}
+        max={FEEDING_BOUNDS.milkMax}
+        step={FEEDING_BOUNDS.milkStep}
+        defaultValue={FEEDING_BOUNDS.milkDefault}
         onChange={onChange}
-        onDecrement={() => stepBy(-10)}
-        onIncrement={() => stepBy(10)}
       />
       <div className="flex flex-wrap gap-1.5">
         {presets.map((ml) => (

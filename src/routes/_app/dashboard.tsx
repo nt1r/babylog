@@ -1,4 +1,3 @@
-import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
@@ -8,15 +7,15 @@ import {
   Baby,
   Bath,
   Droplets,
-  HeartPulse,
+  type LucideIcon,
   Milk,
-  MoonStar,
   PlusIcon,
   RotateCw,
   Zap,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
+import { FEEDING_BOUNDS } from '@/components/quick-record/codecs/feeding';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -26,25 +25,43 @@ import { Spinner } from '@/components/ui/spinner';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/components/ui/toast';
 import { useBabyProfileQuery } from '@/lib/baby';
-import { type DashboardTrends, useDashboardSummaryQuery, useDashboardTrendsQuery } from '@/lib/dashboard';
+import { RECORD_CATEGORIES, RECORD_CATEGORY_META, type RecordCategory } from '@/lib/categories';
 import {
-  createCareRecord,
-  createFeedingRecord,
-  deleteCareRecord,
-  deleteFeedingRecord,
-  getTemperatureSeverity,
-  invalidateAllRecordQueries,
+  buildDashboardKpiCards,
+  type DashboardTrends,
+  type DashboardTrendTab,
+  selectTrendView,
+  useDashboardSummaryQuery,
+  useDashboardTrendsQuery,
+} from '@/lib/dashboard';
+import {
+  type SaveRecordRequest,
+  useDeleteRecordMutation,
+  useSaveRecordMutation,
   useSmartDefaultsQuery,
 } from '@/lib/records';
-import { formatBabyAge, formatDurationMin, formatLocalTimeFromISO, formatTimeSince } from '@/lib/time';
+import { formatBabyAge, formatDurationMin, formatLocalTimeFromISO } from '@/lib/time';
 import { cn } from '@/lib/utils';
-import { usePreferencesStore } from '@/stores/preferences';
+import { useQuickRecordStore } from '@/stores/quick-record';
 
 export const Route = createFileRoute('/_app/dashboard')({
   component: DashboardPage,
 });
 
 type DailyTrendPoint = DashboardTrends['daily'][number];
+type OneTapKind = 'formula' | 'pee' | 'poop' | 'bath';
+
+interface OneTapPreset {
+  readonly kind: OneTapKind;
+  readonly category: RecordCategory;
+  readonly label: string;
+  readonly icon: LucideIcon;
+  readonly buttonClass: string;
+  readonly disabled?: boolean;
+  readonly toastTitle: string;
+  readonly undoToastTitle: string;
+  readonly buildRequest: (recordedAt: string) => SaveRecordRequest;
+}
 
 const trendChartConfig: ChartConfig = {
   feeding_ml: {
@@ -68,37 +85,6 @@ const slotChartConfig: ChartConfig = {
   },
 };
 
-const QUICK_RECORD_ACTIONS = [
-  {
-    category: 'feeding' as const,
-    title: '记一笔喂养',
-    icon: Milk,
-    cardClass: 'bg-feeding-soft/45 hover:border-feeding',
-    iconClass: 'bg-feeding-soft text-feeding-soft-foreground',
-  },
-  {
-    category: 'sleep' as const,
-    title: '记一笔睡眠',
-    icon: MoonStar,
-    cardClass: 'bg-sleep-soft/45 hover:border-sleep',
-    iconClass: 'bg-sleep-soft text-sleep-soft-foreground',
-  },
-  {
-    category: 'care' as const,
-    title: '记一笔护理',
-    icon: Baby,
-    cardClass: 'bg-care-soft/45 hover:border-care',
-    iconClass: 'bg-care-soft text-care-soft-foreground',
-  },
-  {
-    category: 'health' as const,
-    title: '记一笔健康',
-    icon: HeartPulse,
-    cardClass: 'bg-health-soft/45 hover:border-health',
-    iconClass: 'bg-health-soft text-health-soft-foreground',
-  },
-] as const;
-
 /** 根据当前时间返回温暖的问候语 */
 function getTimeGreeting(date: Date): string {
   const hour = date.getHours();
@@ -113,7 +99,7 @@ interface TrendTooltipProps {
   readonly active?: boolean;
   readonly label?: string | number;
   readonly payload?: ReadonlyArray<{ payload?: DailyTrendPoint }>;
-  readonly tab: 'feeding' | 'sleep';
+  readonly tab: DashboardTrendTab;
   readonly isDirectBreastMode: boolean;
 }
 
@@ -175,10 +161,12 @@ function DashboardTrendTooltip({ active, label, payload, tab, isDirectBreastMode
 }
 
 function DashboardPage() {
-  const queryClient = useQueryClient();
-  const openQuickRecord = usePreferencesStore((state) => state.openQuickRecord);
-  const [trendTab, setTrendTab] = useState<'feeding' | 'sleep'>('feeding');
-  const [quickBusyKey, setQuickBusyKey] = useState<string | null>(null);
+  const openCreate = useQuickRecordStore((state) => state.openCreate);
+  const saveMutation = useSaveRecordMutation();
+  const deleteMutation = useDeleteRecordMutation();
+  const [trendTab, setTrendTab] = useState<DashboardTrendTab>('feeding');
+  const [quickBusyKey, setQuickBusyKey] = useState<OneTapKind | null>(null);
+  const oneTapLockRef = useRef(false);
   // 每分钟刷新一次本地时钟，确保「距上次喂奶/换尿布 X 分钟前」在数据无变更时也能实时跳动。
   const [now, setNow] = useState(() => new Date());
 
@@ -196,177 +184,111 @@ function DashboardPage() {
   const summary = summaryQuery.data;
   const trends = trendsQuery.data;
   const defaultsReady = !defaultsQuery.isLoading;
-  const lastMilkML = defaultsQuery.data?.feeding.last_milk_ml ?? 90;
+  const lastMilkML = defaultsQuery.data?.feeding.last_milk_ml ?? FEEDING_BOUNDS.milkDefault;
 
   const todayLabel = format(now, 'M月d日 EEEE', { locale: zhCN });
   const greeting = getTimeGreeting(now);
   const ageInfo = baby ? formatBabyAge(baby.birth_date, now) : null;
 
-  const dailyTrends = trends?.daily ?? [];
-  const hasBottleMilkTrend = dailyTrends.some((item) => item.feeding_ml > 0);
-  const hasDirectBreastTrend = dailyTrends.some((item) => item.direct_breast_min > 0);
-  const isDirectBreastMode = !hasBottleMilkTrend && hasDirectBreastTrend;
-  const hasSleepTrend = dailyTrends.some((item) => item.sleep_hours > 0);
-  const hasCurrentTrendData = trendTab === 'sleep' ? hasSleepTrend : hasBottleMilkTrend || hasDirectBreastTrend;
-  const trendDataKey = trendTab === 'sleep' ? 'sleep_hours' : isDirectBreastMode ? 'direct_breast_min' : 'feeding_ml';
-  const hasSlotData = (trends?.slots ?? []).some((item) => item.count > 0);
+  const trendView = selectTrendView(trends, trendTab);
+  const kpiCards = buildDashboardKpiCards(summary, now);
 
-  const feedingValue = summary
-    ? summary.feeding.total_ml > 0
-      ? `${summary.feeding.total_ml} ml`
-      : summary.feeding.direct_breast_count > 0
-        ? `亲喂 ${summary.feeding.direct_breast_count} 次`
-        : '0 ml'
-    : '—';
-
-  const feedingSub = summary
-    ? summary.feeding.last_feeding_at
-      ? `距上次 ${formatTimeSince(summary.feeding.last_feeding_at, now)} · 今日 ${summary.feeding.total_count} 次`
-      : '今日还没有记录'
-    : '今日喂养汇总';
-
-  const sleepValue = summary ? formatDurationMin(summary.sleep.total_min) : '—';
-  const sleepSub = summary
-    ? `小睡 ${summary.sleep.nap_count} 次 · 夜觉 ${formatDurationMin(summary.sleep.night_min)}`
-    : '今日睡眠汇总';
-
-  const latestTemp = summary?.health.latest_temp_c ?? null;
-  const tempSeverity = latestTemp !== null ? getTemperatureSeverity(latestTemp) : null;
-  const healthValue = latestTemp !== null ? `${latestTemp.toFixed(1)} ℃` : '—';
-  const healthSub = summary?.health.latest_temp_at
-    ? `${tempSeverity?.label ?? ''} · ${formatTimeSince(summary.health.latest_temp_at, now)}`
-    : '暂无体温记录';
-
-  const careValue = summary ? `${summary.care.total_count} 次` : '—';
-  const careSub = summary
-    ? summary.care.last_diaper_at
-      ? `嘘嘘 ${summary.care.pee_count} · 便便 ${summary.care.poop_count} · 上次 ${formatTimeSince(summary.care.last_diaper_at, now)}`
-      : `嘘嘘 ${summary.care.pee_count} · 便便 ${summary.care.poop_count}`
-    : '今日护理汇总';
-
-  const kpiCards = [
+  const oneTapPresets: readonly OneTapPreset[] = [
     {
-      id: 'feeding',
-      label: '今日喂养',
-      value: feedingValue,
-      sub: feedingSub,
-      iconClass: 'bg-feeding-soft text-feeding-soft-foreground',
+      kind: 'formula',
+      category: 'feeding',
+      label: defaultsReady ? `再来一顿 ${lastMilkML} ml` : '加载惯用奶量…',
       icon: Milk,
-      to: '/feeding' as const,
-      alertTone: null as 'warning' | 'destructive' | null,
+      buttonClass: 'border-feeding/60 bg-feeding-soft/60 text-feeding-soft-foreground hover:bg-feeding-soft',
+      disabled: !defaultsReady,
+      toastTitle: `已记录 · ${lastMilkML} ml 配方奶`,
+      undoToastTitle: '已撤销刚才的喂养记录',
+      buildRequest: (recordedAt) => ({
+        category: 'feeding',
+        payload: { subtype: 'formula', amount_ml: lastMilkML, recorded_at: recordedAt, note: '' },
+      }),
     },
     {
-      id: 'sleep',
-      label: '今日睡眠',
-      value: sleepValue,
-      sub: sleepSub,
-      iconClass: 'bg-sleep-soft text-sleep-soft-foreground',
-      icon: MoonStar,
-      to: '/sleep' as const,
-      alertTone: null as 'warning' | 'destructive' | null,
+      kind: 'pee',
+      category: 'care',
+      label: '嘘嘘',
+      icon: Droplets,
+      buttonClass: 'border-care/60 bg-care-soft/60 text-care-soft-foreground hover:bg-care-soft',
+      toastTitle: '已记录 · 嘘嘘',
+      undoToastTitle: '已撤销刚才的护理记录',
+      buildRequest: (recordedAt) => ({
+        category: 'care',
+        payload: { subtype: 'diaper', diaper_kind: 'pee', recorded_at: recordedAt, note: '' },
+      }),
     },
     {
-      id: 'health',
-      label: '最近体温',
-      value: healthValue,
-      sub: healthSub,
-      iconClass: 'bg-health-soft text-health-soft-foreground',
-      icon: HeartPulse,
-      to: '/health' as const,
-      alertTone:
-        tempSeverity && tempSeverity.level !== 'normal' ? (tempSeverity.level as 'warning' | 'destructive') : null,
-    },
-    {
-      id: 'care',
-      label: '今日护理',
-      value: careValue,
-      sub: careSub,
-      iconClass: 'bg-care-soft text-care-soft-foreground',
+      kind: 'poop',
+      category: 'care',
+      label: '便便正常',
       icon: Baby,
-      to: '/care' as const,
-      alertTone: null as 'warning' | 'destructive' | null,
-    },
-  ];
-
-  async function undoRecord(action: () => Promise<void>, successTitle: string) {
-    try {
-      await action();
-      invalidateAllRecordQueries(queryClient);
-      toast.info(successTitle);
-    } catch (cause) {
-      toast.error('撤销失败', cause instanceof Error ? cause.message : '请前往记录页手动删除。');
-    }
-  }
-
-  async function handleOneTap(kind: 'pee' | 'poop' | 'formula' | 'bath') {
-    if (quickBusyKey) return;
-    if (kind === 'formula' && !defaultsReady) return;
-    setQuickBusyKey(kind);
-    const recordedAt = new Date().toISOString();
-    const timeText = formatLocalTimeFromISO(recordedAt);
-
-    try {
-      if (kind === 'formula') {
-        const created = await createFeedingRecord({
-          subtype: 'formula',
-          amount_ml: lastMilkML,
-          recorded_at: recordedAt,
-          note: '',
-        });
-        invalidateAllRecordQueries(queryClient);
-        toast.success(`已记录 · ${lastMilkML} ml 配方奶`, `记录时间 ${timeText}`, {
-          action: {
-            label: '撤销',
-            onClick: () => undoRecord(() => deleteFeedingRecord(created.id), '已撤销刚才的喂养记录'),
-          },
-        });
-      } else if (kind === 'pee') {
-        const created = await createCareRecord({
-          subtype: 'diaper',
-          diaper_kind: 'pee',
-          recorded_at: recordedAt,
-          note: '',
-        });
-        invalidateAllRecordQueries(queryClient);
-        toast.success('已记录 · 嘘嘘', `记录时间 ${timeText}`, {
-          action: {
-            label: '撤销',
-            onClick: () => undoRecord(() => deleteCareRecord(created.id), '已撤销刚才的护理记录'),
-          },
-        });
-      } else if (kind === 'poop') {
-        const created = await createCareRecord({
+      buttonClass: 'border-care/60 bg-care-soft/60 text-care-soft-foreground hover:bg-care-soft',
+      toastTitle: '已记录 · 便便正常',
+      undoToastTitle: '已撤销刚才的护理记录',
+      buildRequest: (recordedAt) => ({
+        category: 'care',
+        payload: {
           subtype: 'diaper',
           diaper_kind: 'poop',
           stool_consistency: 'soft',
           stool_color: 'yellow',
           recorded_at: recordedAt,
           note: '',
-        });
-        invalidateAllRecordQueries(queryClient);
-        toast.success('已记录 · 便便正常', `记录时间 ${timeText}`, {
-          action: {
-            label: '撤销',
-            onClick: () => undoRecord(() => deleteCareRecord(created.id), '已撤销刚才的护理记录'),
+        },
+      }),
+    },
+    {
+      kind: 'bath',
+      category: 'care',
+      label: '洗澡',
+      icon: Bath,
+      buttonClass: 'border-border bg-secondary/70 text-secondary-foreground hover:bg-secondary',
+      toastTitle: '已记录 · 洗澡',
+      undoToastTitle: '已撤销刚才的洗澡记录',
+      buildRequest: (recordedAt) => ({
+        category: 'care',
+        payload: { subtype: 'bath', recorded_at: recordedAt, note: '' },
+      }),
+    },
+  ];
+
+  async function undoRecord(category: RecordCategory, id: number, successTitle: string) {
+    try {
+      await deleteMutation.mutateAsync({ category, id });
+      toast.info(successTitle);
+    } catch (cause) {
+      toast.error('撤销失败', cause instanceof Error ? cause.message : '请前往记录页手动删除。');
+    }
+  }
+
+  async function handleOneTap(preset: OneTapPreset) {
+    if (oneTapLockRef.current || quickBusyKey || preset.disabled) return;
+    oneTapLockRef.current = true;
+    setQuickBusyKey(preset.kind);
+    const recordedAt = new Date().toISOString();
+    const timeText = formatLocalTimeFromISO(recordedAt);
+
+    try {
+      const created = await saveMutation.mutateAsync(preset.buildRequest(recordedAt));
+      let undone = false;
+      toast.success(preset.toastTitle, `记录时间 ${timeText}`, {
+        action: {
+          label: '撤销',
+          onClick: () => {
+            if (undone) return;
+            undone = true;
+            void undoRecord(preset.category, created.id, preset.undoToastTitle);
           },
-        });
-      } else {
-        const created = await createCareRecord({
-          subtype: 'bath',
-          recorded_at: recordedAt,
-          note: '',
-        });
-        invalidateAllRecordQueries(queryClient);
-        toast.success('已记录 · 洗澡', `记录时间 ${timeText}`, {
-          action: {
-            label: '撤销',
-            onClick: () => undoRecord(() => deleteCareRecord(created.id), '已撤销刚才的洗澡记录'),
-          },
-        });
-      }
+        },
+      });
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : '快捷记录失败，请重试');
     } finally {
+      oneTapLockRef.current = false;
       setQuickBusyKey(null);
     }
   }
@@ -392,58 +314,29 @@ function DashboardPage() {
           <Zap className="size-3.5 text-primary" />
           一键直记
         </span>
-        <button
-          type="button"
-          disabled={quickBusyKey !== null || !defaultsReady}
-          onClick={() => void handleOneTap('formula')}
-          className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-full border border-feeding/60 bg-feeding-soft/60 px-3.5 text-xs font-medium text-feeding-soft-foreground transition-colors hover:bg-feeding-soft disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {quickBusyKey === 'formula' ? (
-            <Spinner className="size-3.5" aria-hidden="true" role="presentation" />
-          ) : (
-            <Milk className="size-3.5" />
-          )}
-          <span className="tabular-nums">{defaultsReady ? `再来一顿 ${lastMilkML} ml` : '加载惯用奶量…'}</span>
-        </button>
-        <button
-          type="button"
-          disabled={quickBusyKey !== null}
-          onClick={() => void handleOneTap('pee')}
-          className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-full border border-care/60 bg-care-soft/60 px-3.5 text-xs font-medium text-care-soft-foreground transition-colors hover:bg-care-soft disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {quickBusyKey === 'pee' ? (
-            <Spinner className="size-3.5" aria-hidden="true" role="presentation" />
-          ) : (
-            <Droplets className="size-3.5" />
-          )}
-          嘘嘘
-        </button>
-        <button
-          type="button"
-          disabled={quickBusyKey !== null}
-          onClick={() => void handleOneTap('poop')}
-          className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-full border border-care/60 bg-care-soft/60 px-3.5 text-xs font-medium text-care-soft-foreground transition-colors hover:bg-care-soft disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {quickBusyKey === 'poop' ? (
-            <Spinner className="size-3.5" aria-hidden="true" role="presentation" />
-          ) : (
-            <Baby className="size-3.5" />
-          )}
-          便便正常
-        </button>
-        <button
-          type="button"
-          disabled={quickBusyKey !== null}
-          onClick={() => void handleOneTap('bath')}
-          className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-full border border-border bg-secondary/70 px-3.5 text-xs font-medium text-secondary-foreground transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {quickBusyKey === 'bath' ? (
-            <Spinner className="size-3.5" aria-hidden="true" role="presentation" />
-          ) : (
-            <Bath className="size-3.5" />
-          )}
-          洗澡
-        </button>
+        {oneTapPresets.map((preset) => {
+          const Icon = preset.icon;
+          const busy = quickBusyKey === preset.kind;
+          return (
+            <button
+              key={preset.kind}
+              type="button"
+              disabled={quickBusyKey !== null || Boolean(preset.disabled)}
+              onClick={() => void handleOneTap(preset)}
+              className={cn(
+                'inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-full border px-3.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                preset.buttonClass,
+              )}
+            >
+              {busy ? (
+                <Spinner className="size-3.5" aria-hidden="true" role="presentation" />
+              ) : (
+                <Icon className="size-3.5" />
+              )}
+              <span className="tabular-nums">{preset.label}</span>
+            </button>
+          );
+        })}
       </section>
 
       {/* 4 列核心指标概览 */}
@@ -505,13 +398,7 @@ function DashboardPage() {
           <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="space-y-1">
               <CardTitle>近 7 日成长趋势</CardTitle>
-              <CardDescription>
-                {trendTab === 'sleep'
-                  ? '每日睡眠时长（小时）'
-                  : isDirectBreastMode
-                    ? '每日亲喂时长（分钟）'
-                    : '每日奶量（ml）'}
-              </CardDescription>
+              <CardDescription>{trendView.description}</CardDescription>
             </div>
             <Tabs value={trendTab} onValueChange={(value) => setTrendTab(value === 'sleep' ? 'sleep' : 'feeding')}>
               <TabsList>
@@ -533,19 +420,19 @@ function DashboardPage() {
                   重新加载
                 </Button>
               </div>
-            ) : !hasCurrentTrendData ? (
+            ) : !trendView.hasCurrentTrendData ? (
               <div className="flex h-60 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border/80 bg-muted/20 p-6 text-center">
                 <p className="text-sm font-medium text-foreground">
                   {trendTab === 'sleep' ? '近 7 日还没有睡眠记录' : '近 7 日还没有喂养记录'}
                 </p>
-                <Button size="sm" variant="outline" onClick={() => openQuickRecord(trendTab)}>
+                <Button size="sm" variant="outline" onClick={() => openCreate(trendTab)}>
                   <PlusIcon className="size-3.5" />
-                  {trendTab === 'sleep' ? '记一笔睡眠' : '记一笔喂养'}
+                  {RECORD_CATEGORY_META[trendTab].createLabel}
                 </Button>
               </div>
             ) : (
               <ChartContainer config={trendChartConfig} className="aspect-auto h-60 w-full">
-                <AreaChart data={dailyTrends} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                <AreaChart data={trendView.daily} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
                   <defs>
                     <linearGradient id="trendMetricFill" x1="0" y1="0" x2="0" y2="1">
                       <stop
@@ -564,11 +451,11 @@ function DashboardPage() {
                   <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
                   <YAxis tickLine={false} axisLine={false} tickMargin={8} />
                   <ChartTooltip
-                    content={<DashboardTrendTooltip tab={trendTab} isDirectBreastMode={isDirectBreastMode} />}
+                    content={<DashboardTrendTooltip tab={trendTab} isDirectBreastMode={trendView.isDirectBreastMode} />}
                   />
                   <Area
                     type="monotone"
-                    dataKey={trendDataKey}
+                    dataKey={trendView.dataKey}
                     stroke={trendTab === 'feeding' ? 'var(--feeding)' : 'var(--sleep)'}
                     strokeWidth={2.2}
                     fill="url(#trendMetricFill)"
@@ -595,7 +482,7 @@ function DashboardPage() {
                   重新加载
                 </Button>
               </div>
-            ) : !hasSlotData ? (
+            ) : !trendView.hasSlotData ? (
               <div className="flex h-60 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border/80 bg-muted/20 p-6 text-center">
                 <p className="text-sm font-medium text-foreground">暂无时段分布</p>
                 <p className="text-xs text-muted-foreground">记下几笔日常后这里会呈现宝宝的活跃节律</p>
@@ -615,24 +502,25 @@ function DashboardPage() {
         </Card>
       </div>
 
-      {/* 紧凑四分类快捷录入入口（移除纯装饰绘本卡片） */}
+      {/* 紧凑四分类快捷录入入口 */}
       <div className="grid grid-cols-2 gap-3 @4xl/main:grid-cols-4">
-        {QUICK_RECORD_ACTIONS.map((action) => {
-          const Icon = action.icon;
+        {RECORD_CATEGORIES.map((category) => {
+          const meta = RECORD_CATEGORY_META[category];
+          const Icon = meta.icon;
           return (
             <button
-              key={action.category}
+              key={meta.id}
               type="button"
-              onClick={() => openQuickRecord(action.category)}
+              onClick={() => openCreate(meta.id)}
               className={cn(
                 'flex cursor-pointer items-center gap-3 rounded-2xl border border-border/80 px-3.5 py-3 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                action.cardClass,
+                meta.quickCardClass,
               )}
             >
-              <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-xl', action.iconClass)}>
+              <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-xl', meta.softClass)}>
                 <Icon className="size-4.5" />
               </span>
-              <span className="text-sm font-medium text-foreground">{action.title}</span>
+              <span className="text-sm font-medium text-foreground">{meta.createLabel}</span>
             </button>
           );
         })}

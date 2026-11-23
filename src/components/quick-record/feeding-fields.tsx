@@ -1,3 +1,4 @@
+import { FEEDING_BOUNDS, type FeedingFormState } from '@/components/quick-record/codecs/feeding';
 import { MilkAmountControl } from '@/components/quick-record/milk-amount-control';
 import {
   ChoiceCardButton,
@@ -7,20 +8,9 @@ import {
 } from '@/components/quick-record/record-controls';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
-import {
-  ACCEPTANCE_LABELS,
-  BREAST_SIDE_LABELS,
-  type BreastSide,
-  type FeedingMode,
-  type FeedingSubtype,
-  type SolidAcceptance,
-} from '@/lib/records';
-
-const FEEDING_SUBTYPE_OPTIONS = [
-  { value: 'formula', label: '配方奶' },
-  { value: 'breast', label: '母乳' },
-  { value: 'solid', label: '辅食' },
-] as const;
+import { FEEDING_SUBTYPE_OPTIONS } from '@/lib/categories';
+import { parseStrictInt } from '@/lib/number';
+import { ACCEPTANCE_LABELS, BREAST_SIDE_LABELS, type BreastSide } from '@/lib/records';
 
 const BREAST_MODE_OPTIONS = [
   { value: 'direct', label: '亲喂' },
@@ -29,17 +19,6 @@ const BREAST_MODE_OPTIONS = [
 
 const BREAST_DURATION_PRESETS = [10, 15, 20, 30] as const;
 const SOLID_AMOUNT_PRESETS = ['几口', '半碗', '一碗'] as const;
-
-export interface FeedingFormState {
-  subtype: FeedingSubtype;
-  feedingMode: FeedingMode;
-  breastSide: BreastSide;
-  amountMLText: string;
-  breastMinText: string;
-  solidFood: string;
-  solidAmount: string;
-  acceptance: SolidAcceptance | '';
-}
 
 interface FeedingFieldsProps {
   readonly state: FeedingFormState;
@@ -58,13 +37,7 @@ export function FeedingFields({
   suggestedBreastSide,
   onChange,
 }: FeedingFieldsProps) {
-  const parsedMin = Number.parseInt(state.breastMinText, 10);
-  const currentMin = Number.isNaN(parsedMin) ? 0 : parsedMin;
-
-  function stepBreastMin(delta: number) {
-    const base = currentMin > 0 ? currentMin : 15;
-    onChange({ breastMinText: String(Math.max(1, Math.min(180, base + delta))) });
-  }
+  const currentMin = parseStrictInt(state.breastMinText) ?? 0;
 
   return (
     <FieldGroup className="gap-4">
@@ -128,16 +101,11 @@ export function FeedingFields({
                   unit="分钟"
                   placeholder="15"
                   inputAriaLabel="亲喂时长分钟数"
-                  decrementLabel="-5"
-                  incrementLabel="+5"
-                  decrementAriaLabel="减少 5 分钟"
-                  incrementAriaLabel="增加 5 分钟"
-                  inputMode="numeric"
-                  min={1}
-                  max={180}
+                  min={FEEDING_BOUNDS.breastMin}
+                  max={FEEDING_BOUNDS.breastMax}
+                  step={FEEDING_BOUNDS.breastStep}
+                  defaultValue={FEEDING_BOUNDS.breastDefault}
                   onChange={(breastMinText) => onChange({ breastMinText })}
-                  onDecrement={() => stepBreastMin(-5)}
-                  onIncrement={() => stepBreastMin(5)}
                 />
                 <div className="flex flex-wrap gap-1.5">
                   {BREAST_DURATION_PRESETS.map((m) => (

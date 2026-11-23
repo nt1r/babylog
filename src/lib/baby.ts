@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/http';
+import { parseOptionalStrictNumber } from '@/lib/number';
 import { getBrowserTimeZone } from '@/lib/time';
 
 export type BabyGender = 'male' | 'female' | 'unknown';
@@ -40,14 +41,6 @@ export interface BabyFormValidationErrors {
   birthDate?: string;
   birthWeight?: string;
   birthHeight?: string;
-}
-
-/** 严格解析可选数值字符串，拒绝带尾随字符（如 "3.5abc"）的非纯数字输入。 */
-function parseOptionalStrictNumber(raw: string): number | null | 'invalid' {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  const num = Number(trimmed);
-  return Number.isFinite(num) ? num : 'invalid';
 }
 
 /** 统一校验宝宝档案表单（供建档页与设置页复用，上下限与后端保持一致）。 */

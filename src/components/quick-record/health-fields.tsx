@@ -1,29 +1,14 @@
+import { HEALTH_BOUNDS, type HealthFormState } from '@/components/quick-record/codecs/health';
 import { NumberStepperCard, QuickChip, SegmentedControl } from '@/components/quick-record/record-controls';
 import { Badge } from '@/components/ui/badge';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
-import { getTemperatureSeverity, type HealthSubtype, type MedicinePreset } from '@/lib/records';
-
-const HEALTH_SUBTYPE_OPTIONS = [
-  { value: 'temperature', label: '体温' },
-  { value: 'medicine', label: '用药' },
-  { value: 'growth', label: '生长' },
-  { value: 'teeth', label: '长牙' },
-] as const;
+import { HEALTH_SUBTYPE_OPTIONS } from '@/lib/categories';
+import { parseOptionalStrictNumber } from '@/lib/number';
+import { getTemperatureSeverity, type MedicinePreset } from '@/lib/records';
 
 const TEMP_PRESETS = [36.5, 36.8, 37.3, 38.0, 38.5] as const;
 const TEETH_PRESETS = ['下中切牙（第 1 颗）', '下中切牙（第 2 颗）', '上中切牙', '侧切牙'] as const;
-
-export interface HealthFormState {
-  subtype: HealthSubtype;
-  temperatureText: string;
-  medicineName: string;
-  medicineDosage: string;
-  weightKg: string;
-  heightCm: string;
-  headCm: string;
-  toothNote: string;
-}
 
 interface HealthFieldsProps {
   readonly state: HealthFormState;
@@ -32,15 +17,13 @@ interface HealthFieldsProps {
 }
 
 export function HealthFields({ state, medicinePresets, onChange }: HealthFieldsProps) {
-  const parsedTemp = Number.parseFloat(state.temperatureText);
-  const hasValidTemp = !Number.isNaN(parsedTemp) && parsedTemp >= 34 && parsedTemp <= 43;
+  const parsedTemp = parseOptionalStrictNumber(state.temperatureText);
+  const hasValidTemp =
+    parsedTemp !== null &&
+    parsedTemp !== 'invalid' &&
+    parsedTemp >= HEALTH_BOUNDS.tempMin &&
+    parsedTemp <= HEALTH_BOUNDS.tempMax;
   const tempSeverity = hasValidTemp ? getTemperatureSeverity(parsedTemp) : null;
-
-  function stepTemp(delta: number) {
-    const base = hasValidTemp ? parsedTemp : 36.6;
-    const next = Math.max(34.0, Math.min(43.0, Math.round((base + delta) * 10) / 10));
-    onChange({ temperatureText: next.toFixed(1) });
-  }
 
   return (
     <FieldGroup className="gap-4">
@@ -75,19 +58,15 @@ export function HealthFields({ state, medicinePresets, onChange }: HealthFieldsP
           <NumberStepperCard
             valueText={state.temperatureText}
             unit="℃"
+            unitAriaLabel="度"
             placeholder="36.6"
             inputAriaLabel="体温数值"
-            decrementLabel="-0.1"
-            incrementLabel="+0.1"
-            decrementAriaLabel="减少 0.1 度"
-            incrementAriaLabel="增加 0.1 度"
-            inputMode="decimal"
-            min={34.0}
-            max={43.0}
-            step={0.1}
+            min={HEALTH_BOUNDS.tempMin}
+            max={HEALTH_BOUNDS.tempMax}
+            step={HEALTH_BOUNDS.tempStep}
+            defaultValue={HEALTH_BOUNDS.tempDefault}
+            precision={1}
             onChange={(temperatureText) => onChange({ temperatureText })}
-            onDecrement={() => stepTemp(-0.1)}
-            onIncrement={() => stepTemp(0.1)}
           />
           <div className="flex flex-wrap gap-1.5">
             {TEMP_PRESETS.map((t) => (

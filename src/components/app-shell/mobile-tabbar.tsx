@@ -2,11 +2,11 @@ import { Link, useRouterState } from '@tanstack/react-router';
 import { PlusIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { findNavItemByPath, MOBILE_NAV_ITEMS } from '@/navigation/menu';
-import { usePreferencesStore } from '@/stores/preferences';
+import { useQuickRecordStore } from '@/stores/quick-record';
 
 export function MobileTabBar() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const openQuickRecord = usePreferencesStore((state) => state.openQuickRecord);
+  const openCreate = useQuickRecordStore((state) => state.openCreate);
   const currentCategory = findNavItemByPath(pathname)?.category ?? 'feeding';
 
   const leftItems = MOBILE_NAV_ITEMS.slice(0, 2);
@@ -39,7 +39,7 @@ export function MobileTabBar() {
         <div className="flex justify-center">
           <button
             type="button"
-            onClick={() => openQuickRecord(currentCategory)}
+            onClick={() => openCreate(currentCategory)}
             aria-label="快速记一笔"
             className="flex size-11 cursor-pointer items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm transition-transform active:scale-95"
           >

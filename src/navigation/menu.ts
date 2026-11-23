@@ -1,6 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
-import { Baby, BellRing, HeartPulse, LayoutDashboard, Milk, MoonStar, Settings2 } from 'lucide-react';
-import type { RecordCategory } from '@/lib/categories';
+import { BellRing, LayoutDashboard, Settings2 } from 'lucide-react';
+import { RECORD_CATEGORIES, RECORD_CATEGORY_META, type RecordCategory } from '@/lib/categories';
 
 export interface NavItem {
   readonly id: string;
@@ -16,6 +16,18 @@ export interface NavGroup {
   readonly label: string;
   readonly items: readonly NavItem[];
 }
+
+const DAILY_NAV_ITEMS: readonly NavItem[] = RECORD_CATEGORIES.map((category) => {
+  const meta = RECORD_CATEGORY_META[category];
+  return {
+    id: meta.id,
+    title: meta.pageTitle,
+    shortTitle: meta.shortLabel,
+    url: meta.url,
+    icon: meta.icon,
+    category: meta.id,
+  };
+});
 
 export const NAV_GROUPS: readonly NavGroup[] = [
   {
@@ -34,40 +46,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
   {
     id: 'daily',
     label: '日常记录',
-    items: [
-      {
-        id: 'feeding',
-        title: '喂养记录',
-        shortTitle: '喂养',
-        url: '/feeding',
-        icon: Milk,
-        category: 'feeding',
-      },
-      {
-        id: 'sleep',
-        title: '睡眠记录',
-        shortTitle: '睡眠',
-        url: '/sleep',
-        icon: MoonStar,
-        category: 'sleep',
-      },
-      {
-        id: 'care',
-        title: '日常护理',
-        shortTitle: '护理',
-        url: '/care',
-        icon: Baby,
-        category: 'care',
-      },
-      {
-        id: 'health',
-        title: '健康与生长',
-        shortTitle: '健康',
-        url: '/health',
-        icon: HeartPulse,
-        category: 'health',
-      },
-    ],
+    items: DAILY_NAV_ITEMS,
   },
   {
     id: 'family',

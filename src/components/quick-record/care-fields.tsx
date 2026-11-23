@@ -1,29 +1,9 @@
+import type { CareFormState } from '@/components/quick-record/codecs/care';
 import { ChoiceCardButton, QuickChip, SegmentedControl } from '@/components/quick-record/record-controls';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
-import {
-  type CareSubtype,
-  DIAPER_KIND_LABELS,
-  type DiaperKind,
-  STOOL_COLOR_LABELS,
-  STOOL_CONSISTENCY_LABELS,
-  type StoolColor,
-  type StoolConsistency,
-} from '@/lib/records';
-
-const CARE_SUBTYPE_OPTIONS = [
-  { value: 'diaper', label: '排便与尿布' },
-  { value: 'bath', label: '洗澡' },
-  { value: 'other', label: '其他护理' },
-] as const;
-
-export interface CareFormState {
-  subtype: CareSubtype;
-  diaperKind: DiaperKind;
-  stoolConsistency: StoolConsistency | '';
-  stoolColor: StoolColor | '';
-  careTitle: string;
-}
+import { CARE_SUBTYPE_OPTIONS } from '@/lib/categories';
+import { DIAPER_KIND_LABELS, STOOL_COLOR_LABELS, STOOL_CONSISTENCY_LABELS } from '@/lib/records';
 
 interface CareFieldsProps {
   readonly state: CareFormState;
