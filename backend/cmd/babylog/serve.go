@@ -18,9 +18,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nt1r/babylog/backend/internal/auth"
+	"github.com/nt1r/babylog/backend/internal/baby"
 	"github.com/nt1r/babylog/backend/internal/config"
+	"github.com/nt1r/babylog/backend/internal/dashboard"
 	"github.com/nt1r/babylog/backend/internal/database"
 	"github.com/nt1r/babylog/backend/internal/httpapi"
+	"github.com/nt1r/babylog/backend/internal/records"
 )
 
 func newServeCommand() *cobra.Command {
@@ -53,10 +56,16 @@ func runServe(parentCtx context.Context) error {
 	defer func() { _ = db.Close() }()
 
 	store := auth.NewStore(db.Gorm())
+	babyStore := baby.NewStore(db.Gorm())
+	recordStore := records.NewStore(db.Gorm())
+	dashboardSvc := dashboard.NewService(db.Gorm())
 	router := httpapi.NewRouter(httpapi.Options{
-		Store:   store,
-		DistDir: cfg.DistDir,
-		Logger:  logger,
+		Store:        store,
+		BabyStore:    babyStore,
+		RecordStore:  recordStore,
+		DashboardSvc: dashboardSvc,
+		DistDir:      cfg.DistDir,
+		Logger:       logger,
 	})
 
 	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))

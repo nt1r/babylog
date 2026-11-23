@@ -9,6 +9,13 @@ export class ApiError extends Error {
   }
 }
 
+let unauthorizedHandler: (() => void) | null = null;
+
+/** 注册全局 401 未认证回调（用于业务接口会话过期时清理登录态并跳回登录页）。 */
+export function setUnauthorizedHandler(handler: (() => void) | null) {
+  unauthorizedHandler = handler;
+}
+
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
@@ -40,6 +47,9 @@ export async function apiRequest<T>(url: string, options: RequestOptions = {}): 
   }
 
   if (!response.ok) {
+    if (response.status === 401 && !url.startsWith('/api/auth/')) {
+      unauthorizedHandler?.();
+    }
     const errorMessage =
       data && typeof data === 'object' && 'error' in data && typeof data.error === 'string'
         ? data.error
