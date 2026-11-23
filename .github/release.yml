@@ -1,0 +1,26 @@
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+    authors:
+      - dependabot
+  categories:
+    - title: "✨ 新增功能"
+      labels:
+        - feat
+        - enhancement
+    - title: "🐛 问题修复"
+      labels:
+        - fix
+        - bug
+    - title: "🔒 安全与稳定性"
+      labels:
+        - security
+    - title: "📚 文档与工程"
+      labels:
+        - docs
+        - chore
+        - ci
+    - title: "其他变更"
+      labels:
+        - "*"

@@ -259,3 +259,44 @@ func TestServeProcessLifecycle(t *testing.T) {
 		t.Fatal("server did not shut down cleanly within timeout")
 	}
 }
+
+func TestVersionCLI(t *testing.T) {
+	t.Run("outputs default dev metadata via subcommand and flags", func(t *testing.T) {
+		const expected = "babylog dev (commit: unknown, built: unknown)"
+		for _, args := range [][]string{{"version"}, {"--version"}, {"-v"}} {
+			code, stdout, stderr := runCLIWithEnv(testBinaryPath, nil, args...)
+			if code != 0 {
+				t.Fatalf("args %v expected exit 0, got %d (stderr=%q)", args, code, stderr)
+			}
+			if strings.TrimSpace(stdout) != expected {
+				t.Errorf("args %v expected stdout %q, got %q", args, expected, strings.TrimSpace(stdout))
+			}
+		}
+
+		extraCode, _, extraStderr := runCLIWithEnv(testBinaryPath, nil, "version", "extra")
+		if extraCode == 0 || !strings.Contains(extraStderr, "用法") {
+			t.Errorf("expected extra arg rejected with Chinese usage, got code=%d stderr=%q", extraCode, extraStderr)
+		}
+	})
+
+	t.Run("outputs ldflags-injected release metadata", func(t *testing.T) {
+		tmpBin := filepath.Join(t.TempDir(), "babylog-release")
+		ldflags := "-X main.version=v0.1.0 -X main.commit=abc1234 -X main.buildDate=2026-11-23T12:00:00Z"
+		buildCmd := exec.Command("go", "build", "-ldflags", ldflags, "-o", tmpBin, ".")
+		buildCmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+		if out, err := buildCmd.CombinedOutput(); err != nil {
+			t.Fatalf("build versioned binary failed: %v\n%s", err, string(out))
+		}
+
+		const expected = "babylog v0.1.0 (commit: abc1234, built: 2026-11-23T12:00:00Z)"
+		for _, args := range [][]string{{"version"}, {"--version"}} {
+			code, stdout, stderr := runCLIWithEnv(tmpBin, nil, args...)
+			if code != 0 {
+				t.Fatalf("args %v expected exit 0, got %d (stderr=%q)", args, code, stderr)
+			}
+			if strings.TrimSpace(stdout) != expected {
+				t.Errorf("args %v expected stdout %q, got %q", args, expected, strings.TrimSpace(stdout))
+			}
+		}
+	})
+}
