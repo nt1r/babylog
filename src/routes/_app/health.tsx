@@ -26,7 +26,7 @@ import {
   useDeleteRecordMutation,
   useHealthListQuery,
 } from '@/lib/records';
-import { formatLocalTimeFromISO, getLocalDateKeyFromISO } from '@/lib/time';
+import { formatLocalDateTimeShort, formatLocalTimeFromISO, getLocalDateKeyFromISO } from '@/lib/time';
 import { usePreferencesStore } from '@/stores/preferences';
 
 export const Route = createFileRoute('/_app/health')({
@@ -40,7 +40,7 @@ function formatHealthSummary(sum?: HealthDailySummary): string {
   if (sum.medicine_count > 0) parts.push(`用药 ${sum.medicine_count} 次`);
   if (sum.growth_count > 0) parts.push(`生长 ${sum.growth_count} 次`);
   if (sum.teeth_count > 0) parts.push(`长牙 ${sum.teeth_count} 次`);
-  parts.push(`共 ${sum.total_count} 笔`);
+  parts.push(`共 ${sum.total_count} 次`);
   return parts.join(' · ');
 }
 
@@ -107,11 +107,17 @@ function HealthPage() {
     }
   }
 
+  const deletingSummary = deleting
+    ? (() => {
+        const info = describeHealth(deleting);
+        return `将删除 ${formatLocalDateTimeShort(deleting.recorded_at)} 的「${info.badge} · ${info.title}」，删除后不可恢复。`;
+      })()
+    : '';
+
   return (
     <>
       <ListPageCard
         title="健康与生长"
-        description="记录体温、用药、身高体重与长牙等成长档案。"
         badge={
           <span className="flex size-7 items-center justify-center rounded-lg bg-health-soft text-health-soft-foreground">
             <HeartPulse className="size-4" strokeWidth={1.8} />
@@ -152,7 +158,7 @@ function HealthPage() {
               <LittleMoments className="max-w-44" />
             </EmptyMedia>
             <EmptyTitle>当前范围内还没有健康与生长记录</EmptyTitle>
-            <EmptyDescription>把体温变化、用药时间和身高体重记在一起，随时查看宝宝的健康档案。</EmptyDescription>
+            <EmptyDescription>把体温变化、用药时间和身高体重记在一起，随时查看。</EmptyDescription>
             <EmptyActions>
               <Button
                 onClick={() => openQuickRecord('health', { initialSubtype: filter === 'all' ? undefined : filter })}
@@ -160,6 +166,11 @@ function HealthPage() {
                 <HeartPulse className="size-4" />
                 记一笔健康
               </Button>
+              {range !== 'all' ? (
+                <Button variant="outline" onClick={() => setRange('all')}>
+                  查看全部时间
+                </Button>
+              ) : null}
             </EmptyActions>
           </Empty>
         ) : (
@@ -215,7 +226,7 @@ function HealthPage() {
           if (!next) setDeleting(null);
         }}
         title="确认删除这条健康记录？"
-        description="删除后看板最近体温与列表小计会自动更新，此操作不可恢复。"
+        description={deletingSummary}
         confirmLabel={deleteMutation.isPending ? '正在删除…' : '确认删除'}
         pending={deleteMutation.isPending}
         onConfirm={handleConfirmDelete}

@@ -93,13 +93,6 @@ export function formatDurationMin(minutes: number): string {
   return rem > 0 ? `${hours} 小时 ${rem} 分` : `${hours} 小时`;
 }
 
-/** 格式化小时数（供看板 KPI 卡片使用）。 */
-export function formatHoursFromMin(minutes: number): string {
-  if (minutes <= 0) return '0 h';
-  const hours = Math.round((minutes / 60) * 10) / 10;
-  return `${hours} h`;
-}
-
 /** 将 YYYY-MM-DD 转为列表分组标题，如「今天 · 11月23日」「昨天 · 11月22日」。 */
 export function formatDateGroupLabel(dateKey: string): string {
   const date = parseISO(`${dateKey}T00:00:00`);
@@ -107,6 +100,16 @@ export function formatDateGroupLabel(dateKey: string): string {
   if (isToday(date)) return `今天 · ${format(date, 'M月d日')}`;
   if (isYesterday(date)) return `昨天 · ${format(date, 'M月d日')}`;
   return format(date, 'M月d日 EEEE', { locale: zhCN });
+}
+
+/** 格式化 ISO 时间戳为带日期的简短时间（如「今天 09:30」「昨天 22:00」「11月20日 08:15」），便于删除核对。 */
+export function formatLocalDateTimeShort(isoStr: string): string {
+  const date = parseISO(isoStr);
+  if (Number.isNaN(date.getTime())) return '--:--';
+  const timeText = format(date, 'HH:mm');
+  if (isToday(date)) return `今天 ${timeText}`;
+  if (isYesterday(date)) return `昨天 ${timeText}`;
+  return `${format(date, 'M月d日')} ${timeText}`;
 }
 
 /** 获取 ISO 时间戳在浏览器本地时区下的 YYYY-MM-DD 键与 HH:mm 显示值。 */

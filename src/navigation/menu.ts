@@ -8,7 +8,6 @@ export interface NavItem {
   readonly shortTitle: string;
   readonly url: '/dashboard' | '/feeding' | '/sleep' | '/care' | '/health' | '/reminders' | '/settings';
   readonly icon: LucideIcon;
-  readonly description: string;
   readonly category?: RecordCategory;
 }
 
@@ -29,13 +28,12 @@ export const NAV_GROUPS: readonly NavGroup[] = [
         shortTitle: '看板',
         url: '/dashboard',
         icon: LayoutDashboard,
-        description: '每日喂养、睡眠、护理与提醒汇总',
       },
     ],
   },
   {
     id: 'daily',
-    label: '每日高频',
+    label: '日常记录',
     items: [
       {
         id: 'feeding',
@@ -43,7 +41,6 @@ export const NAV_GROUPS: readonly NavGroup[] = [
         shortTitle: '喂养',
         url: '/feeding',
         icon: Milk,
-        description: '母乳、配方奶与辅食时间、奶量追踪',
         category: 'feeding',
       },
       {
@@ -52,7 +49,6 @@ export const NAV_GROUPS: readonly NavGroup[] = [
         shortTitle: '睡眠',
         url: '/sleep',
         icon: MoonStar,
-        description: '白天小睡与夜间整觉时长统计',
         category: 'sleep',
       },
       {
@@ -61,38 +57,21 @@ export const NAV_GROUPS: readonly NavGroup[] = [
         shortTitle: '护理',
         url: '/care',
         icon: Baby,
-        description: '大小便、换尿布与洗澡等日常照护',
         category: 'care',
       },
-    ],
-  },
-  {
-    id: 'growth',
-    label: '成长与计划',
-    items: [
       {
         id: 'health',
         title: '健康与生长',
         shortTitle: '健康',
         url: '/health',
         icon: HeartPulse,
-        description: '体温、用药、身高体重与长牙档案',
         category: 'health',
-      },
-      {
-        id: 'reminders',
-        title: '提醒待办',
-        shortTitle: '提醒',
-        url: '/reminders',
-        icon: BellRing,
-        description: '疫苗接种、定时用药与儿保日程',
-        category: 'reminder',
       },
     ],
   },
   {
     id: 'family',
-    label: '空间设置',
+    label: '设置',
     items: [
       {
         id: 'settings',
@@ -100,11 +79,21 @@ export const NAV_GROUPS: readonly NavGroup[] = [
         shortTitle: '设置',
         url: '/settings',
         icon: Settings2,
-        description: '外观主题、夜间模式与当前账号状态',
       },
     ],
   },
 ] as const;
+
+// 尚未在主导航中露出的保留路由元数据，确保直接访问时页面标题与面包屑一致。
+const HIDDEN_NAV_ITEMS: readonly NavItem[] = [
+  {
+    id: 'reminders',
+    title: '提醒待办',
+    shortTitle: '提醒',
+    url: '/reminders',
+    icon: BellRing,
+  },
+];
 
 export const ALL_NAV_ITEMS: readonly NavItem[] = NAV_GROUPS.flatMap((group) => group.items);
 
@@ -113,5 +102,7 @@ const MOBILE_NAV_IDS = new Set(['dashboard', 'feeding', 'sleep', 'care']);
 export const MOBILE_NAV_ITEMS: readonly NavItem[] = ALL_NAV_ITEMS.filter((item) => MOBILE_NAV_IDS.has(item.id));
 
 export function findNavItemByPath(pathname: string): NavItem | undefined {
-  return ALL_NAV_ITEMS.find((item) => pathname === item.url || pathname.startsWith(`${item.url}/`));
+  return [...ALL_NAV_ITEMS, ...HIDDEN_NAV_ITEMS].find(
+    (item) => pathname === item.url || pathname.startsWith(`${item.url}/`),
+  );
 }

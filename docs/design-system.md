@@ -64,7 +64,7 @@
 - **桌面端主框架**：采用 `Inset Sidebar` + 吸顶 `AdminHeader`（侧栏折叠、面包屑、快捷「记一笔」、主题切换、用户菜单），支持 `Ctrl/Cmd + B` 折叠侧栏至图标态。
 - **移动端主框架**：顶部保留抽屉导航与主题/账号入口，底部提供 5 槽位单手导航栏（核心 4 个入口 + 中央突出「快速记一笔」按钮，点击区不低于 `44px × 44px`）。
 - **页面与抽屉模板**：
-  - 看板页：使用 `@container/main` 响应式栅格（问候区 -> 4 列 KPI 卡 -> `2:1` Recharts 图表 -> 快捷录入与绘本卡片）；
+  - 看板页：使用 `@container/main` 响应式栅格（问候区 -> 一键直记条 -> 4 列 KPI 卡 -> `2:1` Recharts 图表 -> 四分类快捷录入）；
   - 记录列表页：统一复用 [ListPageCard](../src/components/list-page-card.tsx) + `Tabs` 筛选 + [Empty](../src/components/ui/empty.tsx)；
   - 录入/详情抽屉：统一复用 [EntityDrawer](../src/components/entity-drawer.tsx)（桌面端右侧滑出、移动端底部滑出）；
   - 危险操作确认：统一复用 [DeleteConfirmDialog](../src/components/delete-confirm-dialog.tsx)。

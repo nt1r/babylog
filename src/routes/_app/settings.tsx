@@ -9,7 +9,6 @@ import {
   MoonIcon,
   SaveIcon,
   ShareIcon,
-  ShieldCheck,
   SmartphoneIcon,
   SunIcon,
 } from 'lucide-react';
@@ -24,7 +23,14 @@ import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { toast } from '@/components/ui/toast';
 import { useLogoutAction } from '@/hooks/use-logout';
-import { BABY_GENDER_LABELS, type BabyGender, useBabyProfileQuery, useUpdateBabyMutation } from '@/lib/baby';
+import {
+  BABY_GENDER_LABELS,
+  type BabyFormValidationErrors,
+  type BabyGender,
+  useBabyProfileQuery,
+  useUpdateBabyMutation,
+  validateBabyProfileForm,
+} from '@/lib/baby';
 import { triggerPwaInstall, usePwaInstallState } from '@/lib/pwa';
 import { formatBabyAge } from '@/lib/time';
 import { cn, getInitials } from '@/lib/utils';
@@ -44,13 +50,13 @@ const THEME_OPTIONS: ReadonlyArray<{
   {
     value: 'light',
     label: '浅色模式',
-    description: '温暖明亮，适合白天浏览记录。',
+    description: '温暖明亮，适合白天浏览。',
     icon: SunIcon,
   },
   {
     value: 'dark',
     label: '深色护眼',
-    description: '柔和暗调，夜间喂奶记录不刺眼。',
+    description: '柔和暗调，夜间喂奶不刺眼。',
     icon: MoonIcon,
   },
   {
@@ -80,60 +86,52 @@ function SettingsPage() {
   const [gender, setGender] = useState<BabyGender>('unknown');
   const [birthWeight, setBirthWeight] = useState('');
   const [birthHeight, setBirthHeight] = useState('');
-  const [nicknameError, setNicknameError] = useState('');
+  const [dirty, setDirty] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<BabyFormValidationErrors>({});
 
+  // 仅在尚未本地编辑时同步服务端档案，避免窗口切回触发 refetch 冲掉未保存修改。
   useEffect(() => {
-    if (!baby) return;
+    if (!baby || dirty) return;
     setNickname(baby.nickname);
     setBirthDate(baby.birth_date);
     setGender(baby.gender);
     setBirthWeight(baby.birth_weight_kg !== null ? String(baby.birth_weight_kg) : '');
     setBirthHeight(baby.birth_height_cm !== null ? String(baby.birth_height_cm) : '');
-  }, [baby]);
+  }, [baby, dirty]);
 
   async function handleSaveBaby(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (updateBaby.isPending) return;
 
-    const trimmed = nickname.trim();
-    if (!trimmed) {
-      setNicknameError('请填写宝宝昵称');
-      return;
-    }
-    const parsedWeight = birthWeight.trim() ? Number.parseFloat(birthWeight) : null;
-    const parsedHeight = birthHeight.trim() ? Number.parseFloat(birthHeight) : null;
-    if (
-      (parsedWeight !== null && Number.isNaN(parsedWeight)) ||
-      (parsedHeight !== null && Number.isNaN(parsedHeight))
-    ) {
-      toast.error('请输入有效的出生体重或身高');
+    const { payload, errors } = validateBabyProfileForm({
+      nickname,
+      birthDate,
+      gender,
+      birthWeight,
+      birthHeight,
+      todayStr,
+    });
+    if (!payload) {
+      setFieldErrors(errors);
       return;
     }
 
-    setNicknameError('');
+    setFieldErrors({});
     try {
-      await updateBaby.mutateAsync({
-        nickname: trimmed,
-        birth_date: birthDate,
-        gender,
-        birth_weight_kg: parsedWeight,
-        birth_height_cm: parsedHeight,
-      });
+      await updateBaby.mutateAsync(payload);
+      setDirty(false);
       toast.success('宝宝档案已更新');
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : '保存失败，请稍后重试');
     }
   }
 
-  const username = user?.username ?? 'admin';
+  const username = user?.username ?? '当前账号';
   const ageInfo = baby ? formatBabyAge(baby.birth_date) : null;
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">偏好与账号</h1>
-        <p className="text-sm text-muted-foreground">管理宝宝档案、显示外观与当前账号登录状态。</p>
-      </div>
+      <h1 className="sr-only md:not-sr-only md:text-2xl md:font-semibold md:tracking-tight">偏好与账号</h1>
 
       {baby ? (
         <Card>
@@ -143,10 +141,7 @@ function SettingsPage() {
                 <span className="flex size-8 items-center justify-center rounded-xl bg-primary/12 text-primary">
                   <Baby className="size-4.5" strokeWidth={1.8} />
                 </span>
-                <div>
-                  <CardTitle>宝宝档案</CardTitle>
-                  <CardDescription>用于首页月龄计算与全部成长记录归属。</CardDescription>
-                </div>
+                <CardTitle>宝宝档案</CardTitle>
               </div>
               {ageInfo ? (
                 <Badge variant="secondary" className="font-normal">
@@ -158,22 +153,23 @@ function SettingsPage() {
           <CardContent>
             <form onSubmit={handleSaveBaby} noValidate className="space-y-4">
               <FieldGroup className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Field invalid={Boolean(nicknameError)}>
+                <Field invalid={Boolean(fieldErrors.nickname)}>
                   <FieldLabel htmlFor="settings-baby-name">宝宝昵称</FieldLabel>
                   <Input
                     id="settings-baby-name"
                     value={nickname}
                     maxLength={32}
-                    aria-invalid={Boolean(nicknameError)}
+                    aria-invalid={Boolean(fieldErrors.nickname)}
                     onChange={(event) => {
+                      setDirty(true);
                       setNickname(event.target.value);
-                      if (nicknameError) setNicknameError('');
+                      if (fieldErrors.nickname) setFieldErrors((prev) => ({ ...prev, nickname: undefined }));
                     }}
                   />
-                  <FieldError>{nicknameError}</FieldError>
+                  <FieldError>{fieldErrors.nickname}</FieldError>
                 </Field>
 
-                <Field>
+                <Field invalid={Boolean(fieldErrors.birthDate)}>
                   <FieldLabel htmlFor="settings-baby-birth">出生日期</FieldLabel>
                   <Input
                     id="settings-baby-birth"
@@ -181,8 +177,14 @@ function SettingsPage() {
                     max={todayStr}
                     value={birthDate}
                     className="tabular-nums"
-                    onChange={(event) => setBirthDate(event.target.value)}
+                    aria-invalid={Boolean(fieldErrors.birthDate)}
+                    onChange={(event) => {
+                      setDirty(true);
+                      setBirthDate(event.target.value);
+                      if (fieldErrors.birthDate) setFieldErrors((prev) => ({ ...prev, birthDate: undefined }));
+                    }}
                   />
+                  <FieldError>{fieldErrors.birthDate}</FieldError>
                 </Field>
 
                 <div className="space-y-2 sm:col-span-2">
@@ -193,7 +195,10 @@ function SettingsPage() {
                         key={g}
                         type="button"
                         aria-pressed={gender === g}
-                        onClick={() => setGender(g)}
+                        onClick={() => {
+                          setDirty(true);
+                          setGender(g);
+                        }}
                         className={cn(
                           'cursor-pointer rounded-full border px-4 py-1.5 text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
                           gender === g
@@ -207,7 +212,7 @@ function SettingsPage() {
                   </div>
                 </div>
 
-                <Field>
+                <Field invalid={Boolean(fieldErrors.birthWeight)}>
                   <FieldLabel htmlFor="settings-baby-weight">出生体重（kg，可选）</FieldLabel>
                   <Input
                     id="settings-baby-weight"
@@ -218,12 +223,18 @@ function SettingsPage() {
                     inputMode="decimal"
                     placeholder="如 3.35"
                     className="tabular-nums"
+                    aria-invalid={Boolean(fieldErrors.birthWeight)}
                     value={birthWeight}
-                    onChange={(event) => setBirthWeight(event.target.value)}
+                    onChange={(event) => {
+                      setDirty(true);
+                      setBirthWeight(event.target.value);
+                      if (fieldErrors.birthWeight) setFieldErrors((prev) => ({ ...prev, birthWeight: undefined }));
+                    }}
                   />
+                  <FieldError>{fieldErrors.birthWeight}</FieldError>
                 </Field>
 
-                <Field>
+                <Field invalid={Boolean(fieldErrors.birthHeight)}>
                   <FieldLabel htmlFor="settings-baby-height">出生身高（cm，可选）</FieldLabel>
                   <Input
                     id="settings-baby-height"
@@ -234,9 +245,15 @@ function SettingsPage() {
                     inputMode="decimal"
                     placeholder="如 50.0"
                     className="tabular-nums"
+                    aria-invalid={Boolean(fieldErrors.birthHeight)}
                     value={birthHeight}
-                    onChange={(event) => setBirthHeight(event.target.value)}
+                    onChange={(event) => {
+                      setDirty(true);
+                      setBirthHeight(event.target.value);
+                      if (fieldErrors.birthHeight) setFieldErrors((prev) => ({ ...prev, birthHeight: undefined }));
+                    }}
                   />
+                  <FieldError>{fieldErrors.birthHeight}</FieldError>
                 </Field>
               </FieldGroup>
 
@@ -258,7 +275,7 @@ function SettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle>外观模式</CardTitle>
-          <CardDescription>选择适合当前光线的显示风格，夜间照护推荐使用深色护眼模式。</CardDescription>
+          <CardDescription>夜间照护推荐使用深色护眼模式。</CardDescription>
         </CardHeader>
         <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-3">
           {THEME_OPTIONS.map((option) => {
@@ -298,96 +315,81 @@ function SettingsPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <div className="flex flex-wrap items-center justify-between gap-2">
+      {/* 已从主屏幕独立打开时不再重复展示安装引导 */}
+      {!standalone ? (
+        <Card>
+          <CardHeader>
             <div className="flex items-center gap-2.5">
               <span className="flex size-8 items-center justify-center rounded-xl bg-primary/12 text-primary">
                 <SmartphoneIcon className="size-4.5" strokeWidth={1.8} />
               </span>
               <div>
-                <CardTitle>安装到手机主屏幕</CardTitle>
-                <CardDescription>无需上架应用商店，即可在 iPhone 或桌面以全屏独立应用方式使用。</CardDescription>
+                <CardTitle>添加到手机桌面</CardTitle>
+                <CardDescription>添加后可直接从桌面全屏打开，日常记录更顺手。</CardDescription>
               </div>
             </div>
-            {standalone ? <Badge variant="success">已作为独立应用运行</Badge> : null}
-          </div>
-        </CardHeader>
-        <CardContent>
-          {standalone ? (
-            <p className="rounded-2xl border border-border/80 bg-muted/30 p-4 text-xs leading-relaxed text-muted-foreground">
-              当前已处于主屏幕独立应用模式，免去了浏览器地址栏并已适配灵动岛与底部安全区。
-            </p>
-          ) : canPromptInstall ? (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/80 bg-muted/30 p-4">
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                当前浏览器支持一键安装 BabyLog 到桌面或主屏幕，后续点击图标即可快速记一笔。
-              </p>
-              <Button
-                size="sm"
-                onClick={async () => {
-                  try {
-                    const outcome = await triggerPwaInstall();
-                    if (outcome === 'accepted') {
-                      toast.success('已开始安装 BabyLog');
+          </CardHeader>
+          <CardContent>
+            {canPromptInstall ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/80 bg-muted/30 p-4">
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  将 BabyLog 添加到桌面，点击图标即可快速记录。
+                </p>
+                <Button
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      const outcome = await triggerPwaInstall();
+                      if (outcome === 'accepted') {
+                        toast.success('已开始添加 BabyLog');
+                      }
+                    } catch {
+                      toast.error('无法自动弹出安装窗口', '请通过浏览器菜单手动添加到桌面。');
                     }
-                  } catch {
-                    toast.error('安装弹窗调用失败', '请尝试通过浏览器地址栏或菜单手动安装。');
-                  }
-                }}
-              >
-                <DownloadIcon className="size-4" />
-                安装应用
-              </Button>
-            </div>
-          ) : isIOS ? (
-            <div className="space-y-2 rounded-2xl border border-border/80 bg-muted/30 p-4 text-xs leading-relaxed text-muted-foreground">
-              <p className="font-medium text-foreground">在 iPhone Safari 添加到主屏幕（永久免签，不会过期）：</p>
-              <ol className="list-decimal space-y-1 pl-4">
-                <li>
-                  点击 Safari 底部工具栏的
-                  <span className="mx-1 inline-flex items-center gap-0.5 font-medium text-foreground">
-                    <ShareIcon className="size-3.5" />
-                    分享
-                  </span>
-                  按钮；
-                </li>
-                <li>
-                  向下滑动并选择<span className="mx-1 font-medium text-foreground">「添加到主屏幕」</span>
-                  ，点右上角「添加」即可。
-                </li>
-              </ol>
-            </div>
-          ) : (
-            <p className="rounded-2xl border border-border/80 bg-muted/30 p-4 text-xs leading-relaxed text-muted-foreground">
-              使用 iPhone Safari 打开本页面并选择「分享 → 添加到主屏幕」，或在支持 PWA
-              的浏览器地址栏点击安装图标，即可获得接近原生 App 的全屏单手体验。
-            </p>
-          )}
-        </CardContent>
-      </Card>
+                  }}
+                >
+                  <DownloadIcon className="size-4" />
+                  添加到桌面
+                </Button>
+              </div>
+            ) : isIOS ? (
+              <div className="space-y-2 rounded-2xl border border-border/80 bg-muted/30 p-4 text-xs leading-relaxed text-muted-foreground">
+                <p className="font-medium text-foreground">在 Safari 添加到主屏幕：</p>
+                <ol className="list-decimal space-y-1 pl-4">
+                  <li>
+                    点击底部工具栏的
+                    <span className="mx-1 inline-flex items-center gap-0.5 font-medium text-foreground">
+                      <ShareIcon className="size-3.5" />
+                      分享
+                    </span>
+                    按钮；
+                  </li>
+                  <li>
+                    向下滑动选择<span className="mx-1 font-medium text-foreground">「添加到主屏幕」</span>
+                    ，再点击右上角「添加」即可。
+                  </li>
+                </ol>
+              </div>
+            ) : (
+              <p className="rounded-2xl border border-border/80 bg-muted/30 p-4 text-xs leading-relaxed text-muted-foreground">
+                在手机浏览器中选择「分享 → 添加到主屏幕」，或在桌面浏览器地址栏点击安装图标，即可像独立应用一样打开。
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>
           <CardTitle>当前账号</CardTitle>
-          <CardDescription>已登录家庭成长空间，如需切换设备或结束使用可在此退出。</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-border/80 bg-muted/30 p-4">
             <div className="flex items-center gap-3">
-              <Avatar className="size-11 rounded-2xl bg-primary/15 text-primary">
+              <Avatar className="size-10 rounded-2xl bg-primary/15 text-primary">
                 <AvatarFallback className="text-sm">{getInitials(username)}</AvatarFallback>
               </Avatar>
-              <div>
-                <div className="flex items-center gap-2">
-                  <p className="font-semibold text-foreground">{username}</p>
-                  <Badge variant="success">
-                    <ShieldCheck className="size-3" />
-                    管理员
-                  </Badge>
-                </div>
-                <p className="mt-0.5 text-xs text-muted-foreground">登录状态正常</p>
-              </div>
+              <p className="font-semibold text-foreground">{username}</p>
             </div>
 
             <Button variant="destructive" onClick={() => setConfirmOpen(true)}>

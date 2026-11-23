@@ -21,14 +21,10 @@ export interface DashboardSummary {
     nap_min: number;
     night_count: number;
     night_min: number;
-    last_sleep_end_at: string | null;
   };
   health: {
     latest_temp_c: number | null;
     latest_temp_at: string | null;
-    latest_weight_kg: number | null;
-    latest_height_cm: number | null;
-    latest_growth_at: string | null;
   };
   care: {
     total_count: number;
@@ -48,6 +44,8 @@ export interface DashboardTrends {
     date: string;
     label: string;
     feeding_ml: number;
+    direct_breast_min: number;
+    direct_breast_count: number;
     sleep_hours: number;
   }>;
   slots: Array<{

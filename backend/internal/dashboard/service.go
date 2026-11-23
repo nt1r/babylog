@@ -27,21 +27,17 @@ type FeedingSummary struct {
 
 // SleepSummary 汇总今日睡眠 KPI（跨夜睡眠已按本地自然日切分）。
 type SleepSummary struct {
-	TotalMin       int     `json:"total_min"`
-	NapCount       int     `json:"nap_count"`
-	NapMin         int     `json:"nap_min"`
-	NightCount     int     `json:"night_count"`
-	NightMin       int     `json:"night_min"`
-	LastSleepEndAt *string `json:"last_sleep_end_at"`
+	TotalMin   int `json:"total_min"`
+	NapCount   int `json:"nap_count"`
+	NapMin     int `json:"nap_min"`
+	NightCount int `json:"night_count"`
+	NightMin   int `json:"night_min"`
 }
 
-// HealthSummary 汇总最近体温与最近一次生长记录。
+// HealthSummary 汇总最近一次体温记录。
 type HealthSummary struct {
-	LatestTempC    *float64 `json:"latest_temp_c"`
-	LatestTempAt   *string  `json:"latest_temp_at"`
-	LatestWeightKg *float64 `json:"latest_weight_kg"`
-	LatestHeightCm *float64 `json:"latest_height_cm"`
-	LatestGrowthAt *string  `json:"latest_growth_at"`
+	LatestTempC  *float64 `json:"latest_temp_c"`
+	LatestTempAt *string  `json:"latest_temp_at"`
 }
 
 // CareSummary 汇总今日护理 KPI 与上次换尿布时刻。
@@ -67,10 +63,12 @@ type SummaryResponse struct {
 
 // DailyTrendPoint 表示趋势图中的单日数据点。
 type DailyTrendPoint struct {
-	Date       string  `json:"date"`
-	Label      string  `json:"label"`
-	FeedingML  int     `json:"feeding_ml"`
-	SleepHours float64 `json:"sleep_hours"`
+	Date              string  `json:"date"`
+	Label             string  `json:"label"`
+	FeedingML         int     `json:"feeding_ml"`
+	DirectBreastMin   int     `json:"direct_breast_min"`
+	DirectBreastCount int     `json:"direct_breast_count"`
+	SleepHours        float64 `json:"sleep_hours"`
 }
 
 // SlotDistributionPoint 表示全天照护节律柱状图的单个时段。
@@ -183,20 +181,8 @@ func (s *Service) GetSummary(ctx context.Context, babyID int64, loc *time.Locati
 			resp.Sleep.NapMin += mins
 		}
 	}
-	var latestSleep records.SleepRecord
-	if err := s.db.WithContext(ctx).
-		Where("baby_id = ?", babyID).
-		Order("ended_at DESC, id DESC").
-		Limit(1).
-		Find(&latestSleep).Error; err != nil {
-		return nil, err
-	}
-	if latestSleep.ID > 0 {
-		ts := latestSleep.EndedAt
-		resp.Sleep.LastSleepEndAt = &ts
-	}
 
-	// 3. 最近体温与最近生长指标
+	// 3. 最近一次体温记录
 	var latestTemp records.HealthRecord
 	if err := s.db.WithContext(ctx).
 		Where("baby_id = ? AND subtype = ?", babyID, "temperature").
@@ -210,20 +196,6 @@ func (s *Service) GetSummary(ctx context.Context, babyID int64, loc *time.Locati
 		ts := latestTemp.RecordedAt
 		resp.Health.LatestTempC = &v
 		resp.Health.LatestTempAt = &ts
-	}
-	var latestGrowth records.HealthRecord
-	if err := s.db.WithContext(ctx).
-		Where("baby_id = ? AND subtype = ?", babyID, "growth").
-		Order("recorded_at DESC, id DESC").
-		Limit(1).
-		Find(&latestGrowth).Error; err != nil {
-		return nil, err
-	}
-	if latestGrowth.ID > 0 {
-		resp.Health.LatestWeightKg = latestGrowth.WeightKg
-		resp.Health.LatestHeightCm = latestGrowth.HeightCm
-		ts := latestGrowth.RecordedAt
-		resp.Health.LatestGrowthAt = &ts
 	}
 
 	// 4. 今日护理汇总（复用 records 包聚合函数）+ 最近一次换尿布时间
@@ -282,11 +254,11 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 	endUTC := timeutil.FormatUTC(todayEnd)
 
 	keys := timeutil.RecentLocalDateKeys(now, days, loc)
-	feedingByDay := make(map[string]int, days)
+	feedingByDay := make(map[string]*records.FeedingDailySummary, days)
 	sleepMinByDay := make(map[string]int, days)
 	slotCounts := make(map[string]int, len(timeutil.DaySlots))
 
-	// 1. 喂养趋势与时段计数
+	// 1. 喂养趋势（复用共享聚合函数确保奶量与亲喂口径一致）与时段计数
 	var feedings []records.FeedingRecord
 	if err := s.db.WithContext(ctx).
 		Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, startUTC, endUTC).
@@ -299,9 +271,12 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 			continue
 		}
 		key := timeutil.LocalDateKey(ts, loc)
-		if r.AmountML != nil && *r.AmountML > 0 {
-			feedingByDay[key] += *r.AmountML
+		agg := feedingByDay[key]
+		if agg == nil {
+			agg = &records.FeedingDailySummary{}
+			feedingByDay[key] = agg
 		}
+		records.AccumulateFeedingSummary(agg, r)
 		slotCounts[timeutil.DaySlotLabel(ts, loc)]++
 	}
 
@@ -362,11 +337,19 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 			label = weekdayLabels[dayTime.Weekday()]
 		}
 		hours := math.Round(float64(sleepMinByDay[key])/60.0*10) / 10
+		var feedML, directBreastMin, directBreastCount int
+		if agg := feedingByDay[key]; agg != nil {
+			feedML = agg.TotalML
+			directBreastMin = agg.DirectBreastMin
+			directBreastCount = agg.DirectBreastCount
+		}
 		daily = append(daily, DailyTrendPoint{
-			Date:       key,
-			Label:      label,
-			FeedingML:  feedingByDay[key],
-			SleepHours: hours,
+			Date:              key,
+			Label:             label,
+			FeedingML:         feedML,
+			DirectBreastMin:   directBreastMin,
+			DirectBreastCount: directBreastCount,
+			SleepHours:        hours,
 		})
 	}
 

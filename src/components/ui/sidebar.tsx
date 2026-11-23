@@ -1,7 +1,7 @@
 import { mergeProps } from '@base-ui/react/merge-props';
 import { useRender } from '@base-ui/react/use-render';
 import { cva, type VariantProps } from 'class-variance-authority';
-import { PanelLeftIcon } from 'lucide-react';
+import { MenuIcon, PanelLeftIcon } from 'lucide-react';
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -177,7 +177,7 @@ function SidebarInset({ className, ...props }: React.ComponentProps<'main'>) {
 }
 
 function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
-  const { toggleSidebar } = useSidebar();
+  const { isMobile, toggleSidebar } = useSidebar();
 
   return (
     <Button
@@ -185,14 +185,14 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       variant="ghost"
       size="icon-sm"
       className={cn('text-muted-foreground hover:text-foreground', className)}
-      aria-label="展开或收起侧边栏"
+      aria-label={isMobile ? '打开导航菜单' : '展开或收起侧边栏'}
       onClick={(event) => {
         onClick?.(event);
         toggleSidebar();
       }}
       {...props}
     >
-      <PanelLeftIcon className="size-4" />
+      {isMobile ? <MenuIcon className="size-4.5" /> : <PanelLeftIcon className="size-4" />}
     </Button>
   );
 }

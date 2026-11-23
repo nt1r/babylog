@@ -30,11 +30,21 @@ interface SleepFieldsProps {
   readonly state: SleepFormState;
   readonly maxDate: string;
   readonly durationMin: number;
+  readonly subtypeLocked: boolean;
+  readonly onSubtypeSelect: (subtype: SleepSubtype) => void;
   readonly onChange: (patch: Partial<SleepFormState>) => void;
 }
 
-export function SleepFields({ state, maxDate, durationMin, onChange }: SleepFieldsProps) {
+export function SleepFields({
+  state,
+  maxDate,
+  durationMin,
+  subtypeLocked,
+  onSubtypeSelect,
+  onChange,
+}: SleepFieldsProps) {
   // 睡眠补录场景下家长通常是在「宝宝刚睡醒」时记录，因此快捷时长以醒来时间为锚点倒推入睡时间。
+  // 一旦用户主动切换过睡眠类型，后续微调时间不再覆盖用户选择。
   function applyDuration(minutes: number) {
     const endISO = combineLocalDateTimeToISO(state.endDate, state.endTime);
     const endDate = endISO ? new Date(endISO) : new Date();
@@ -43,7 +53,7 @@ export function SleepFields({ state, maxDate, durationMin, onChange }: SleepFiel
     onChange({
       startDate: startParts.date,
       startTime: startParts.time,
-      subtype: guessSleepSubtype(startDate),
+      ...(subtypeLocked ? {} : { subtype: guessSleepSubtype(startDate) }),
     });
   }
 
@@ -58,7 +68,7 @@ export function SleepFields({ state, maxDate, durationMin, onChange }: SleepFiel
       endTime: endParts.time,
       startDate: startParts.date,
       startTime: startParts.time,
-      subtype: guessSleepSubtype(startDate),
+      ...(subtypeLocked ? {} : { subtype: guessSleepSubtype(startDate) }),
     });
   }
 
@@ -70,13 +80,13 @@ export function SleepFields({ state, maxDate, durationMin, onChange }: SleepFiel
           ariaLabel="睡眠类型"
           options={SLEEP_SUBTYPE_OPTIONS}
           value={state.subtype}
-          onChange={(subtype) => onChange({ subtype })}
+          onChange={onSubtypeSelect}
         />
       </div>
 
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-2">
-          <p className="text-[13px] font-medium text-foreground">快捷时长（从醒来倒推入睡）</p>
+          <p className="text-[13px] font-medium text-foreground">快捷时长</p>
           <button
             type="button"
             onClick={setEndNow}
@@ -112,7 +122,7 @@ export function SleepFields({ state, maxDate, durationMin, onChange }: SleepFiel
             const parsed = combineLocalDateTimeToISO(state.startDate, nextTime);
             onChange({
               startTime: nextTime,
-              ...(parsed ? { subtype: guessSleepSubtype(new Date(parsed)) } : {}),
+              ...(!subtypeLocked && parsed ? { subtype: guessSleepSubtype(new Date(parsed)) } : {}),
             });
           }}
         />
@@ -132,7 +142,7 @@ export function SleepFields({ state, maxDate, durationMin, onChange }: SleepFiel
       </div>
 
       <div className="flex items-center justify-between rounded-xl border border-border/70 bg-muted/30 px-3.5 py-2.5 text-xs">
-        <span className="text-muted-foreground">预计睡眠时长</span>
+        <span className="text-muted-foreground">本次时长</span>
         <span className="font-semibold text-foreground tabular-nums">
           {durationMin > 0 ? formatDurationMin(durationMin) : '请调整入睡与醒来时间'}
         </span>

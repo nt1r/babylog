@@ -28,7 +28,7 @@ import {
   useCareListQuery,
   useDeleteRecordMutation,
 } from '@/lib/records';
-import { formatLocalTimeFromISO, getLocalDateKeyFromISO } from '@/lib/time';
+import { formatLocalDateTimeShort, formatLocalTimeFromISO, getLocalDateKeyFromISO } from '@/lib/time';
 import { usePreferencesStore } from '@/stores/preferences';
 
 export const Route = createFileRoute('/_app/care')({
@@ -59,7 +59,7 @@ function describeCare(rec: CareRecord): { badge: string; title: string; subtitle
     };
   }
   if (rec.subtype === 'bath') {
-    return { badge: '洗澡', title: '完成洗澡' };
+    return { badge: '洗澡', title: '洗澡' };
   }
   return { badge: '其他护理', title: rec.care_title ?? '日常护理' };
 }
@@ -87,11 +87,17 @@ function CarePage() {
     }
   }
 
+  const deletingSummary = deleting
+    ? (() => {
+        const info = describeCare(deleting);
+        return `将删除 ${formatLocalDateTimeShort(deleting.recorded_at)} 的「${info.badge} · ${info.title}」，删除后不可恢复。`;
+      })()
+    : '';
+
   return (
     <>
       <ListPageCard
         title="日常护理"
-        description="记录大小便、换尿布、洗澡与日常照护小事。"
         badge={
           <span className="flex size-7 items-center justify-center rounded-lg bg-care-soft text-care-soft-foreground">
             <Baby className="size-4" strokeWidth={1.8} />
@@ -139,6 +145,11 @@ function CarePage() {
                 <Baby className="size-4" />
                 记一笔护理
               </Button>
+              {range !== 'all' ? (
+                <Button variant="outline" onClick={() => setRange('all')}>
+                  查看全部时间
+                </Button>
+              ) : null}
             </EmptyActions>
           </Empty>
         ) : (
@@ -194,7 +205,7 @@ function CarePage() {
           if (!next) setDeleting(null);
         }}
         title="确认删除这条护理记录？"
-        description="删除后当日护理次数统计会自动更新，此操作不可恢复。"
+        description={deletingSummary}
         confirmLabel={deleteMutation.isPending ? '正在删除…' : '确认删除'}
         pending={deleteMutation.isPending}
         onConfirm={handleConfirmDelete}

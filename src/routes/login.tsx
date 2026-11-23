@@ -10,7 +10,6 @@ import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { Spinner } from '@/components/ui/spinner';
-import { toast } from '@/components/ui/toast';
 import { useAuthStore } from '@/stores/auth';
 
 /** 校验登录后的回跳地址，仅允许站内相对路径并拒绝协议相对地址及登录页循环。 */
@@ -86,7 +85,6 @@ function LoginPage() {
       await login(username, password);
       setPassword('');
       setShowPassword(false);
-      toast.success('欢迎回来', '已进入 BabyLog 家庭成长空间。');
       await navigate({ to: redirect ?? '/dashboard', replace: true });
     } catch (cause) {
       setSubmitError(cause instanceof Error ? cause.message : '登录失败，请稍后重试。');

@@ -27,7 +27,7 @@ import {
   useDeleteRecordMutation,
   useFeedingListQuery,
 } from '@/lib/records';
-import { formatLocalTimeFromISO, getLocalDateKeyFromISO } from '@/lib/time';
+import { formatLocalDateTimeShort, formatLocalTimeFromISO, getLocalDateKeyFromISO } from '@/lib/time';
 import { usePreferencesStore } from '@/stores/preferences';
 
 export const Route = createFileRoute('/_app/feeding')({
@@ -38,9 +38,9 @@ function formatFeedingSummary(sum?: FeedingDailySummary): string {
   if (!sum) return '';
   const parts: string[] = [];
   if (sum.total_ml > 0) parts.push(`共 ${sum.total_ml} ml`);
-  if (sum.direct_breast_count > 0) parts.push(`亲喂 ${sum.direct_breast_count} 次 (${sum.direct_breast_min} 分)`);
+  if (sum.direct_breast_count > 0) parts.push(`亲喂 ${sum.direct_breast_count} 次（${sum.direct_breast_min} 分钟）`);
   if (sum.solid_count > 0) parts.push(`辅食 ${sum.solid_count} 次`);
-  parts.push(`${sum.total_count} 笔`);
+  parts.push(`共 ${sum.total_count} 次`);
   return parts.join(' · ');
 }
 
@@ -88,11 +88,17 @@ function FeedingPage() {
     }
   }
 
+  const deletingSummary = deleting
+    ? (() => {
+        const info = describeFeeding(deleting);
+        return `将删除 ${formatLocalDateTimeShort(deleting.recorded_at)} 的「${info.badge} · ${info.title}」，删除后不可恢复。`;
+      })()
+    : '';
+
   return (
     <>
       <ListPageCard
         title="喂养记录"
-        description="记录母乳、配方奶与辅食时间、奶量和时长。"
         badge={
           <span className="flex size-7 items-center justify-center rounded-lg bg-feeding-soft text-feeding-soft-foreground">
             <Milk className="size-4" strokeWidth={1.8} />
@@ -132,7 +138,7 @@ function FeedingPage() {
               <LittleMoments className="max-w-44" />
             </EmptyMedia>
             <EmptyTitle>当前范围内还没有喂养记录</EmptyTitle>
-            <EmptyDescription>记下宝宝的一顿奶或辅食，这里会自动按自然日汇总每日奶量与亲喂时长。</EmptyDescription>
+            <EmptyDescription>记下宝宝的一顿奶或辅食，这里会按天自动汇总。</EmptyDescription>
             <EmptyActions>
               <Button
                 onClick={() => openQuickRecord('feeding', { initialSubtype: filter === 'all' ? undefined : filter })}
@@ -140,6 +146,11 @@ function FeedingPage() {
                 <Milk className="size-4" />
                 记一笔喂养
               </Button>
+              {range !== 'all' ? (
+                <Button variant="outline" onClick={() => setRange('all')}>
+                  查看全部时间
+                </Button>
+              ) : null}
             </EmptyActions>
           </Empty>
         ) : (
@@ -195,7 +206,7 @@ function FeedingPage() {
           if (!next) setDeleting(null);
         }}
         title="确认删除这条喂养记录？"
-        description="删除后当日奶量与趋势统计会自动更新，此操作不可恢复。"
+        description={deletingSummary}
         confirmLabel={deleteMutation.isPending ? '正在删除…' : '确认删除'}
         pending={deleteMutation.isPending}
         onConfirm={handleConfirmDelete}

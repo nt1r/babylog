@@ -1,6 +1,6 @@
 import { createFileRoute, Navigate, useNavigate } from '@tanstack/react-router';
 import { format } from 'date-fns';
-import { AlertCircle, Baby, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
+import { AlertCircle, Baby, ChevronDown, ChevronUp } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
 import { ThemeSwitcher } from '@/components/app-shell/theme-switcher';
 import { BrandMark } from '@/components/brand/brand-mark';
@@ -12,7 +12,14 @@ import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { toast } from '@/components/ui/toast';
-import { BABY_GENDER_LABELS, type BabyGender, useBabyProfileQuery, useCreateBabyMutation } from '@/lib/baby';
+import {
+  BABY_GENDER_LABELS,
+  type BabyFormValidationErrors,
+  type BabyGender,
+  useBabyProfileQuery,
+  useCreateBabyMutation,
+  validateBabyProfileForm,
+} from '@/lib/baby';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth';
 
@@ -42,7 +49,7 @@ function OnboardingPage() {
   const [birthWeight, setBirthWeight] = useState('');
   const [birthHeight, setBirthHeight] = useState('');
   const [submitError, setSubmitError] = useState('');
-  const [fieldErrors, setFieldErrors] = useState<{ nickname?: string; birthDate?: string }>({});
+  const [fieldErrors, setFieldErrors] = useState<BabyFormValidationErrors>({});
 
   useEffect(() => {
     document.title = '创建宝宝档案 · BabyLog';
@@ -68,38 +75,26 @@ function OnboardingPage() {
     event.preventDefault();
     if (createBaby.isPending) return;
 
-    const trimmedName = nickname.trim();
-    const nextErrors: { nickname?: string; birthDate?: string } = {};
-    if (!trimmedName) nextErrors.nickname = '请填写宝宝昵称或小名';
-    if (!birthDate) nextErrors.birthDate = '请选择出生日期';
-    else if (birthDate > todayStr) nextErrors.birthDate = '出生日期不能晚于今天';
-
-    if (nextErrors.nickname || nextErrors.birthDate) {
-      setFieldErrors(nextErrors);
-      return;
-    }
-
-    const parsedWeight = birthWeight.trim() ? Number.parseFloat(birthWeight) : null;
-    const parsedHeight = birthHeight.trim() ? Number.parseFloat(birthHeight) : null;
-    if (parsedWeight !== null && Number.isNaN(parsedWeight)) {
-      setSubmitError('出生体重请输入有效数字');
-      return;
-    }
-    if (parsedHeight !== null && Number.isNaN(parsedHeight)) {
-      setSubmitError('出生身高请输入有效数字');
+    const { payload, errors } = validateBabyProfileForm({
+      nickname,
+      birthDate,
+      gender,
+      birthWeight,
+      birthHeight,
+      todayStr,
+    });
+    if (!payload) {
+      if (errors.birthWeight || errors.birthHeight) {
+        setShowOptional(true);
+      }
+      setFieldErrors(errors);
       return;
     }
 
     setSubmitError('');
     setFieldErrors({});
     try {
-      const created = await createBaby.mutateAsync({
-        nickname: trimmedName,
-        birth_date: birthDate,
-        gender,
-        birth_weight_kg: parsedWeight,
-        birth_height_cm: parsedHeight,
-      });
+      const created = await createBaby.mutateAsync(payload);
       toast.success(`欢迎 ${created.nickname}`, '宝宝档案已创建，开始记录成长日常吧。');
       await navigate({ to: '/dashboard', replace: true });
     } catch (cause) {
@@ -121,17 +116,13 @@ function OnboardingPage() {
 
       <main className="mx-auto grid w-full max-w-[1040px] flex-1 grid-cols-1 items-center gap-10 py-6 md:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] md:gap-14">
         <section className="hidden flex-col gap-4 md:flex">
-          <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-primary/12 px-3 py-1 text-xs font-medium text-primary">
-            <Sparkles className="size-3.5" />
-            只需 10 秒完成建档
-          </span>
           <h2 className="text-[clamp(30px,3vw,42px)] leading-[1.35] font-semibold tracking-tight">
             为宝宝建立
             <br />
             <span className="text-primary">专属成长档案。</span>
           </h2>
           <p className="text-[15px] leading-[1.75] text-muted-foreground">
-            填写小名与出生日期后，看板会自动计算宝宝月龄与天数，并记录每天的喂养、睡眠、护理与健康变化。
+            填写小名与出生日期后，看板会自动计算宝宝月龄与天数，陪你记录每一天的变化。
           </p>
           <LittleMoments className="mt-2 max-w-80" />
         </section>
@@ -144,7 +135,7 @@ function OnboardingPage() {
               </span>
               <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">创建宝宝档案</h1>
             </div>
-            <CardDescription>只需填写以下 3 项基本信息即可开始记录，后续随时可在「设置」中修改。</CardDescription>
+            <CardDescription>填写宝宝的基本信息即可开始记录，后续随时可在设置中修改。</CardDescription>
           </CardHeader>
 
           <CardContent className="p-0">
@@ -221,7 +212,7 @@ function OnboardingPage() {
 
                   {showOptional ? (
                     <div className="mt-3 grid grid-cols-2 gap-3">
-                      <Field>
+                      <Field invalid={Boolean(fieldErrors.birthWeight)}>
                         <FieldLabel htmlFor="baby-birth-weight">出生体重（kg）</FieldLabel>
                         <Input
                           id="baby-birth-weight"
@@ -232,11 +223,18 @@ function OnboardingPage() {
                           inputMode="decimal"
                           placeholder="如 3.35"
                           className="tabular-nums"
+                          aria-invalid={Boolean(fieldErrors.birthWeight)}
                           value={birthWeight}
-                          onChange={(event) => setBirthWeight(event.target.value)}
+                          onChange={(event) => {
+                            setBirthWeight(event.target.value);
+                            if (fieldErrors.birthWeight) {
+                              setFieldErrors((prev) => ({ ...prev, birthWeight: undefined }));
+                            }
+                          }}
                         />
+                        <FieldError>{fieldErrors.birthWeight}</FieldError>
                       </Field>
-                      <Field>
+                      <Field invalid={Boolean(fieldErrors.birthHeight)}>
                         <FieldLabel htmlFor="baby-birth-height">出生身高（cm）</FieldLabel>
                         <Input
                           id="baby-birth-height"
@@ -247,9 +245,16 @@ function OnboardingPage() {
                           inputMode="decimal"
                           placeholder="如 50.0"
                           className="tabular-nums"
+                          aria-invalid={Boolean(fieldErrors.birthHeight)}
                           value={birthHeight}
-                          onChange={(event) => setBirthHeight(event.target.value)}
+                          onChange={(event) => {
+                            setBirthHeight(event.target.value);
+                            if (fieldErrors.birthHeight) {
+                              setFieldErrors((prev) => ({ ...prev, birthHeight: undefined }));
+                            }
+                          }}
                         />
+                        <FieldError>{fieldErrors.birthHeight}</FieldError>
                       </Field>
                     </div>
                   ) : null}

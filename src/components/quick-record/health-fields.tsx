@@ -147,10 +147,10 @@ export function HealthFields({ state, medicinePresets, onChange }: HealthFieldsP
 
       {state.subtype === 'growth' ? (
         <div className="space-y-2">
-          <p className="text-xs text-muted-foreground">体重、身高、头围至少填写一项即可保存。</p>
+          <p className="text-xs text-muted-foreground">至少填写一项即可保存</p>
           <div className="grid grid-cols-3 gap-2.5">
             <Field>
-              <FieldLabel htmlFor="growth-weight">体重 (kg)</FieldLabel>
+              <FieldLabel htmlFor="growth-weight">体重（kg）</FieldLabel>
               <Input
                 id="growth-weight"
                 type="number"
@@ -163,7 +163,7 @@ export function HealthFields({ state, medicinePresets, onChange }: HealthFieldsP
               />
             </Field>
             <Field>
-              <FieldLabel htmlFor="growth-height">身高 (cm)</FieldLabel>
+              <FieldLabel htmlFor="growth-height">身高（cm）</FieldLabel>
               <Input
                 id="growth-height"
                 type="number"
@@ -176,7 +176,7 @@ export function HealthFields({ state, medicinePresets, onChange }: HealthFieldsP
               />
             </Field>
             <Field>
-              <FieldLabel htmlFor="growth-head">头围 (cm)</FieldLabel>
+              <FieldLabel htmlFor="growth-head">头围（cm）</FieldLabel>
               <Input
                 id="growth-head"
                 type="number"
