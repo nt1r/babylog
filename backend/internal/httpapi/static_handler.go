@@ -178,8 +178,28 @@ func serveFromDiskRoot(c *gin.Context, dir, relPath string) (bool, error) {
 		return false, nil
 	}
 
+	applyStaticHeaders(c, relPath)
 	http.ServeContent(c.Writer, c.Request, info.Name(), info.ModTime(), file)
 	return true, nil
+}
+
+// applyStaticHeaders 为 PWA 关键资源补充显式 MIME 与缓存策略：
+// 1. .webmanifest 显式声明 application/manifest+json，防止精简系统缺少扩展名映射；
+// 2. index.html、sw.js 与 manifest.webmanifest 使用 no-cache，确保发版后立即发现更新；
+// 3. Vite 生成的带内容哈希 /assets/* 文件启用长期不可变缓存，加快主屏幕二次启动。
+func applyStaticHeaders(c *gin.Context, relPath string) {
+	if strings.HasSuffix(relPath, ".webmanifest") {
+		c.Header("Content-Type", "application/manifest+json; charset=utf-8")
+		c.Header("Cache-Control", "no-cache")
+		return
+	}
+	if relPath == "sw.js" || relPath == "index.html" {
+		c.Header("Cache-Control", "no-cache")
+		return
+	}
+	if strings.HasPrefix(relPath, "assets/") {
+		c.Header("Cache-Control", "public, max-age=31536000, immutable")
+	}
 }
 
 // isNotFoundOrEscaped 判断错误是否属于资源缺失、无效路径或 os.Root 拦截的路径/符号链接逃逸。
@@ -208,6 +228,7 @@ func serveFromFS(c *gin.Context, fsys fs.FS, relPath string) (bool, error) {
 		return false, nil
 	}
 
+	applyStaticHeaders(c, relPath)
 	if seeker, ok := file.(io.ReadSeeker); ok {
 		http.ServeContent(c.Writer, c.Request, info.Name(), info.ModTime(), seeker)
 		return true, nil

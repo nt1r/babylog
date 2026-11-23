@@ -21,7 +21,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <AdminHeader />
         <div
           id="main-content"
-          className="@container/main mx-auto flex w-full max-w-6xl flex-1 flex-col gap-5 px-4 pt-5 pb-24 md:gap-6 md:px-6 md:py-6"
+          className="@container/main mx-auto flex w-full max-w-6xl flex-1 flex-col gap-5 px-4 pt-5 pb-[calc(env(safe-area-inset-bottom)+6rem)] md:gap-6 md:px-6 md:py-6"
         >
           {children}
         </div>

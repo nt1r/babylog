@@ -42,6 +42,18 @@ func setupTestServer(t *testing.T) (*httptest.Server, *gin.Engine) {
 	if err := os.WriteFile(filepath.Join(distDir, "index.html"), []byte("<!doctype html><title>BabyLog Test</title>"), 0o644); err != nil {
 		t.Fatalf("write index.html: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(distDir, "manifest.webmanifest"), []byte(`{"name":"BabyLog"}`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(distDir, "sw.js"), []byte("self.addEventListener('fetch', () => {});"), 0o644); err != nil {
+		t.Fatalf("write sw.js: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(distDir, "assets"), 0o755); err != nil {
+		t.Fatalf("mkdir assets: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(distDir, "assets", "app-hash123.js"), []byte("console.log('ok');"), 0o644); err != nil {
+		t.Fatalf("write hashed asset: %v", err)
+	}
 	// 在 dist 外部写入文件并创建指向它的符号链接，用于验证路径穿越与符号链接逃逸防护。
 	outsideFile := filepath.Join(tempRoot, "secret.txt")
 	if err := os.WriteFile(outsideFile, []byte("top-secret"), 0o600); err != nil {
@@ -332,8 +344,51 @@ func TestStaticAndSPAFallback(t *testing.T) {
 	if ct := spaResp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 		t.Errorf("expected text/html content-type, got %q", ct)
 	}
+	if cc := spaResp.Header.Get("Cache-Control"); cc != "no-cache" {
+		t.Errorf("expected index.html Cache-Control=no-cache, got %q", cc)
+	}
 	if !strings.Contains(string(spaHTML), "BabyLog Test") {
 		t.Errorf("unexpected SPA html body: %q", string(spaHTML))
+	}
+
+	// PWA manifest、Service Worker 与带哈希静态资源的 MIME 及缓存头校验。
+	manifestResp, err := client.Get(ts.URL + "/manifest.webmanifest")
+	if err != nil {
+		t.Fatalf("GET manifest: %v", err)
+	}
+	_ = manifestResp.Body.Close()
+	if manifestResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for manifest, got %d", manifestResp.StatusCode)
+	}
+	if ct := manifestResp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/manifest+json") {
+		t.Errorf("expected application/manifest+json, got %q", ct)
+	}
+	if cc := manifestResp.Header.Get("Cache-Control"); cc != "no-cache" {
+		t.Errorf("expected manifest Cache-Control=no-cache, got %q", cc)
+	}
+
+	swResp, err := client.Get(ts.URL + "/sw.js")
+	if err != nil {
+		t.Fatalf("GET sw.js: %v", err)
+	}
+	_ = swResp.Body.Close()
+	if swResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for sw.js, got %d", swResp.StatusCode)
+	}
+	if cc := swResp.Header.Get("Cache-Control"); cc != "no-cache" {
+		t.Errorf("expected sw.js Cache-Control=no-cache, got %q", cc)
+	}
+
+	assetResp, err := client.Get(ts.URL + "/assets/app-hash123.js")
+	if err != nil {
+		t.Fatalf("GET hashed asset: %v", err)
+	}
+	_ = assetResp.Body.Close()
+	if assetResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for hashed asset, got %d", assetResp.StatusCode)
+	}
+	if cc := assetResp.Header.Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+		t.Errorf("expected immutable Cache-Control for hashed asset, got %q", cc)
 	}
 
 	// 缺失静态资源返回 404。

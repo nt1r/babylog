@@ -22,34 +22,36 @@ export function AdminHeader() {
   const currentItem = findNavItemByPath(pathname);
 
   return (
-    <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border/75 bg-background/85 px-4 backdrop-blur-md md:rounded-t-2xl md:px-6">
-      <div className="flex min-w-0 items-center gap-2.5">
-        <SidebarTrigger />
-        <Separator orientation="vertical" className="h-4" />
-        <Breadcrumb className="min-w-0">
-          <BreadcrumbList>
-            <BreadcrumbItem className="hidden sm:inline-flex">
-              <BreadcrumbLink render={<Link to="/dashboard" />}>BabyLog</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator className="hidden sm:inline-flex" />
-            <BreadcrumbItem>
-              <BreadcrumbPage className="truncate">{currentItem?.title ?? '首页看板'}</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
-      </div>
+    <header className="sticky top-0 z-10 shrink-0 border-b border-border/75 bg-background/85 pt-[env(safe-area-inset-top)] backdrop-blur-md md:rounded-t-2xl md:pt-0">
+      <div className="flex h-14 items-center justify-between gap-3 px-4 md:px-6">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <SidebarTrigger />
+          <Separator orientation="vertical" className="h-4" />
+          <Breadcrumb className="min-w-0">
+            <BreadcrumbList>
+              <BreadcrumbItem className="hidden sm:inline-flex">
+                <BreadcrumbLink render={<Link to="/dashboard" />}>BabyLog</BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator className="hidden sm:inline-flex" />
+              <BreadcrumbItem>
+                <BreadcrumbPage className="truncate">{currentItem?.title ?? '首页看板'}</BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
+        </div>
 
-      <div className="flex shrink-0 items-center gap-1.5">
-        <Button
-          size="sm"
-          className="hidden sm:inline-flex"
-          onClick={() => openQuickRecord(currentItem?.category ?? 'feeding')}
-        >
-          <PlusIcon className="size-4" />
-          记一笔
-        </Button>
-        <ThemeSwitcher />
-        <UserMenu />
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Button
+            size="sm"
+            className="hidden sm:inline-flex"
+            onClick={() => openQuickRecord(currentItem?.category ?? 'feeding')}
+          >
+            <PlusIcon className="size-4" />
+            记一笔
+          </Button>
+          <ThemeSwitcher />
+          <UserMenu />
+        </div>
       </div>
     </header>
   );

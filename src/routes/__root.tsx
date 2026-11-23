@@ -5,9 +5,10 @@ import { useEffect } from 'react';
 import { LittleMoments } from '@/components/brand/little-moments';
 import { Button } from '@/components/ui/button';
 import { Empty, EmptyActions, EmptyDescription, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
-import { Toaster } from '@/components/ui/toast';
+import { Toaster, toast } from '@/components/ui/toast';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { setUnauthorizedHandler } from '@/lib/http';
+import { registerServiceWorker } from '@/lib/pwa';
 import { queryClient } from '@/lib/query-client';
 import { useAuthStore } from '@/stores/auth';
 import { usePreferencesStore } from '@/stores/preferences';
@@ -32,6 +33,18 @@ function RootComponent() {
       queryClient.clear();
     });
     return () => setUnauthorizedHandler(null);
+  }, []);
+
+  useEffect(() => {
+    registerServiceWorker((applyUpdate) => {
+      toast.info('BabyLog 有新版本可用', '点击更新即可加载最新界面与修复。', {
+        timeout: 10_000,
+        action: {
+          label: '立即更新',
+          onClick: applyUpdate,
+        },
+      });
+    });
   }, []);
 
   useEffect(() => {
