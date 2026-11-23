@@ -1,6 +1,10 @@
-import { MinusIcon, PlusIcon } from 'lucide-react';
 import { MilkAmountControl } from '@/components/quick-record/milk-amount-control';
-import { Button } from '@/components/ui/button';
+import {
+  ChoiceCardButton,
+  NumberStepperCard,
+  QuickChip,
+  SegmentedControl,
+} from '@/components/quick-record/record-controls';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import {
@@ -11,7 +15,17 @@ import {
   type FeedingSubtype,
   type SolidAcceptance,
 } from '@/lib/records';
-import { cn } from '@/lib/utils';
+
+const FEEDING_SUBTYPE_OPTIONS = [
+  { value: 'formula', label: '配方奶' },
+  { value: 'breast', label: '母乳' },
+  { value: 'solid', label: '辅食' },
+] as const;
+
+const BREAST_MODE_OPTIONS = [
+  { value: 'direct', label: '亲喂' },
+  { value: 'bottle', label: '瓶喂母乳' },
+] as const;
 
 const BREAST_DURATION_PRESETS = [10, 15, 20, 30] as const;
 const SOLID_AMOUNT_PRESETS = ['几口', '半碗', '一碗'] as const;
@@ -56,60 +70,36 @@ export function FeedingFields({
     <FieldGroup className="gap-4">
       <div className="space-y-2">
         <p className="text-[13px] font-medium text-foreground">喂养类型</p>
-        <div className="grid grid-cols-3 gap-2">
-          {(
-            [
-              { value: 'formula', label: '配方奶' },
-              { value: 'breast', label: '母乳' },
-              { value: 'solid', label: '辅食' },
-            ] as const
-          ).map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              onClick={() => onChange({ subtype: item.value })}
-              className={cn(
-                'cursor-pointer rounded-xl border py-2 text-sm font-medium transition-colors',
-                state.subtype === item.value
-                  ? 'border-feeding bg-feeding-soft text-feeding-soft-foreground'
-                  : 'border-border/80 bg-background text-muted-foreground hover:bg-muted/50',
-              )}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          ariaLabel="喂养类型"
+          options={FEEDING_SUBTYPE_OPTIONS}
+          value={state.subtype}
+          onChange={(subtype) => onChange({ subtype })}
+        />
       </div>
 
       {state.subtype === 'breast' ? (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-2">
-            {(
-              [
-                { value: 'direct', label: '亲喂（时长）' },
-                { value: 'bottle', label: '瓶喂母乳（ml）' },
-              ] as const
-            ).map((item) => (
-              <button
-                key={item.value}
-                type="button"
-                onClick={() => onChange({ feedingMode: item.value })}
-                className={cn(
-                  'cursor-pointer rounded-xl border py-2 text-xs font-medium transition-colors',
-                  state.feedingMode === item.value
-                    ? 'border-primary bg-accent text-accent-foreground'
-                    : 'border-border/80 bg-background text-muted-foreground hover:bg-muted/50',
-                )}
-              >
-                {item.label}
-              </button>
-            ))}
+          <div className="space-y-2">
+            <p className="text-[13px] font-medium text-foreground">喂养方式</p>
+            <div className="grid grid-cols-2 gap-2">
+              {BREAST_MODE_OPTIONS.map((item) => (
+                <ChoiceCardButton
+                  key={item.value}
+                  tone="feeding"
+                  active={state.feedingMode === item.value}
+                  onClick={() => onChange({ feedingMode: item.value })}
+                >
+                  {item.label}
+                </ChoiceCardButton>
+              ))}
+            </div>
           </div>
 
           {state.feedingMode === 'direct' ? (
             <>
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <p className="text-[13px] font-medium text-foreground">亲喂侧别</p>
                   {lastBreastSide ? (
                     <span className="text-xs text-primary">
@@ -119,71 +109,46 @@ export function FeedingFields({
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   {(['left', 'right', 'both'] as const).map((side) => (
-                    <button
+                    <ChoiceCardButton
                       key={side}
-                      type="button"
+                      tone="feeding"
+                      active={state.breastSide === side}
                       onClick={() => onChange({ breastSide: side })}
-                      className={cn(
-                        'cursor-pointer rounded-xl border py-2.5 text-sm font-medium transition-colors',
-                        state.breastSide === side
-                          ? 'border-feeding bg-feeding-soft text-feeding-soft-foreground'
-                          : 'border-border/80 bg-background text-foreground hover:bg-muted/50',
-                      )}
                     >
                       {BREAST_SIDE_LABELS[side]}
-                    </button>
+                    </ChoiceCardButton>
                   ))}
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <p className="text-[13px] font-medium text-foreground">亲喂时长（分钟）</p>
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    aria-label="减少 5 分钟"
-                    onClick={() => stepBreastMin(-5)}
-                  >
-                    <MinusIcon className="size-4" />
-                  </Button>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={180}
-                    inputMode="numeric"
-                    value={state.breastMinText}
-                    placeholder="如 15"
-                    aria-label="亲喂时长分钟数"
-                    className="text-center text-base font-semibold tabular-nums"
-                    onChange={(event) => onChange({ breastMinText: event.target.value })}
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    aria-label="增加 5 分钟"
-                    onClick={() => stepBreastMin(5)}
-                  >
-                    <PlusIcon className="size-4" />
-                  </Button>
-                </div>
+              <div className="space-y-2.5">
+                <p className="text-[13px] font-medium text-foreground">亲喂时长</p>
+                <NumberStepperCard
+                  valueText={state.breastMinText}
+                  unit="分钟"
+                  placeholder="15"
+                  inputAriaLabel="亲喂时长分钟数"
+                  decrementLabel="-5"
+                  incrementLabel="+5"
+                  decrementAriaLabel="减少 5 分钟"
+                  incrementAriaLabel="增加 5 分钟"
+                  inputMode="numeric"
+                  min={1}
+                  max={180}
+                  onChange={(breastMinText) => onChange({ breastMinText })}
+                  onDecrement={() => stepBreastMin(-5)}
+                  onIncrement={() => stepBreastMin(5)}
+                />
                 <div className="flex flex-wrap gap-1.5">
                   {BREAST_DURATION_PRESETS.map((m) => (
-                    <button
+                    <QuickChip
                       key={m}
-                      type="button"
+                      tone="feeding"
+                      active={currentMin === m}
                       onClick={() => onChange({ breastMinText: String(m) })}
-                      className={cn(
-                        'cursor-pointer rounded-full border px-3 py-1 text-xs tabular-nums transition-colors',
-                        currentMin === m
-                          ? 'border-feeding bg-feeding-soft text-feeding-soft-foreground'
-                          : 'border-border/80 bg-muted/40 text-muted-foreground hover:bg-accent',
-                      )}
                     >
                       {m} 分钟
-                    </button>
+                    </QuickChip>
                   ))}
                 </div>
               </div>
@@ -218,19 +183,14 @@ export function FeedingFields({
             />
             <div className="flex flex-wrap gap-1.5 pt-1">
               {solidPresets.map((food) => (
-                <button
+                <QuickChip
                   key={food}
-                  type="button"
+                  tone="feeding"
+                  active={state.solidFood === food}
                   onClick={() => onChange({ solidFood: food })}
-                  className={cn(
-                    'cursor-pointer rounded-full border px-2.5 py-1 text-xs transition-colors',
-                    state.solidFood === food
-                      ? 'border-feeding bg-feeding-soft text-feeding-soft-foreground'
-                      : 'border-border/80 bg-muted/40 text-muted-foreground hover:bg-accent',
-                  )}
                 >
                   {food}
-                </button>
+                </QuickChip>
               ))}
             </div>
           </Field>
@@ -245,19 +205,14 @@ export function FeedingFields({
             />
             <div className="flex flex-wrap gap-1.5 pt-1">
               {SOLID_AMOUNT_PRESETS.map((amt) => (
-                <button
+                <QuickChip
                   key={amt}
-                  type="button"
+                  tone="feeding"
+                  active={state.solidAmount === amt}
                   onClick={() => onChange({ solidAmount: amt })}
-                  className={cn(
-                    'cursor-pointer rounded-full border px-2.5 py-1 text-xs transition-colors',
-                    state.solidAmount === amt
-                      ? 'border-primary bg-accent text-accent-foreground'
-                      : 'border-border/80 bg-muted/40 text-muted-foreground hover:bg-accent',
-                  )}
                 >
                   {amt}
-                </button>
+                </QuickChip>
               ))}
             </div>
           </Field>
@@ -266,19 +221,14 @@ export function FeedingFields({
             <p className="text-[13px] font-medium text-foreground">宝宝接受度（可选）</p>
             <div className="grid grid-cols-3 gap-2">
               {(['like', 'neutral', 'dislike'] as const).map((acc) => (
-                <button
+                <ChoiceCardButton
                   key={acc}
-                  type="button"
+                  tone="feeding"
+                  active={state.acceptance === acc}
                   onClick={() => onChange({ acceptance: state.acceptance === acc ? '' : acc })}
-                  className={cn(
-                    'cursor-pointer rounded-xl border py-2 text-xs font-medium transition-colors',
-                    state.acceptance === acc
-                      ? 'border-feeding bg-feeding-soft text-feeding-soft-foreground'
-                      : 'border-border/80 bg-background text-muted-foreground hover:bg-muted/50',
-                  )}
                 >
                   {ACCEPTANCE_LABELS[acc]}
-                </button>
+                </ChoiceCardButton>
               ))}
             </div>
           </div>

@@ -1,5 +1,6 @@
 import { subMinutes } from 'date-fns';
-import { Input } from '@/components/ui/input';
+import { DateTimeInputRow } from '@/components/quick-record/date-time-input-row';
+import { QuickChip } from '@/components/quick-record/record-controls';
 import { splitLocalDateTime } from '@/lib/time';
 
 const TIME_OFFSETS = [
@@ -26,33 +27,20 @@ export function TimeOffsetPicker({ dateStr, timeStr, maxDate, onChange }: TimeOf
   return (
     <div className="space-y-2">
       <p className="text-[13px] font-medium text-foreground">记录时间</p>
-      <div className="grid grid-cols-2 gap-2.5">
-        <Input
-          type="date"
-          max={maxDate}
-          value={dateStr}
-          aria-label="记录日期"
-          className="tabular-nums"
-          onChange={(event) => onChange(event.target.value, timeStr)}
-        />
-        <Input
-          type="time"
-          value={timeStr}
-          aria-label="记录时间"
-          className="tabular-nums"
-          onChange={(event) => onChange(dateStr, event.target.value)}
-        />
-      </div>
+      <DateTimeInputRow
+        dateValue={dateStr}
+        timeValue={timeStr}
+        maxDate={maxDate}
+        dateAriaLabel="记录日期"
+        timeAriaLabel="记录时间"
+        onDateChange={(nextDate) => onChange(nextDate, timeStr)}
+        onTimeChange={(nextTime) => onChange(dateStr, nextTime)}
+      />
       <div className="flex flex-wrap gap-1.5">
         {TIME_OFFSETS.map((item) => (
-          <button
-            key={item.label}
-            type="button"
-            onClick={() => applyOffset(item.minutes)}
-            className="cursor-pointer rounded-full border border-border/80 bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-          >
+          <QuickChip key={item.label} onClick={() => applyOffset(item.minutes)}>
             {item.label}
-          </button>
+          </QuickChip>
         ))}
       </div>
     </div>

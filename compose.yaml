@@ -1,0 +1,36 @@
+services:
+  babylog:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: babylog:local
+    container_name: babylog
+    restart: unless-stopped
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "21115"
+      GIN_MODE: "release"
+      BABYLOG_DATA_DIR: "/data"
+    # 仅绑定宿主机回环地址，由宿主机 Caddy 等反向代理统一对外提供 HTTPS，避免暴露明文 HTTP
+    ports:
+      - "127.0.0.1:21115:21115"
+    # SQLite 主库与 WAL 文件持久化卷；镜像内已预先将 /data 归属为 UID 1000（0700）
+    volumes:
+      - babylog_data:/data
+    # 只读根文件系统 + 临时 /tmp，降低容器内意外写入与提权风险
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "wget -T 3 -qO- http://127.0.0.1:21115/api/auth/session >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  babylog_data:

@@ -1,9 +1,14 @@
 import { subMinutes } from 'date-fns';
+import { DateTimeInputRow } from '@/components/quick-record/date-time-input-row';
+import { QuickChip, SegmentedControl } from '@/components/quick-record/record-controls';
 import { FieldGroup } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
 import type { SleepSubtype } from '@/lib/records';
 import { combineLocalDateTimeToISO, formatDurationMin, guessSleepSubtype, splitLocalDateTime } from '@/lib/time';
-import { cn } from '@/lib/utils';
+
+const SLEEP_SUBTYPE_OPTIONS = [
+  { value: 'nap', label: '白天小睡' },
+  { value: 'night', label: '夜间整觉' },
+] as const;
 
 const SLEEP_DURATION_PRESETS = [
   { label: '30 分钟', minutes: 30 },
@@ -61,107 +66,69 @@ export function SleepFields({ state, maxDate, durationMin, onChange }: SleepFiel
     <FieldGroup className="gap-4">
       <div className="space-y-2">
         <p className="text-[13px] font-medium text-foreground">睡眠类型</p>
-        <div className="grid grid-cols-2 gap-2">
-          {(
-            [
-              { value: 'nap', label: '白天小睡' },
-              { value: 'night', label: '夜间整觉' },
-            ] as const
-          ).map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              onClick={() => onChange({ subtype: item.value })}
-              className={cn(
-                'cursor-pointer rounded-xl border py-2.5 text-sm font-medium transition-colors',
-                state.subtype === item.value
-                  ? 'border-sleep bg-sleep-soft text-sleep-soft-foreground'
-                  : 'border-border/80 bg-background text-muted-foreground hover:bg-muted/50',
-              )}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          ariaLabel="睡眠类型"
+          options={SLEEP_SUBTYPE_OPTIONS}
+          value={state.subtype}
+          onChange={(subtype) => onChange({ subtype })}
+        />
       </div>
 
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <p className="text-[13px] font-medium text-foreground">快捷时长（从醒来倒推入睡）</p>
           <button
             type="button"
             onClick={setEndNow}
-            className="cursor-pointer text-xs font-medium text-primary hover:underline"
+            className="shrink-0 cursor-pointer text-xs font-medium text-primary hover:underline"
           >
             刚醒（设为现在）
           </button>
         </div>
         <div className="flex flex-wrap gap-1.5">
           {SLEEP_DURATION_PRESETS.map((preset) => (
-            <button
+            <QuickChip
               key={preset.label}
-              type="button"
+              tone="sleep"
+              active={durationMin === preset.minutes}
               onClick={() => applyDuration(preset.minutes)}
-              className={cn(
-                'cursor-pointer rounded-full border px-3 py-1 text-xs tabular-nums transition-colors',
-                durationMin === preset.minutes
-                  ? 'border-sleep bg-sleep-soft text-sleep-soft-foreground'
-                  : 'border-border/80 bg-muted/40 text-muted-foreground hover:bg-accent',
-              )}
             >
               {preset.label}
-            </button>
+            </QuickChip>
           ))}
         </div>
       </div>
 
       <div className="space-y-2">
         <p className="text-[13px] font-medium text-foreground">入睡时间</p>
-        <div className="grid grid-cols-2 gap-2.5">
-          <Input
-            type="date"
-            max={maxDate}
-            value={state.startDate}
-            aria-label="入睡日期"
-            className="tabular-nums"
-            onChange={(event) => onChange({ startDate: event.target.value })}
-          />
-          <Input
-            type="time"
-            value={state.startTime}
-            aria-label="入睡时间"
-            className="tabular-nums"
-            onChange={(event) => {
-              const nextTime = event.target.value;
-              const parsed = combineLocalDateTimeToISO(state.startDate, nextTime);
-              onChange({
-                startTime: nextTime,
-                ...(parsed ? { subtype: guessSleepSubtype(new Date(parsed)) } : {}),
-              });
-            }}
-          />
-        </div>
+        <DateTimeInputRow
+          dateValue={state.startDate}
+          timeValue={state.startTime}
+          maxDate={maxDate}
+          dateAriaLabel="入睡日期"
+          timeAriaLabel="入睡时间"
+          onDateChange={(nextDate) => onChange({ startDate: nextDate })}
+          onTimeChange={(nextTime) => {
+            const parsed = combineLocalDateTimeToISO(state.startDate, nextTime);
+            onChange({
+              startTime: nextTime,
+              ...(parsed ? { subtype: guessSleepSubtype(new Date(parsed)) } : {}),
+            });
+          }}
+        />
       </div>
 
       <div className="space-y-2">
         <p className="text-[13px] font-medium text-foreground">醒来时间</p>
-        <div className="grid grid-cols-2 gap-2.5">
-          <Input
-            type="date"
-            max={maxDate}
-            value={state.endDate}
-            aria-label="醒来日期"
-            className="tabular-nums"
-            onChange={(event) => onChange({ endDate: event.target.value })}
-          />
-          <Input
-            type="time"
-            value={state.endTime}
-            aria-label="醒来时间"
-            className="tabular-nums"
-            onChange={(event) => onChange({ endTime: event.target.value })}
-          />
-        </div>
+        <DateTimeInputRow
+          dateValue={state.endDate}
+          timeValue={state.endTime}
+          maxDate={maxDate}
+          dateAriaLabel="醒来日期"
+          timeAriaLabel="醒来时间"
+          onDateChange={(nextDate) => onChange({ endDate: nextDate })}
+          onTimeChange={(nextTime) => onChange({ endTime: nextTime })}
+        />
       </div>
 
       <div className="flex items-center justify-between rounded-xl border border-border/70 bg-muted/30 px-3.5 py-2.5 text-xs">

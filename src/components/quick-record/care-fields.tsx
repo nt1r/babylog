@@ -1,3 +1,4 @@
+import { ChoiceCardButton, QuickChip, SegmentedControl } from '@/components/quick-record/record-controls';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import {
@@ -9,7 +10,12 @@ import {
   type StoolColor,
   type StoolConsistency,
 } from '@/lib/records';
-import { cn } from '@/lib/utils';
+
+const CARE_SUBTYPE_OPTIONS = [
+  { value: 'diaper', label: '排便与尿布' },
+  { value: 'bath', label: '洗澡' },
+  { value: 'other', label: '其他护理' },
+] as const;
 
 export interface CareFormState {
   subtype: CareSubtype;
@@ -30,49 +36,30 @@ export function CareFields({ state, otherPresets, onChange }: CareFieldsProps) {
     <FieldGroup className="gap-4">
       <div className="space-y-2">
         <p className="text-[13px] font-medium text-foreground">护理类型</p>
-        <div className="grid grid-cols-3 gap-2">
-          {(
-            [
-              { value: 'diaper', label: '排便与尿布' },
-              { value: 'bath', label: '洗澡' },
-              { value: 'other', label: '其他护理' },
-            ] as const
-          ).map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              onClick={() => onChange({ subtype: item.value })}
-              className={cn(
-                'cursor-pointer rounded-xl border py-2 text-xs font-medium transition-colors',
-                state.subtype === item.value
-                  ? 'border-care bg-care-soft text-care-soft-foreground'
-                  : 'border-border/80 bg-background text-muted-foreground hover:bg-muted/50',
-              )}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          ariaLabel="护理类型"
+          options={CARE_SUBTYPE_OPTIONS}
+          value={state.subtype}
+          onChange={(subtype) => onChange({ subtype })}
+        />
       </div>
 
       {state.subtype === 'diaper' ? (
         <div className="space-y-4">
-          <div className="grid grid-cols-3 gap-2">
-            {(['pee', 'poop', 'both'] as const).map((kind) => (
-              <button
-                key={kind}
-                type="button"
-                onClick={() => onChange({ diaperKind: kind })}
-                className={cn(
-                  'cursor-pointer rounded-xl border py-2.5 text-sm font-medium transition-colors',
-                  state.diaperKind === kind
-                    ? 'border-care bg-care-soft text-care-soft-foreground'
-                    : 'border-border/80 bg-background text-foreground hover:bg-muted/50',
-                )}
-              >
-                {DIAPER_KIND_LABELS[kind]}
-              </button>
-            ))}
+          <div className="space-y-2">
+            <p className="text-[13px] font-medium text-foreground">排便情况</p>
+            <div className="grid grid-cols-3 gap-2">
+              {(['pee', 'poop', 'both'] as const).map((kind) => (
+                <ChoiceCardButton
+                  key={kind}
+                  tone="care"
+                  active={state.diaperKind === kind}
+                  onClick={() => onChange({ diaperKind: kind })}
+                >
+                  {DIAPER_KIND_LABELS[kind]}
+                </ChoiceCardButton>
+              ))}
+            </div>
           </div>
 
           {state.diaperKind === 'poop' || state.diaperKind === 'both' ? (
@@ -81,19 +68,14 @@ export function CareFields({ state, otherPresets, onChange }: CareFieldsProps) {
                 <p className="text-xs font-medium text-muted-foreground">便便性状（可选）</p>
                 <div className="flex flex-wrap gap-1.5">
                   {(['watery', 'soft', 'formed', 'hard'] as const).map((c) => (
-                    <button
+                    <QuickChip
                       key={c}
-                      type="button"
+                      tone="care"
+                      active={state.stoolConsistency === c}
                       onClick={() => onChange({ stoolConsistency: state.stoolConsistency === c ? '' : c })}
-                      className={cn(
-                        'cursor-pointer rounded-full border px-3 py-1 text-xs transition-colors',
-                        state.stoolConsistency === c
-                          ? 'border-care bg-care-soft text-care-soft-foreground'
-                          : 'border-border/80 bg-background text-muted-foreground hover:bg-accent',
-                      )}
                     >
                       {STOOL_CONSISTENCY_LABELS[c]}
-                    </button>
+                    </QuickChip>
                   ))}
                 </div>
               </div>
@@ -102,21 +84,14 @@ export function CareFields({ state, otherPresets, onChange }: CareFieldsProps) {
                 <p className="text-xs font-medium text-muted-foreground">便便颜色（可选）</p>
                 <div className="flex flex-wrap gap-1.5">
                   {(['yellow', 'green', 'brown', 'abnormal'] as const).map((color) => (
-                    <button
+                    <QuickChip
                       key={color}
-                      type="button"
+                      tone={color === 'abnormal' ? 'destructive' : 'care'}
+                      active={state.stoolColor === color}
                       onClick={() => onChange({ stoolColor: state.stoolColor === color ? '' : color })}
-                      className={cn(
-                        'cursor-pointer rounded-full border px-3 py-1 text-xs transition-colors',
-                        state.stoolColor === color
-                          ? color === 'abnormal'
-                            ? 'border-destructive bg-destructive-soft text-destructive-soft-foreground'
-                            : 'border-care bg-care-soft text-care-soft-foreground'
-                          : 'border-border/80 bg-background text-muted-foreground hover:bg-accent',
-                      )}
                     >
                       {STOOL_COLOR_LABELS[color]}
-                    </button>
+                    </QuickChip>
                   ))}
                 </div>
               </div>
@@ -142,19 +117,14 @@ export function CareFields({ state, otherPresets, onChange }: CareFieldsProps) {
           />
           <div className="flex flex-wrap gap-1.5 pt-1">
             {otherPresets.map((title) => (
-              <button
+              <QuickChip
                 key={title}
-                type="button"
+                tone="care"
+                active={state.careTitle === title}
                 onClick={() => onChange({ careTitle: title })}
-                className={cn(
-                  'cursor-pointer rounded-full border px-2.5 py-1 text-xs transition-colors',
-                  state.careTitle === title
-                    ? 'border-care bg-care-soft text-care-soft-foreground'
-                    : 'border-border/80 bg-muted/40 text-muted-foreground hover:bg-accent',
-                )}
               >
                 {title}
-              </button>
+              </QuickChip>
             ))}
           </div>
         </Field>
