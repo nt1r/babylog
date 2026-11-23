@@ -20,6 +20,8 @@ export function AdminHeader() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const openQuickRecord = usePreferencesStore((state) => state.openQuickRecord);
   const currentItem = findNavItemByPath(pathname);
+  // 记录列表页自身卡片头部已提供带子类型上下文的主按钮，避免桌面端上下双主色按钮重复。
+  const showGlobalQuickRecord = !currentItem?.category;
 
   return (
     <header className="sticky top-0 z-10 shrink-0 border-b border-border/75 bg-background/85 pt-[env(safe-area-inset-top)] backdrop-blur-md md:rounded-t-2xl md:pt-0">
@@ -41,14 +43,12 @@ export function AdminHeader() {
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
-          <Button
-            size="sm"
-            className="hidden sm:inline-flex"
-            onClick={() => openQuickRecord(currentItem?.category ?? 'feeding')}
-          >
-            <PlusIcon className="size-4" />
-            记一笔
-          </Button>
+          {showGlobalQuickRecord ? (
+            <Button size="sm" className="hidden sm:inline-flex" onClick={() => openQuickRecord('feeding')}>
+              <PlusIcon className="size-4" />
+              记一笔
+            </Button>
+          ) : null}
           <ThemeSwitcher />
           <UserMenu />
         </div>

@@ -14,7 +14,9 @@ interface ListPageCardProps {
 }
 
 /**
- * 通用记录列表页卡片框架：包含页面主标题（h1）、筛选栏、操作区与内容主体。
+ * 通用记录列表页卡片框架：
+ * 桌面端展示完整标题与主操作按钮；移动端顶部栏已展示当前页标题且底部栏提供快捷录入，
+ * 因此卡片头在移动端仅保留 sr-only 语义标题（并隐藏其中的可聚焦按钮），保证整页唯一 h1 且首屏直达列表。
  */
 export function ListPageCard({
   title,
@@ -28,19 +30,19 @@ export function ListPageCard({
 }: ListPageCardProps) {
   return (
     <Card className={cn('gap-4', className)}>
-      <CardHeader className="border-b">
+      <CardHeader className="sr-only md:not-sr-only md:grid md:border-b">
         <div className="flex flex-wrap items-center gap-2.5">
-          {badge}
+          {badge ? <span className="hidden md:inline-flex">{badge}</span> : null}
           <h1 className="text-lg leading-snug font-semibold">{title}</h1>
         </div>
-        {description ? <CardDescription>{description}</CardDescription> : null}
-        {headerAction ? <CardAction>{headerAction}</CardAction> : null}
+        {description ? <CardDescription className="hidden md:block">{description}</CardDescription> : null}
+        {headerAction ? <CardAction className="hidden md:block">{headerAction}</CardAction> : null}
       </CardHeader>
 
       <CardContent className="flex flex-col gap-4">
         {filters || actions ? (
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-wrap items-center gap-2">{filters}</div>
+            <div className="min-w-0 max-w-full">{filters}</div>
             {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
           </div>
         ) : null}

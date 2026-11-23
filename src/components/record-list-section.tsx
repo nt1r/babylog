@@ -127,8 +127,12 @@ export function RecordRowCard({
   readonly onDelete: () => void;
 }) {
   return (
-    <div className="flex flex-col gap-2.5 rounded-xl border border-border/80 bg-background/60 px-3.5 py-3 transition-colors hover:border-border sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex min-w-0 items-start gap-3">
+    <div className="flex flex-col gap-2.5 rounded-xl border border-border/80 bg-background/60 px-3.5 py-3 transition-colors hover:border-primary/40 sm:flex-row sm:items-center sm:justify-between">
+      <button
+        type="button"
+        onClick={onEdit}
+        className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
         <span className="mt-0.5 shrink-0 text-sm font-semibold text-muted-foreground tabular-nums">{timeLabel}</span>
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -138,16 +142,17 @@ export function RecordRowCard({
           {subtitle ? <p className="text-xs text-muted-foreground tabular-nums">{subtitle}</p> : null}
           {note ? <p className="text-xs text-muted-foreground/90">备注：{note}</p> : null}
         </div>
-      </div>
+      </button>
 
-      <div className="flex shrink-0 items-center justify-end gap-1">
+      {/* 放大触控面积并在编辑与删除之间拉大安全间距，降低移动端单手误触删除风险 */}
+      <div className="flex shrink-0 items-center justify-end gap-2">
         <Button
           type="button"
           variant="ghost"
-          size="xs"
+          size="sm"
           onClick={onDuplicate}
           title="以当前时间再记一笔相同内容"
-          className="text-muted-foreground hover:text-foreground"
+          className="h-9 px-2.5 text-xs text-muted-foreground hover:text-foreground sm:h-8"
         >
           <CopyPlus className="size-3.5" />
           再记一笔
@@ -155,22 +160,22 @@ export function RecordRowCard({
         <Button
           type="button"
           variant="ghost"
-          size="icon-xs"
+          size="icon-sm"
           aria-label="编辑记录"
           onClick={onEdit}
-          className="text-muted-foreground hover:text-foreground"
+          className="size-9 text-muted-foreground hover:text-foreground sm:size-8"
         >
-          <PencilIcon className="size-3.5" />
+          <PencilIcon className="size-4" />
         </Button>
         <Button
           type="button"
           variant="ghost"
-          size="icon-xs"
+          size="icon-sm"
           aria-label="删除记录"
           onClick={onDelete}
-          className="text-muted-foreground hover:text-destructive"
+          className="ml-2 size-9 text-muted-foreground hover:bg-destructive-soft/70 hover:text-destructive sm:ml-1.5 sm:size-8"
         >
-          <Trash2Icon className="size-3.5" />
+          <Trash2Icon className="size-4" />
         </Button>
       </div>
     </div>

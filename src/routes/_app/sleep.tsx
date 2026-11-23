@@ -25,7 +25,12 @@ import {
   useDeleteRecordMutation,
   useSleepListQuery,
 } from '@/lib/records';
-import { formatDurationMin, formatLocalTimeFromISO, getLocalDateKeyFromISO } from '@/lib/time';
+import {
+  formatDurationMin,
+  formatLocalDateTimeShort,
+  formatLocalTimeFromISO,
+  getLocalDateKeyFromISO,
+} from '@/lib/time';
 import { usePreferencesStore } from '@/stores/preferences';
 
 export const Route = createFileRoute('/_app/sleep')({
@@ -63,11 +68,14 @@ function SleepPage() {
     }
   }
 
+  const deletingSummary = deleting
+    ? `将删除 ${formatLocalDateTimeShort(deleting.started_at)} 入睡的「${deleting.subtype === 'night' ? '夜间整觉' : '白天小睡'} · ${formatDurationMin(deleting.duration_min)}」，删除后不可恢复。`
+    : '';
+
   return (
     <>
       <ListPageCard
         title="睡眠记录"
-        description="记录白天小睡与夜间整觉时长，跨夜睡眠按自然日自动切分统计。"
         badge={
           <span className="flex size-7 items-center justify-center rounded-lg bg-sleep-soft text-sleep-soft-foreground">
             <MoonStar className="size-4" strokeWidth={1.8} />
@@ -106,7 +114,7 @@ function SleepPage() {
               <LittleMoments className="max-w-44" />
             </EmptyMedia>
             <EmptyTitle>当前范围内还没有睡眠记录</EmptyTitle>
-            <EmptyDescription>记录每次入睡和醒来的时间，帮你轻松掌握宝宝的小睡间隔与夜觉节律。</EmptyDescription>
+            <EmptyDescription>记录入睡和醒来时间，帮你掌握宝宝的小睡间隔与夜觉节律。</EmptyDescription>
             <EmptyActions>
               <Button
                 onClick={() => openQuickRecord('sleep', { initialSubtype: filter === 'all' ? undefined : filter })}
@@ -114,6 +122,11 @@ function SleepPage() {
                 <MoonStar className="size-4" />
                 记一笔睡眠
               </Button>
+              {range !== 'all' ? (
+                <Button variant="outline" onClick={() => setRange('all')}>
+                  查看全部时间
+                </Button>
+              ) : null}
             </EmptyActions>
           </Empty>
         ) : (
@@ -134,11 +147,7 @@ function SleepPage() {
                       timeLabel={startClock}
                       badge={<Badge variant="sleep">{rec.subtype === 'night' ? '夜间整觉' : '白天小睡'}</Badge>}
                       title={formatDurationMin(rec.duration_min)}
-                      subtitle={
-                        crossDay
-                          ? `${startClock} → 次日 ${endClock} · 跨夜时长按自然日分别计入`
-                          : `${startClock} → ${endClock}`
-                      }
+                      subtitle={crossDay ? `${startClock} → 次日 ${endClock}` : `${startClock} → ${endClock}`}
                       note={rec.note}
                       onEdit={() =>
                         openQuickRecord('sleep', { mode: 'edit', record: { category: 'sleep', record: rec } })
@@ -175,7 +184,7 @@ function SleepPage() {
           if (!next) setDeleting(null);
         }}
         title="确认删除这条睡眠记录？"
-        description="删除后当日睡眠时长与近 7 日趋势会自动更新，此操作不可恢复。"
+        description={deletingSummary}
         confirmLabel={deleteMutation.isPending ? '正在删除…' : '确认删除'}
         pending={deleteMutation.isPending}
         onConfirm={handleConfirmDelete}

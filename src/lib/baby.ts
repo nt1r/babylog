@@ -35,6 +35,67 @@ export const BABY_GENDER_LABELS: Record<BabyGender, string> = {
   unknown: '暂不透露',
 };
 
+export interface BabyFormValidationErrors {
+  nickname?: string;
+  birthDate?: string;
+  birthWeight?: string;
+  birthHeight?: string;
+}
+
+/** 严格解析可选数值字符串，拒绝带尾随字符（如 "3.5abc"）的非纯数字输入。 */
+function parseOptionalStrictNumber(raw: string): number | null | 'invalid' {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const num = Number(trimmed);
+  return Number.isFinite(num) ? num : 'invalid';
+}
+
+/** 统一校验宝宝档案表单（供建档页与设置页复用，上下限与后端保持一致）。 */
+export function validateBabyProfileForm(input: {
+  nickname: string;
+  birthDate: string;
+  gender: BabyGender;
+  birthWeight: string;
+  birthHeight: string;
+  todayStr: string;
+}): { payload: BabyUpsertInput | null; errors: BabyFormValidationErrors } {
+  const errors: BabyFormValidationErrors = {};
+  const trimmedName = input.nickname.trim();
+  if (!trimmedName) {
+    errors.nickname = '请填写宝宝昵称';
+  }
+  if (!input.birthDate) {
+    errors.birthDate = '请选择出生日期';
+  } else if (input.birthDate > input.todayStr) {
+    errors.birthDate = '出生日期不能晚于今天';
+  }
+
+  const weight = parseOptionalStrictNumber(input.birthWeight);
+  if (weight === 'invalid' || (weight !== null && (weight < 0.3 || weight > 15))) {
+    errors.birthWeight = '请输入 0.3 至 15 kg 之间的数值';
+  }
+
+  const height = parseOptionalStrictNumber(input.birthHeight);
+  if (height === 'invalid' || (height !== null && (height < 20 || height > 100))) {
+    errors.birthHeight = '请输入 20 至 100 cm 之间的数值';
+  }
+
+  if (errors.nickname || errors.birthDate || errors.birthWeight || errors.birthHeight) {
+    return { payload: null, errors };
+  }
+
+  return {
+    payload: {
+      nickname: trimmedName,
+      birth_date: input.birthDate,
+      gender: input.gender,
+      birth_weight_kg: weight === 'invalid' ? null : weight,
+      birth_height_cm: height === 'invalid' ? null : height,
+    },
+    errors: {},
+  };
+}
+
 export async function fetchBabyProfile(signal?: AbortSignal): Promise<BabyProfile | null> {
   const res = await apiRequest<BabyResponse>('/api/baby', { signal });
   return res.baby ?? null;

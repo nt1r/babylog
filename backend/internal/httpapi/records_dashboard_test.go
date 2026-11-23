@@ -491,6 +491,30 @@ func TestDashboardTimezoneSummaryAndCrossMidnightTrends(t *testing.T) {
 		t.Fatalf("expected 201 feeding, got %d", resp.StatusCode)
 	}
 
+	// 写入两条当日亲喂记录（含一条跨 UTC 日界线的本地凌晨记录 00:40+08 与一条 09:30+08）
+	for _, p := range []map[string]any{
+		{
+			"subtype":      "breast",
+			"feeding_mode": "direct",
+			"breast_side":  "left",
+			"duration_min": 18,
+			"recorded_at":  "2026-11-22T16:40:00Z",
+		},
+		{
+			"subtype":      "breast",
+			"feeding_mode": "direct",
+			"breast_side":  "right",
+			"duration_min": 12,
+			"recorded_at":  "2026-11-23T01:30:00Z",
+		},
+	} {
+		r := env.doJSON(t, http.MethodPost, "/api/records/feeding", p, true)
+		_ = r.Body.Close()
+		if r.StatusCode != http.StatusCreated {
+			t.Fatalf("expected 201 direct breast feeding, got %d", r.StatusCode)
+		}
+	}
+
 	// 写入跨夜睡眠：2026-11-22T22:00:00+08:00 (14:00Z) -> 2026-11-23T06:00:00+08:00 (22:00Z)
 	resp = env.doJSON(t, http.MethodPost, "/api/records/sleep", map[string]any{
 		"subtype":    "night",
@@ -529,7 +553,8 @@ func TestDashboardTimezoneSummaryAndCrossMidnightTrends(t *testing.T) {
 	if sum.Date != "2026-11-23" {
 		t.Errorf("expected summary date 2026-11-23, got %s", sum.Date)
 	}
-	if sum.Feeding.TotalML != 120 || sum.Feeding.LastFeedingAt == nil || *sum.Feeding.LastFeedingAt != "2026-11-22T16:30:00Z" {
+	if sum.Feeding.TotalML != 120 || sum.Feeding.DirectBreastCount != 2 || sum.Feeding.DirectBreastMin != 30 ||
+		sum.Feeding.LastFeedingAt == nil || *sum.Feeding.LastFeedingAt != "2026-11-23T01:30:00Z" {
 		t.Errorf("unexpected feeding summary: %+v", sum.Feeding)
 	}
 	if sum.Sleep.TotalMin != 360 || sum.Sleep.NightMin != 360 {
@@ -556,22 +581,22 @@ func TestDashboardTimezoneSummaryAndCrossMidnightTrends(t *testing.T) {
 	if len(tr.Daily) != 7 {
 		t.Fatalf("expected 7 daily points, got %d", len(tr.Daily))
 	}
-	// 前 5 天空日为 0，倒数第 2 天（2026-11-22）睡眠 2.0h，最后一天（2026-11-23）奶量 120ml + 睡眠 6.0h。
+	// 前 5 天空日为 0，倒数第 2 天（2026-11-22）睡眠 2.0h，最后一天（2026-11-23）奶量 120ml + 亲喂 30分/2次 + 睡眠 6.0h。
 	for i := 0; i < 5; i++ {
-		if tr.Daily[i].FeedingML != 0 || tr.Daily[i].SleepHours != 0 {
+		if tr.Daily[i].FeedingML != 0 || tr.Daily[i].DirectBreastMin != 0 || tr.Daily[i].DirectBreastCount != 0 || tr.Daily[i].SleepHours != 0 {
 			t.Errorf("expected zero-filled day %s, got %+v", tr.Daily[i].Date, tr.Daily[i])
 		}
 	}
 	dayPrev := tr.Daily[5]
 	dayToday := tr.Daily[6]
-	if dayPrev.Date != "2026-11-22" || dayPrev.SleepHours != 2.0 || dayPrev.FeedingML != 0 {
+	if dayPrev.Date != "2026-11-22" || dayPrev.SleepHours != 2.0 || dayPrev.FeedingML != 0 || dayPrev.DirectBreastMin != 0 || dayPrev.DirectBreastCount != 0 {
 		t.Errorf("unexpected 2026-11-22 trend: %+v", dayPrev)
 	}
-	if dayToday.Date != "2026-11-23" || dayToday.SleepHours != 6.0 || dayToday.FeedingML != 120 {
+	if dayToday.Date != "2026-11-23" || dayToday.SleepHours != 6.0 || dayToday.FeedingML != 120 || dayToday.DirectBreastMin != 30 || dayToday.DirectBreastCount != 2 {
 		t.Errorf("unexpected 2026-11-23 trend: %+v", dayToday)
 	}
 
-	// 5 个时段有序返回：凌晨喂养(00:30 夜间) + 入睡(22:00 夜间) + 尿布(09:00 上午) + 体温(09:10 上午)
+	// 5 个时段有序返回：凌晨配方奶(00:30 夜间) + 凌晨亲喂(00:40 夜间) + 入睡(22:00 夜间) + 尿布(09:00 上午) + 体温(09:10 上午) + 亲喂(09:30 上午)
 	if len(tr.Slots) != 5 {
 		t.Fatalf("expected 5 slots, got %d", len(tr.Slots))
 	}
@@ -579,7 +604,7 @@ func TestDashboardTimezoneSummaryAndCrossMidnightTrends(t *testing.T) {
 	for _, s := range tr.Slots {
 		slotMap[s.Slot] = s.Count
 	}
-	if slotMap["夜间"] != 2 || slotMap["上午"] != 2 {
+	if slotMap["夜间"] != 3 || slotMap["上午"] != 3 {
 		t.Errorf("unexpected slot counts: %+v", tr.Slots)
 	}
 }

@@ -100,12 +100,6 @@ export function CareFields({ state, otherPresets, onChange }: CareFieldsProps) {
         </div>
       ) : null}
 
-      {state.subtype === 'bath' ? (
-        <p className="rounded-xl border border-border/70 bg-muted/25 px-3.5 py-2.5 text-xs text-muted-foreground">
-          点击「保存记录」即可打卡一次洗澡，可在下方备注水温、洗发或抚触情况。
-        </p>
-      ) : null}
-
       {state.subtype === 'other' ? (
         <Field>
           <FieldLabel htmlFor="care-title-input">护理内容</FieldLabel>
