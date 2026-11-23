@@ -131,6 +131,7 @@ COPYFILE_DISABLE=1 tar \
   Dockerfile \
   .dockerignore \
   compose.yaml \
+  compose.build.yaml \
   package.json \
   pnpm-lock.yaml \
   tsconfig.json \
@@ -147,7 +148,7 @@ if tar --version 2>/dev/null | grep -qi gnu; then
 else
   tar -xzf - -C \"\$STAGE_DIR\"
 fi
-find '$DEPLOY_DIR' -mindepth 1 -maxdepth 1 ! -name data -exec rm -rf {} +
+find '$DEPLOY_DIR' -mindepth 1 -maxdepth 1 ! -name data ! -name .env -exec rm -rf {} +
 cp -a \"\$STAGE_DIR\"/. '$DEPLOY_DIR'/"
 
 printf '==> [3/4] 在服务器上重建并重启容器...\n'
@@ -155,21 +156,25 @@ BUILD_FLAG=""
 if [ "$NO_CACHE" -eq 1 ]; then
   BUILD_FLAG="--no-cache"
 fi
+BUILD_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || printf 'unknown')
+BUILD_DATE=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 
-ssh -o BatchMode=yes "$DEPLOY_HOST" "sh -s -- '$DEPLOY_DIR' '$BUILD_FLAG'" <<'REMOTE_DEPLOY'
+ssh -o BatchMode=yes "$DEPLOY_HOST" "sh -s -- '$DEPLOY_DIR' '$BUILD_FLAG' '$BUILD_COMMIT' '$BUILD_DATE'" <<'REMOTE_DEPLOY'
 set -eu
 DEPLOY_DIR="$1"
 BUILD_FLAG="$2"
+export BABYLOG_COMMIT="$3"
+export BABYLOG_BUILD_DATE="$4"
 cd "$DEPLOY_DIR"
 
 if [ -n "$BUILD_FLAG" ]; then
-  docker compose build "$BUILD_FLAG"
+  docker compose -f compose.yaml -f compose.build.yaml build "$BUILD_FLAG"
 else
-  docker compose build
+  docker compose -f compose.yaml -f compose.build.yaml build
 fi
 
-docker compose up -d --wait
-docker compose ps
+docker compose -f compose.yaml -f compose.build.yaml up -d --wait
+docker compose -f compose.yaml -f compose.build.yaml ps
 REMOTE_DEPLOY
 
 printf '==> [4/4] 验证线上服务状态...\n'

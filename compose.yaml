@@ -1,9 +1,6 @@
 services:
   babylog:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: babylog:local
+    image: ${BABYLOG_IMAGE:-ghcr.io/nt1r/babylog}:${BABYLOG_VERSION:-latest}
     container_name: babylog
     restart: unless-stopped
     environment:
@@ -11,9 +8,9 @@ services:
       PORT: "21115"
       GIN_MODE: "release"
       BABYLOG_DATA_DIR: "/data"
-    # 仅绑定宿主机回环地址，由宿主机 Caddy 等反向代理统一对外提供 HTTPS，避免暴露明文 HTTP
+    # 默认仅绑定宿主机回环地址，由宿主机 Caddy / Nginx 等反向代理统一对外提供 HTTPS，避免暴露明文 HTTP
     ports:
-      - "127.0.0.1:21115:21115"
+      - "${BABYLOG_BIND:-127.0.0.1}:${BABYLOG_PORT:-21115}:21115"
     # SQLite 主库与 WAL 文件持久化卷；镜像内已预先将 /data 归属为 UID 1000（0700）
     volumes:
       - babylog_data:/data

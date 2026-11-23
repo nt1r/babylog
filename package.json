@@ -28,7 +28,7 @@
     "test": "cd backend && CGO_ENABLED=0 go test -v ./...",
     "build": "pnpm build:web && pnpm build:server",
     "build:web": "vite build",
-    "build:server": "sh -c 'set -e; test -f dist/index.html || { echo \"请先运行 pnpm build:web 构建前端产物\" >&2; exit 1; }; trap \"find backend/internal/webui/dist -mindepth 1 ! -name .gitkeep -delete\" EXIT; mkdir -p backend/internal/webui/dist bin; find backend/internal/webui/dist -mindepth 1 ! -name .gitkeep -delete; cp -R dist/. backend/internal/webui/dist/; (cd backend && CGO_ENABLED=0 go build -tags embedwebui -trimpath -ldflags=\"-s -w\" -o ../bin/babylog ./cmd/babylog)'",
+    "build:server": "sh -c 'set -e; test -f dist/index.html || { echo \"请先运行 pnpm build:web 构建前端产物\" >&2; exit 1; }; trap \"find backend/internal/webui/dist -mindepth 1 ! -name .gitkeep -delete\" EXIT; mkdir -p backend/internal/webui/dist bin; find backend/internal/webui/dist -mindepth 1 ! -name .gitkeep -delete; cp -R dist/. backend/internal/webui/dist/; VER=\"${BABYLOG_VERSION:-dev}\"; COMMIT=\"${BABYLOG_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}\"; BUILD_DATE=\"${BABYLOG_BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}\"; (cd backend && CGO_ENABLED=0 go build -tags embedwebui -trimpath -ldflags=\"-s -w -X main.version=${VER} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}\" -o ../bin/babylog ./cmd/babylog)'",
     "start": "./bin/babylog serve"
   },
   "dependencies": {
