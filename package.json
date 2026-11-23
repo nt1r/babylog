@@ -22,7 +22,7 @@
     "dev:web": "vite",
     "dev:server": "BABYLOG_WORK_DIR=\"$PWD\" sh -c 'cd backend && exec go run github.com/air-verse/air@v1.67.4 -c .air.toml'",
     "admin:init": "BABYLOG_WORK_DIR=\"$PWD\" sh -c 'cd backend && exec go run ./cmd/babylog admin init \"$@\"' --",
-    "lint": "biome check . && (cd backend && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go vet -tags embedwebui ./...)",
+    "lint": "biome check . && (cd backend && sh -c 'out=$(gofmt -l .); if [ -n \"$out\" ]; then echo \"Unformatted Go files:\"; echo \"$out\"; exit 1; fi' && CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go vet -tags embedwebui ./...)",
     "format": "biome check --write . && (cd backend && gofmt -w .)",
     "check": "tsc --noEmit",
     "test": "cd backend && CGO_ENABLED=0 go test -v ./...",

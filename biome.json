@@ -41,6 +41,11 @@
     }
   },
   "linter": {
-    "enabled": true
+    "enabled": true,
+    "rules": {
+      "suspicious": {
+        "noImportCycles": "error"
+      }
+    }
   }
 }
