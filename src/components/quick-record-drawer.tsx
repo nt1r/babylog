@@ -39,7 +39,6 @@ import { usePreferencesStore } from '@/stores/preferences';
 const CATEGORIES: ReadonlyArray<{
   id: RecordCategory;
   label: string;
-  hint: string;
   badgeVariant: 'feeding' | 'sleep' | 'health' | 'care' | 'default';
   icon: typeof Milk;
   activeClass: string;
@@ -48,7 +47,6 @@ const CATEGORIES: ReadonlyArray<{
   {
     id: 'feeding',
     label: '喂养',
-    hint: '母乳 / 奶粉 / 辅食',
     badgeVariant: 'feeding',
     icon: Milk,
     activeClass: 'border-feeding bg-feeding-soft text-feeding-soft-foreground',
@@ -56,7 +54,6 @@ const CATEGORIES: ReadonlyArray<{
   {
     id: 'sleep',
     label: '睡眠',
-    hint: '小睡 / 夜觉补录',
     badgeVariant: 'sleep',
     icon: MoonStar,
     activeClass: 'border-sleep bg-sleep-soft text-sleep-soft-foreground',
@@ -64,7 +61,6 @@ const CATEGORIES: ReadonlyArray<{
   {
     id: 'care',
     label: '护理',
-    hint: '排便 / 尿布 / 洗澡',
     badgeVariant: 'care',
     icon: Baby,
     activeClass: 'border-care bg-care-soft text-care-soft-foreground',
@@ -72,7 +68,6 @@ const CATEGORIES: ReadonlyArray<{
   {
     id: 'health',
     label: '健康',
-    hint: '体温 / 用药 / 生长',
     badgeVariant: 'health',
     icon: HeartPulse,
     activeClass: 'border-health bg-health-soft text-health-soft-foreground',
@@ -80,7 +75,6 @@ const CATEGORIES: ReadonlyArray<{
   {
     id: 'reminder',
     label: '提醒',
-    hint: '第 2 期上线',
     badgeVariant: 'default',
     icon: BellRing,
     activeClass: 'border-primary bg-accent text-accent-foreground',
@@ -553,69 +547,63 @@ export function QuickRecordDrawer() {
       icon={isReminder ? <BellRing className="size-4.5" /> : <Sparkles className="size-4.5" />}
       badge={<Badge variant={activeCategory.badgeVariant}>{activeCategory.label}</Badge>}
       footer={
-        <>
-          <Button type="button" variant="outline" disabled={submitting} onClick={() => setOpen(false)}>
+        <div className="grid w-full grid-cols-[1fr_2fr] gap-2.5 sm:flex sm:w-auto sm:items-center sm:justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={submitting}
+            className="h-11 rounded-xl sm:h-10 sm:px-4"
+            onClick={() => setOpen(false)}
+          >
             取消
           </Button>
-          <Button type="submit" form="quick-record-form" disabled={submitting}>
+          <Button
+            type="submit"
+            form="quick-record-form"
+            disabled={submitting}
+            className="h-11 rounded-xl sm:h-10 sm:px-5"
+          >
             {submitting ? <Spinner className="size-4" aria-hidden="true" role="presentation" /> : null}
             {submitting ? '保存中…' : isEdit ? '保存修改' : isReminder ? '知道了' : '保存记录'}
           </Button>
-        </>
+        </div>
       }
     >
-      <form id="quick-record-form" onSubmit={handleSubmit} noValidate className="space-y-5">
+      <form id="quick-record-form" onSubmit={handleSubmit} noValidate className="flex flex-col gap-5">
         {!isEdit ? (
-          <div className="space-y-2">
-            <p className="text-[13px] font-medium text-foreground">分类</p>
-            <div className="grid grid-cols-2 gap-2">
-              {CATEGORIES.filter((c) => c.id !== 'reminder' || isReminder).map((item) => {
-                const Icon = item.icon;
-                const selected = item.id === category;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => {
-                      markTouched();
-                      setCategory(item.id);
-                    }}
-                    className={cn(
-                      'flex min-h-13 cursor-pointer items-center gap-2.5 rounded-xl border px-3 py-2 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                      item.spanFull && 'col-span-2',
-                      selected ? item.activeClass : 'border-border/80 bg-card text-foreground hover:bg-muted/60',
-                    )}
-                  >
-                    <Icon className="size-4.5 shrink-0" strokeWidth={1.8} />
-                    <span className="min-w-0">
-                      <span className="block text-sm font-medium">{item.label}</span>
-                      <span className="block truncate text-xs opacity-80">{item.hint}</span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          <fieldset aria-label="记录分类" className="grid min-w-0 grid-cols-4 gap-1 border-0 p-0 sm:gap-1.5">
+            {CATEGORIES.filter((c) => c.id !== 'reminder' || isReminder).map((item) => {
+              const Icon = item.icon;
+              const selected = item.id === category;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => {
+                    markTouched();
+                    setCategory(item.id);
+                  }}
+                  className={cn(
+                    'flex h-10 cursor-pointer items-center justify-center gap-1 rounded-xl border px-1.5 text-[13px] font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring sm:gap-1.5 sm:px-2',
+                    item.spanFull && 'col-span-4',
+                    selected
+                      ? item.activeClass
+                      : 'border-border/75 bg-card text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+                  )}
+                >
+                  <Icon className="size-4 shrink-0" strokeWidth={1.8} />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </fieldset>
         ) : null}
 
         {isReminder ? (
           <div className="rounded-2xl border border-border/80 bg-muted/30 p-4 text-sm text-muted-foreground">
             提醒待办（疫苗接种、儿保体检、定时用药重复提醒）将在第 2 期上线，届时可一键完成并自动生成对应健康记录。
           </div>
-        ) : null}
-
-        {/* 睡眠使用独立的起止时间区间选择器，其余三类共用单个记录时间 + 相对偏移胶囊。 */}
-        {!isReminder && category !== 'sleep' ? (
-          <TimeOffsetPicker
-            dateStr={dateStr}
-            timeStr={timeStr}
-            maxDate={todayMaxDate}
-            onChange={(nextDate, nextTime) => {
-              markTouched();
-              setDateStr(nextDate);
-              setTimeStr(nextTime);
-            }}
-          />
         ) : null}
 
         {category === 'feeding' ? (
@@ -662,6 +650,20 @@ export function QuickRecordDrawer() {
             onChange={(patch) => {
               markTouched();
               setHealth((prev) => ({ ...prev, ...patch }));
+            }}
+          />
+        ) : null}
+
+        {/* 核心业务字段优先展示在首屏；睡眠自带起止时间区间，其余三类在下方统一提供记录时间与快捷偏移。 */}
+        {!isReminder && category !== 'sleep' ? (
+          <TimeOffsetPicker
+            dateStr={dateStr}
+            timeStr={timeStr}
+            maxDate={todayMaxDate}
+            onChange={(nextDate, nextTime) => {
+              markTouched();
+              setDateStr(nextDate);
+              setTimeStr(nextTime);
             }}
           />
         ) : null}

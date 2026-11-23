@@ -1,10 +1,15 @@
-import { MinusIcon, PlusIcon } from 'lucide-react';
+import { NumberStepperCard, QuickChip, SegmentedControl } from '@/components/quick-record/record-controls';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { getTemperatureSeverity, type HealthSubtype, type MedicinePreset } from '@/lib/records';
-import { cn } from '@/lib/utils';
+
+const HEALTH_SUBTYPE_OPTIONS = [
+  { value: 'temperature', label: '体温' },
+  { value: 'medicine', label: '用药' },
+  { value: 'growth', label: '生长' },
+  { value: 'teeth', label: '长牙' },
+] as const;
 
 const TEMP_PRESETS = [36.5, 36.8, 37.3, 38.0, 38.5] as const;
 const TEETH_PRESETS = ['下中切牙（第 1 颗）', '下中切牙（第 2 颗）', '上中切牙', '侧切牙'] as const;
@@ -41,36 +46,18 @@ export function HealthFields({ state, medicinePresets, onChange }: HealthFieldsP
     <FieldGroup className="gap-4">
       <div className="space-y-2">
         <p className="text-[13px] font-medium text-foreground">健康项目</p>
-        <div className="grid grid-cols-4 gap-1.5">
-          {(
-            [
-              { value: 'temperature', label: '体温' },
-              { value: 'medicine', label: '用药' },
-              { value: 'growth', label: '生长' },
-              { value: 'teeth', label: '长牙' },
-            ] as const
-          ).map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              onClick={() => onChange({ subtype: item.value })}
-              className={cn(
-                'cursor-pointer rounded-xl border py-2 text-xs font-medium transition-colors',
-                state.subtype === item.value
-                  ? 'border-health bg-health-soft text-health-soft-foreground'
-                  : 'border-border/80 bg-background text-muted-foreground hover:bg-muted/50',
-              )}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          ariaLabel="健康项目"
+          options={HEALTH_SUBTYPE_OPTIONS}
+          value={state.subtype}
+          onChange={(subtype) => onChange({ subtype })}
+        />
       </div>
 
       {state.subtype === 'temperature' ? (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-[13px] font-medium text-foreground">体温（℃）</p>
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[13px] font-medium text-foreground">体温</p>
             {tempSeverity ? (
               <Badge
                 variant={
@@ -85,41 +72,33 @@ export function HealthFields({ state, medicinePresets, onChange }: HealthFieldsP
               </Badge>
             ) : null}
           </div>
-          <div className="flex items-center gap-2">
-            <Button type="button" variant="outline" size="icon" aria-label="减少 0.1 度" onClick={() => stepTemp(-0.1)}>
-              <MinusIcon className="size-4" />
-            </Button>
-            <Input
-              type="number"
-              step="0.1"
-              min="34.0"
-              max="43.0"
-              inputMode="decimal"
-              value={state.temperatureText}
-              placeholder="36.6"
-              aria-label="体温数值"
-              className="text-center text-lg font-semibold tabular-nums"
-              onChange={(event) => onChange({ temperatureText: event.target.value })}
-            />
-            <Button type="button" variant="outline" size="icon" aria-label="增加 0.1 度" onClick={() => stepTemp(0.1)}>
-              <PlusIcon className="size-4" />
-            </Button>
-          </div>
+          <NumberStepperCard
+            valueText={state.temperatureText}
+            unit="℃"
+            placeholder="36.6"
+            inputAriaLabel="体温数值"
+            decrementLabel="-0.1"
+            incrementLabel="+0.1"
+            decrementAriaLabel="减少 0.1 度"
+            incrementAriaLabel="增加 0.1 度"
+            inputMode="decimal"
+            min={34.0}
+            max={43.0}
+            step={0.1}
+            onChange={(temperatureText) => onChange({ temperatureText })}
+            onDecrement={() => stepTemp(-0.1)}
+            onIncrement={() => stepTemp(0.1)}
+          />
           <div className="flex flex-wrap gap-1.5">
             {TEMP_PRESETS.map((t) => (
-              <button
+              <QuickChip
                 key={t}
-                type="button"
+                tone="health"
+                active={hasValidTemp && parsedTemp === t}
                 onClick={() => onChange({ temperatureText: t.toFixed(1) })}
-                className={cn(
-                  'cursor-pointer rounded-full border px-3 py-1 text-xs tabular-nums transition-colors',
-                  hasValidTemp && parsedTemp === t
-                    ? 'border-health bg-health-soft text-health-soft-foreground'
-                    : 'border-border/80 bg-muted/40 text-muted-foreground hover:bg-accent',
-                )}
               >
                 {t.toFixed(1)} ℃
-              </button>
+              </QuickChip>
             ))}
           </div>
         </div>
@@ -137,25 +116,20 @@ export function HealthFields({ state, medicinePresets, onChange }: HealthFieldsP
             />
             <div className="flex flex-wrap gap-1.5 pt-1">
               {medicinePresets.map((med) => (
-                <button
+                <QuickChip
                   key={med.name}
-                  type="button"
+                  tone="health"
+                  active={state.medicineName === med.name}
                   onClick={() =>
                     onChange({
                       medicineName: med.name,
                       ...(med.dosage ? { medicineDosage: med.dosage } : {}),
                     })
                   }
-                  className={cn(
-                    'cursor-pointer rounded-full border px-2.5 py-1 text-xs transition-colors',
-                    state.medicineName === med.name
-                      ? 'border-health bg-health-soft text-health-soft-foreground'
-                      : 'border-border/80 bg-muted/40 text-muted-foreground hover:bg-accent',
-                  )}
                 >
                   {med.name}
                   {med.dosage ? ` · ${med.dosage}` : ''}
-                </button>
+                </QuickChip>
               ))}
             </div>
           </Field>
@@ -229,19 +203,14 @@ export function HealthFields({ state, medicinePresets, onChange }: HealthFieldsP
           />
           <div className="flex flex-wrap gap-1.5 pt-1">
             {TEETH_PRESETS.map((preset) => (
-              <button
+              <QuickChip
                 key={preset}
-                type="button"
+                tone="health"
+                active={state.toothNote === preset}
                 onClick={() => onChange({ toothNote: preset })}
-                className={cn(
-                  'cursor-pointer rounded-full border px-2.5 py-1 text-xs transition-colors',
-                  state.toothNote === preset
-                    ? 'border-health bg-health-soft text-health-soft-foreground'
-                    : 'border-border/80 bg-muted/40 text-muted-foreground hover:bg-accent',
-                )}
               >
                 {preset}
-              </button>
+              </QuickChip>
             ))}
           </div>
         </Field>

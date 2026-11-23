@@ -28,6 +28,71 @@ pnpm dev
 - `pnpm build`：构建前端产物并内嵌打包为单二进制 `bin/babylog`。
 - `pnpm start`：运行 `bin/babylog serve` 提供 UI 与 API（21115 端口）。
 
+## Docker Compose 部署（HTTPS）
+
+项目提供多阶段构建的 [Dockerfile](./Dockerfile) 与单容器 [compose.yaml](./compose.yaml)，默认仅绑定宿主机回环地址 `127.0.0.1:21115`，由宿主机反向代理（如 Caddy / Nginx）统一提供 Let's Encrypt HTTPS。
+
+### 1. 构建并初始化管理员
+
+```bash
+docker compose build
+
+# 交互式写入 0600 临时密码文件（长度 12–1024 字符），初始化后立即删除
+umask 077
+read -rsp "输入 BabyLog 管理员密码: " BABYLOG_PASS; echo
+printf '%s\n' "$BABYLOG_PASS" > /tmp/babylog-init.pass
+unset BABYLOG_PASS
+
+docker compose run --rm --no-deps \
+  -v /tmp/babylog-init.pass:/tmp/init.pass:ro \
+  babylog admin init --password-file /tmp/init.pass --username admin
+rm -f /tmp/babylog-init.pass
+
+docker compose up -d
+```
+
+SQLite 数据库持久化保存在 Docker 命名卷 `babylog_data`（挂载到容器内 `/data`，归属 UID `1000`）。
+
+### 2. 反向代理配置要点（以 Caddy 为例）
+
+```caddyfile
+baby.example.com {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+
+	reverse_proxy 127.0.0.1:21115 {
+		# 后端内网走 HTTP，由反代补齐会话 Cookie 的 Secure 标记
+		header_down Set-Cookie "(?i)(^babylog_session=.*)" "$1; Secure"
+	}
+}
+```
+
+- **保留原始 `Host` 头**：所有写接口均启用 Same-Origin 校验，Caddy 默认透传 `Host`；若使用 Nginx，须显式设置 `proxy_set_header Host $http_host;` 与 `proxy_cookie_flags babylog_session secure;`。
+- **透传缓存头**：不要在反代覆盖后端返回的 `Cache-Control`（`/api/*` 为 `no-store`，`index.html`/`sw.js`/`manifest.webmanifest` 为 `no-cache`，`/assets/*` 为 `immutable`），以确保 iOS / Android PWA 正常更新。
+
+### 3. 本地一键推送更新
+
+在仓库根目录创建本地配置文件 `.env.deploy`（已被 `.gitignore` 忽略，不会入库）：
+
+```sh
+DEPLOY_HOST=user@your-server
+DEPLOY_DIR=/opt/babylog
+DEPLOY_DOMAIN=baby.example.com
+```
+
+本地修改完成后执行 [scripts/deploy.sh](./scripts/deploy.sh) 即可完成检查、白名单同步、远程重建容器与健康验证：
+
+```sh
+./scripts/deploy.sh              # 默认执行 pnpm lint && pnpm check 后发布
+./scripts/deploy.sh --skip-checks
+./scripts/deploy.sh --no-cache
+```
+
 ## 功能计划
 
 1. **喂养记录**：支持母乳、奶粉混合喂养和辅食，记录喂养时间、时长、奶量等信息。
