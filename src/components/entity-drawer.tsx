@@ -48,7 +48,11 @@ export function EntityDrawer({
 
         <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
 
-        {footer ? <SheetFooter>{footer}</SheetFooter> : null}
+        {footer ? (
+          <SheetFooter className={cn(isMobile && 'pb-[calc(env(safe-area-inset-bottom)+0.75rem)]')}>
+            {footer}
+          </SheetFooter>
+        ) : null}
       </SheetContent>
     </Sheet>
   );

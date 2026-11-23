@@ -25,7 +25,7 @@ function ToastList() {
   return (
     <ToastPrimitive.Viewport
       data-slot="toast-viewport"
-      className="pointer-events-none fixed inset-x-4 bottom-20 z-100 mx-auto flex w-auto max-w-sm flex-col gap-2 outline-none md:right-4 md:bottom-4 md:left-auto md:mx-0 md:w-full"
+      className="pointer-events-none fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+5rem)] z-100 mx-auto flex w-auto max-w-sm flex-col gap-2 outline-none md:right-4 md:bottom-4 md:left-auto md:mx-0 md:w-full"
     >
       {toasts.map((item) => {
         const type = item.type ?? 'info';

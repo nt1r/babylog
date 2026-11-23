@@ -108,7 +108,7 @@ function OnboardingPage() {
   }
 
   return (
-    <div className="mx-auto flex min-h-svh max-w-[1360px] flex-col px-5 pt-6 pb-6 sm:px-10 md:px-16 md:pt-9">
+    <div className="mx-auto flex min-h-svh max-w-[1360px] flex-col px-5 pt-[calc(env(safe-area-inset-top)+1.5rem)] pb-[calc(env(safe-area-inset-bottom)+1.5rem)] sm:px-10 md:px-16 md:pt-9">
       <header className="flex items-center justify-between">
         <div className="flex items-center gap-3 text-primary">
           <BrandMark className="size-9" />

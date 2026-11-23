@@ -98,7 +98,7 @@ function LoginPage() {
   const displayError = submitError || (restoreFailed ? restoreError : '');
 
   return (
-    <div className="mx-auto flex min-h-svh max-w-[1360px] flex-col px-5 pt-6 pb-5 sm:px-10 md:px-16 md:pt-9 md:pb-7">
+    <div className="mx-auto flex min-h-svh max-w-[1360px] flex-col px-5 pt-[calc(env(safe-area-inset-top)+1.5rem)] pb-[calc(env(safe-area-inset-bottom)+1.25rem)] sm:px-10 md:px-16 md:pt-9 md:pb-7">
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-4 focus:z-50 focus:rounded-lg focus:bg-primary focus:px-5 focus:py-3 focus:text-sm focus:font-medium focus:text-primary-foreground"

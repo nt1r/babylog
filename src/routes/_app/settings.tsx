@@ -1,6 +1,18 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { format } from 'date-fns';
-import { Baby, CheckIcon, LogOutIcon, MonitorIcon, MoonIcon, SaveIcon, ShieldCheck, SunIcon } from 'lucide-react';
+import {
+  Baby,
+  CheckIcon,
+  DownloadIcon,
+  LogOutIcon,
+  MonitorIcon,
+  MoonIcon,
+  SaveIcon,
+  ShareIcon,
+  ShieldCheck,
+  SmartphoneIcon,
+  SunIcon,
+} from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
 import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -13,6 +25,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { toast } from '@/components/ui/toast';
 import { useLogoutAction } from '@/hooks/use-logout';
 import { BABY_GENDER_LABELS, type BabyGender, useBabyProfileQuery, useUpdateBabyMutation } from '@/lib/baby';
+import { triggerPwaInstall, usePwaInstallState } from '@/lib/pwa';
 import { formatBabyAge } from '@/lib/time';
 import { cn, getInitials } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth';
@@ -59,6 +72,7 @@ function SettingsPage() {
   const babyQuery = useBabyProfileQuery();
   const updateBaby = useUpdateBabyMutation();
   const baby = babyQuery.data;
+  const { standalone, canPromptInstall, isIOS } = usePwaInstallState();
 
   const todayStr = format(new Date(), 'yyyy-MM-dd');
   const [nickname, setNickname] = useState('');
@@ -281,6 +295,75 @@ function SettingsPage() {
               </button>
             );
           })}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <span className="flex size-8 items-center justify-center rounded-xl bg-primary/12 text-primary">
+                <SmartphoneIcon className="size-4.5" strokeWidth={1.8} />
+              </span>
+              <div>
+                <CardTitle>安装到手机主屏幕</CardTitle>
+                <CardDescription>无需上架应用商店，即可在 iPhone 或桌面以全屏独立应用方式使用。</CardDescription>
+              </div>
+            </div>
+            {standalone ? <Badge variant="success">已作为独立应用运行</Badge> : null}
+          </div>
+        </CardHeader>
+        <CardContent>
+          {standalone ? (
+            <p className="rounded-2xl border border-border/80 bg-muted/30 p-4 text-xs leading-relaxed text-muted-foreground">
+              当前已处于主屏幕独立应用模式，免去了浏览器地址栏并已适配灵动岛与底部安全区。
+            </p>
+          ) : canPromptInstall ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/80 bg-muted/30 p-4">
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                当前浏览器支持一键安装 BabyLog 到桌面或主屏幕，后续点击图标即可快速记一笔。
+              </p>
+              <Button
+                size="sm"
+                onClick={async () => {
+                  try {
+                    const outcome = await triggerPwaInstall();
+                    if (outcome === 'accepted') {
+                      toast.success('已开始安装 BabyLog');
+                    }
+                  } catch {
+                    toast.error('安装弹窗调用失败', '请尝试通过浏览器地址栏或菜单手动安装。');
+                  }
+                }}
+              >
+                <DownloadIcon className="size-4" />
+                安装应用
+              </Button>
+            </div>
+          ) : isIOS ? (
+            <div className="space-y-2 rounded-2xl border border-border/80 bg-muted/30 p-4 text-xs leading-relaxed text-muted-foreground">
+              <p className="font-medium text-foreground">在 iPhone Safari 添加到主屏幕（永久免签，不会过期）：</p>
+              <ol className="list-decimal space-y-1 pl-4">
+                <li>
+                  点击 Safari 底部工具栏的
+                  <span className="mx-1 inline-flex items-center gap-0.5 font-medium text-foreground">
+                    <ShareIcon className="size-3.5" />
+                    分享
+                  </span>
+                  按钮；
+                </li>
+                <li>
+                  向下滑动并选择<span className="mx-1 font-medium text-foreground">「添加到主屏幕」</span>
+                  ，点右上角「添加」即可。
+                </li>
+              </ol>
+            </div>
+          ) : (
+            <p className="rounded-2xl border border-border/80 bg-muted/30 p-4 text-xs leading-relaxed text-muted-foreground">
+              使用 iPhone Safari 打开本页面并选择「分享 → 添加到主屏幕」，或在支持 PWA
+              的浏览器地址栏点击安装图标，即可获得接近原生 App 的全屏单手体验。
+            </p>
+          )}
         </CardContent>
       </Card>
 
