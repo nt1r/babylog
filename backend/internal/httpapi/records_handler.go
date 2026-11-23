@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -34,313 +35,133 @@ func (h *recordsHandler) handleRecordErr(c *gin.Context, op string, err error) {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
-	if h.logger != nil {
-		h.logger.Error(op+" failed", "error", err)
-	}
+	h.logger.Error(op+" failed", "error", err)
 	c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 }
 
-// ==================== Feeding ====================
-
-func (h *recordsHandler) listFeeding(c *gin.Context) {
-	babyID, ok := mustBabyID(c)
-	if !ok {
-		return
-	}
-	filter, ok := parseListFilter(c)
-	if !ok {
-		return
-	}
-	res, err := h.recordStore.ListFeeding(c.Request.Context(), babyID, filter)
-	if err != nil {
-		h.handleRecordErr(c, "listFeeding", err)
-		return
-	}
-	c.JSON(http.StatusOK, res)
+type recordCRUD[Rec any, In any, Sum any] struct {
+	opPrefix string
+	list     func(context.Context, int64, records.ListFilter) (*records.ListResult[Rec, Sum], error)
+	create   func(context.Context, int64, In) (*Rec, error)
+	update   func(context.Context, int64, int64, In) (*Rec, error)
+	delete   func(context.Context, int64, int64) error
 }
 
-func (h *recordsHandler) createFeeding(c *gin.Context) {
-	babyID, ok := mustBabyID(c)
-	if !ok {
-		return
-	}
-	var input records.FeedingInput
-	if status, msg := decodeJSONBody(c, &input); status != 0 {
-		c.JSON(status, gin.H{"error": msg})
-		return
-	}
-	rec, err := h.recordStore.CreateFeeding(c.Request.Context(), babyID, input)
-	if err != nil {
-		h.handleRecordErr(c, "createFeeding", err)
-		return
-	}
-	c.JSON(http.StatusCreated, gin.H{"record": rec})
+// registerRecordRoutes 将单类记录的 GET/POST/PUT/DELETE 统一注册到路由组，
+// 保持四类记录的 JSON 解码、参数校验、状态码与错误处理语义完全一致。
+func registerRecordRoutes[Rec any, In any, Sum any](
+	group *gin.RouterGroup,
+	path string,
+	h *recordsHandler,
+	crud recordCRUD[Rec, In, Sum],
+) {
+	group.GET(path, func(c *gin.Context) {
+		babyID, ok := mustBabyID(c)
+		if !ok {
+			return
+		}
+		filter, ok := parseListFilter(c)
+		if !ok {
+			return
+		}
+		res, err := crud.list(c.Request.Context(), babyID, filter)
+		if err != nil {
+			h.handleRecordErr(c, "list"+crud.opPrefix, err)
+			return
+		}
+		c.JSON(http.StatusOK, res)
+	})
+
+	group.POST(path, func(c *gin.Context) {
+		babyID, ok := mustBabyID(c)
+		if !ok {
+			return
+		}
+		var input In
+		if status, msg := decodeJSONBody(c, &input); status != 0 {
+			c.JSON(status, gin.H{"error": msg})
+			return
+		}
+		rec, err := crud.create(c.Request.Context(), babyID, input)
+		if err != nil {
+			h.handleRecordErr(c, "create"+crud.opPrefix, err)
+			return
+		}
+		c.JSON(http.StatusCreated, gin.H{"record": rec})
+	})
+
+	group.PUT(path+"/:id", func(c *gin.Context) {
+		babyID, ok := mustBabyID(c)
+		if !ok {
+			return
+		}
+		id, ok := parseIDParam(c)
+		if !ok {
+			return
+		}
+		var input In
+		if status, msg := decodeJSONBody(c, &input); status != 0 {
+			c.JSON(status, gin.H{"error": msg})
+			return
+		}
+		rec, err := crud.update(c.Request.Context(), babyID, id, input)
+		if err != nil {
+			h.handleRecordErr(c, "update"+crud.opPrefix, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"record": rec})
+	})
+
+	group.DELETE(path+"/:id", func(c *gin.Context) {
+		babyID, ok := mustBabyID(c)
+		if !ok {
+			return
+		}
+		id, ok := parseIDParam(c)
+		if !ok {
+			return
+		}
+		if err := crud.delete(c.Request.Context(), babyID, id); err != nil {
+			h.handleRecordErr(c, "delete"+crud.opPrefix, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"deleted": true})
+	})
 }
 
-func (h *recordsHandler) updateFeeding(c *gin.Context) {
-	babyID, ok := mustBabyID(c)
-	if !ok {
-		return
-	}
-	id, ok := parseIDParam(c)
-	if !ok {
-		return
-	}
-	var input records.FeedingInput
-	if status, msg := decodeJSONBody(c, &input); status != 0 {
-		c.JSON(status, gin.H{"error": msg})
-		return
-	}
-	rec, err := h.recordStore.UpdateFeeding(c.Request.Context(), babyID, id, input)
-	if err != nil {
-		h.handleRecordErr(c, "updateFeeding", err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"record": rec})
+// registerRoutes 挂载智能默认值及四类日常记录的标准 CRUD 路由。
+func (h *recordsHandler) registerRoutes(group *gin.RouterGroup) {
+	group.GET("/defaults", h.getDefaults)
+
+	registerRecordRoutes(group, "/feeding", h, recordCRUD[records.FeedingRecord, records.FeedingInput, records.FeedingDailySummary]{
+		opPrefix: "Feeding",
+		list:     h.recordStore.ListFeeding,
+		create:   h.recordStore.CreateFeeding,
+		update:   h.recordStore.UpdateFeeding,
+		delete:   h.recordStore.DeleteFeeding,
+	})
+	registerRecordRoutes(group, "/sleep", h, recordCRUD[records.SleepRecord, records.SleepInput, records.SleepDailySummary]{
+		opPrefix: "Sleep",
+		list:     h.recordStore.ListSleep,
+		create:   h.recordStore.CreateSleep,
+		update:   h.recordStore.UpdateSleep,
+		delete:   h.recordStore.DeleteSleep,
+	})
+	registerRecordRoutes(group, "/care", h, recordCRUD[records.CareRecord, records.CareInput, records.CareDailySummary]{
+		opPrefix: "Care",
+		list:     h.recordStore.ListCare,
+		create:   h.recordStore.CreateCare,
+		update:   h.recordStore.UpdateCare,
+		delete:   h.recordStore.DeleteCare,
+	})
+	registerRecordRoutes(group, "/health", h, recordCRUD[records.HealthRecord, records.HealthInput, records.HealthDailySummary]{
+		opPrefix: "Health",
+		list:     h.recordStore.ListHealth,
+		create:   h.recordStore.CreateHealth,
+		update:   h.recordStore.UpdateHealth,
+		delete:   h.recordStore.DeleteHealth,
+	})
 }
-
-func (h *recordsHandler) deleteFeeding(c *gin.Context) {
-	babyID, ok := mustBabyID(c)
-	if !ok {
-		return
-	}
-	id, ok := parseIDParam(c)
-	if !ok {
-		return
-	}
-	if err := h.recordStore.DeleteFeeding(c.Request.Context(), babyID, id); err != nil {
-		h.handleRecordErr(c, "deleteFeeding", err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"deleted": true})
-}
-
-// ==================== Sleep ====================
-
-func (h *recordsHandler) listSleep(c *gin.Context) {
-	babyID, ok := mustBabyID(c)
-	if !ok {
-		return
-	}
-	filter, ok := parseListFilter(c)
-	if !ok {
-		return
-	}
-	res, err := h.recordStore.ListSleep(c.Request.Context(), babyID, filter)
-	if err != nil {
-		h.handleRecordErr(c, "listSleep", err)
-		return
-	}
-	c.JSON(http.StatusOK, res)
-}
-
-func (h *recordsHandler) createSleep(c *gin.Context) {
-	babyID, ok := mustBabyID(c)
-	if !ok {
-		return
-	}
-	var input records.SleepInput
-	if status, msg := decodeJSONBody(c, &input); status != 0 {
-		c.JSON(status, gin.H{"error": msg})
-		return
-	}
-	rec, err := h.recordStore.CreateSleep(c.Request.Context(), babyID, input)
-	if err != nil {
-		h.handleRecordErr(c, "createSleep", err)
-		return
-	}
-	c.JSON(http.StatusCreated, gin.H{"record": rec})
-}
-
-func (h *recordsHandler) updateSleep(c *gin.Context) {
-	babyID, ok := mustBabyID(c)
-	if !ok {
-		return
-	}
-	id, ok := parseIDParam(c)
-	if !ok {
-		return
-	}
-	var input records.SleepInput
-	if status, msg := decodeJSONBody(c, &input); status != 0 {
-		c.JSON(status, gin.H{"error": msg})
-		return
-	}
-	rec, err := h.recordStore.UpdateSleep(c.Request.Context(), babyID, id, input)
-	if err != nil {
-		h.handleRecordErr(c, "updateSleep", err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"record": rec})
-}
-
-func (h *recordsHandler) deleteSleep(c *gin.Context) {
-	babyID, ok := mustBabyID(c)
-	if !ok {
-		return
-	}
-	id, ok := parseIDParam(c)
-	if !ok {
-		return
-	}
-	if err := h.recordStore.DeleteSleep(c.Request.Context(), babyID, id); err != nil {
-		h.handleRecordErr(c, "deleteSleep", err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"deleted": true})
-}
-
-// ==================== Care ====================
-
-func (h *recordsHandler) listCare(c *gin.Context) {
-	babyID, ok := mustBabyID(c)
-	if !ok {
-		return
-	}
-	filter, ok := parseListFilter(c)
-	if !ok {
-		return
-	}
-	res, err := h.recordStore.ListCare(c.Request.Context(), babyID, filter)
-	if err != nil {
-		h.handleRecordErr(c, "listCare", err)
-		return
-	}
-	c.JSON(http.StatusOK, res)
-}
-
-func (h *recordsHandler) createCare(c *gin.Context) {
-	babyID, ok := mustBabyID(c)
-	if !ok {
-		return
-	}
-	var input records.CareInput
-	if status, msg := decodeJSONBody(c, &input); status != 0 {
-		c.JSON(status, gin.H{"error": msg})
-		return
-	}
-	rec, err := h.recordStore.CreateCare(c.Request.Context(), babyID, input)
-	if err != nil {
-		h.handleRecordErr(c, "createCare", err)
-		return
-	}
-	c.JSON(http.StatusCreated, gin.H{"record": rec})
-}
-
-func (h *recordsHandler) updateCare(c *gin.Context) {
-	babyID, ok := mustBabyID(c)
-	if !ok {
-		return
-	}
-	id, ok := parseIDParam(c)
-	if !ok {
-		return
-	}
-	var input records.CareInput
-	if status, msg := decodeJSONBody(c, &input); status != 0 {
-		c.JSON(status, gin.H{"error": msg})
-		return
-	}
-	rec, err := h.recordStore.UpdateCare(c.Request.Context(), babyID, id, input)
-	if err != nil {
-		h.handleRecordErr(c, "updateCare", err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"record": rec})
-}
-
-func (h *recordsHandler) deleteCare(c *gin.Context) {
-	babyID, ok := mustBabyID(c)
-	if !ok {
-		return
-	}
-	id, ok := parseIDParam(c)
-	if !ok {
-		return
-	}
-	if err := h.recordStore.DeleteCare(c.Request.Context(), babyID, id); err != nil {
-		h.handleRecordErr(c, "deleteCare", err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"deleted": true})
-}
-
-// ==================== Health ====================
-
-func (h *recordsHandler) listHealth(c *gin.Context) {
-	babyID, ok := mustBabyID(c)
-	if !ok {
-		return
-	}
-	filter, ok := parseListFilter(c)
-	if !ok {
-		return
-	}
-	res, err := h.recordStore.ListHealth(c.Request.Context(), babyID, filter)
-	if err != nil {
-		h.handleRecordErr(c, "listHealth", err)
-		return
-	}
-	c.JSON(http.StatusOK, res)
-}
-
-func (h *recordsHandler) createHealth(c *gin.Context) {
-	babyID, ok := mustBabyID(c)
-	if !ok {
-		return
-	}
-	var input records.HealthInput
-	if status, msg := decodeJSONBody(c, &input); status != 0 {
-		c.JSON(status, gin.H{"error": msg})
-		return
-	}
-	rec, err := h.recordStore.CreateHealth(c.Request.Context(), babyID, input)
-	if err != nil {
-		h.handleRecordErr(c, "createHealth", err)
-		return
-	}
-	c.JSON(http.StatusCreated, gin.H{"record": rec})
-}
-
-func (h *recordsHandler) updateHealth(c *gin.Context) {
-	babyID, ok := mustBabyID(c)
-	if !ok {
-		return
-	}
-	id, ok := parseIDParam(c)
-	if !ok {
-		return
-	}
-	var input records.HealthInput
-	if status, msg := decodeJSONBody(c, &input); status != 0 {
-		c.JSON(status, gin.H{"error": msg})
-		return
-	}
-	rec, err := h.recordStore.UpdateHealth(c.Request.Context(), babyID, id, input)
-	if err != nil {
-		h.handleRecordErr(c, "updateHealth", err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"record": rec})
-}
-
-func (h *recordsHandler) deleteHealth(c *gin.Context) {
-	babyID, ok := mustBabyID(c)
-	if !ok {
-		return
-	}
-	id, ok := parseIDParam(c)
-	if !ok {
-		return
-	}
-	if err := h.recordStore.DeleteHealth(c.Request.Context(), babyID, id); err != nil {
-		h.handleRecordErr(c, "deleteHealth", err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"deleted": true})
-}
-
-// ==================== Smart Defaults ====================
 
 // getDefaults 处理 GET /api/records/defaults，汇总返回前端快捷录入所需的智能默认值。
 func (h *recordsHandler) getDefaults(c *gin.Context) {

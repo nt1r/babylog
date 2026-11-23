@@ -2,10 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
-	"errors"
-	"io"
 	"log/slog"
-	"mime"
 	"net/http"
 	"unicode/utf8"
 
@@ -34,7 +31,7 @@ func (h *authHandler) getSession(c *gin.Context) {
 	token, hasCookie := readSessionCookie(c.Request)
 	user, err := h.store.GetSession(c.Request.Context(), token)
 	if err != nil {
-		h.logInternalError("getSession failed", err)
+		h.logger.Error("getSession failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 		return
 	}
@@ -54,7 +51,7 @@ func (h *authHandler) login(c *gin.Context) {
 
 	user, err := h.store.Authenticate(c.Request.Context(), username, password)
 	if err != nil {
-		h.logInternalError("authenticate failed", err)
+		h.logger.Error("authenticate failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 		return
 	}
@@ -66,7 +63,7 @@ func (h *authHandler) login(c *gin.Context) {
 	previousToken, _ := readSessionCookie(c.Request)
 	newToken, err := h.store.CreateSession(c.Request.Context(), previousToken)
 	if err != nil {
-		h.logInternalError("createSession failed", err)
+		h.logger.Error("createSession failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 		return
 	}
@@ -79,18 +76,12 @@ func (h *authHandler) login(c *gin.Context) {
 func (h *authHandler) logout(c *gin.Context) {
 	token, _ := readSessionCookie(c.Request)
 	if err := h.store.RevokeSession(c.Request.Context(), token); err != nil {
-		h.logInternalError("revokeSession failed", err)
+		h.logger.Error("revokeSession failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 		return
 	}
 	clearSessionCookie(c)
 	c.JSON(http.StatusOK, gin.H{"user": nil})
-}
-
-func (h *authHandler) logInternalError(msg string, err error) {
-	if h.logger != nil {
-		h.logger.Error(msg, "error", err)
-	}
 }
 
 func readSessionCookie(r *http.Request) (string, bool) {
@@ -119,28 +110,11 @@ func clearSessionCookie(c *gin.Context) {
 }
 
 // readLoginBody 严格解析并校验登录 JSON 请求体。
-// 这里不使用 Gin 的 ShouldBindJSON，目的是：
-// 1. 精确区分 415（非 JSON Content-Type）、413（超出 16 KiB）与 400（格式/类型错误）；
-// 2. 拒绝缺失字段、null 或非字符串类型（避免结构体零值把 null/缺字段误当作空字符串）；
-// 3. 原样保留密码中的空白字符，不做隐式裁剪。
+// 复用 readJSONBytes 区分 415/413/400，再拒绝缺失字段、null 或非字符串类型，并原样保留密码空白字符。
 func readLoginBody(c *gin.Context) (username, password string, errStatus int, errMsg string) {
-	mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
-	if err != nil || mediaType != "application/json" {
-		return "", "", http.StatusUnsupportedMediaType, "请使用 JSON 格式提交登录信息"
-	}
-
-	if c.Request.ContentLength > maxLoginBodyBytes {
-		return "", "", http.StatusRequestEntityTooLarge, "请求内容过大"
-	}
-
-	limited := http.MaxBytesReader(c.Writer, c.Request.Body, maxLoginBodyBytes)
-	body, err := io.ReadAll(limited)
-	if err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
-			return "", "", http.StatusRequestEntityTooLarge, "请求内容过大"
-		}
-		return "", "", http.StatusBadRequest, "请求内容读取失败"
+	body, status, msg := readJSONBytes(c, maxLoginBodyBytes, "请使用 JSON 格式提交登录信息")
+	if status != 0 {
+		return "", "", status, msg
 	}
 
 	var payload any

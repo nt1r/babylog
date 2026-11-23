@@ -29,14 +29,17 @@ export function ListPageCard({
   children,
 }: ListPageCardProps) {
   return (
-    <Card className={cn('gap-4', className)}>
-      <CardHeader className="sr-only md:not-sr-only md:grid md:border-b">
+    <Card className={cn('relative gap-4', className)}>
+      {/* 仅在小于 md 视口应用 sr-only，避免 md:not-sr-only 的 padding:0 覆盖 CardHeader 默认内边距 */}
+      <CardHeader className={cn('max-md:sr-only md:border-b md:pb-(--card-spacing)', !description && 'items-center')}>
         <div className="flex flex-wrap items-center gap-2.5">
           {badge ? <span className="hidden md:inline-flex">{badge}</span> : null}
           <h1 className="text-lg leading-snug font-semibold">{title}</h1>
         </div>
         {description ? <CardDescription className="hidden md:block">{description}</CardDescription> : null}
-        {headerAction ? <CardAction className="hidden md:block">{headerAction}</CardAction> : null}
+        {headerAction ? (
+          <CardAction className={cn('hidden md:block', !description && 'self-center')}>{headerAction}</CardAction>
+        ) : null}
       </CardHeader>
 
       <CardContent className="flex flex-col gap-4">

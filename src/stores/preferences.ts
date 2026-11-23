@@ -1,16 +1,8 @@
 import { create } from 'zustand';
-import type { RecordCategory } from '@/lib/categories';
-import type { EditableRecord } from '@/lib/records';
 import { DARK_THEME_COLOR, LIGHT_THEME_COLOR, THEME_STORAGE_KEY } from '@/scripts/theme-boot-script';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type ResolvedTheme = 'light' | 'dark';
-
-export interface QuickRecordOpenOptions {
-  readonly mode?: 'create' | 'edit' | 'duplicate';
-  readonly record?: EditableRecord;
-  readonly initialSubtype?: string;
-}
 
 function readStoredThemeMode(): ThemeMode {
   if (typeof window === 'undefined') return 'system';
@@ -50,15 +42,8 @@ export function applyThemeToDom(mode: ThemeMode): ResolvedTheme {
 interface PreferencesState {
   themeMode: ThemeMode;
   resolvedTheme: ResolvedTheme;
-  quickRecordOpen: boolean;
-  quickRecordCategory: RecordCategory;
-  quickRecordMode: 'create' | 'edit' | 'duplicate';
-  quickRecordEditing: EditableRecord | null;
-  quickRecordInitialSubtype: string | null;
   setThemeMode: (mode: ThemeMode) => void;
   syncSystemTheme: () => void;
-  openQuickRecord: (category?: RecordCategory, options?: QuickRecordOpenOptions) => void;
-  setQuickRecordOpen: (open: boolean) => void;
 }
 
 const initialMode = readStoredThemeMode();
@@ -66,11 +51,6 @@ const initialMode = readStoredThemeMode();
 export const usePreferencesStore = create<PreferencesState>((set, get) => ({
   themeMode: initialMode,
   resolvedTheme: resolveThemeMode(initialMode),
-  quickRecordOpen: false,
-  quickRecordCategory: 'feeding',
-  quickRecordMode: 'create',
-  quickRecordEditing: null,
-  quickRecordInitialSubtype: null,
 
   setThemeMode: (mode) => {
     try {
@@ -88,21 +68,4 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
     const resolvedTheme = applyThemeToDom('system');
     set({ resolvedTheme });
   },
-
-  openQuickRecord: (category, options) =>
-    set((state) => ({
-      quickRecordOpen: true,
-      quickRecordCategory: options?.record?.category ?? category ?? state.quickRecordCategory,
-      quickRecordMode: options?.mode ?? 'create',
-      quickRecordEditing: options?.record ?? null,
-      quickRecordInitialSubtype: options?.initialSubtype ?? null,
-    })),
-
-  setQuickRecordOpen: (open) =>
-    set((state) => ({
-      quickRecordOpen: open,
-      quickRecordMode: open ? state.quickRecordMode : 'create',
-      quickRecordEditing: open ? state.quickRecordEditing : null,
-      quickRecordInitialSubtype: open ? state.quickRecordInitialSubtype : null,
-    })),
 }));

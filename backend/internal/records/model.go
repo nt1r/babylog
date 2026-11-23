@@ -26,6 +26,23 @@ const (
 	MaxHeadCm          = 70.0
 	DefaultStarterMilk = 90
 	DefaultStarterTemp = 36.6
+
+	// 四类记录的标准子类型常量，统一用于校验、列表筛选、汇总与智能默认值。
+	FeedingSubtypeBreast  = "breast"
+	FeedingSubtypeFormula = "formula"
+	FeedingSubtypeSolid   = "solid"
+
+	SleepSubtypeNap   = "nap"
+	SleepSubtypeNight = "night"
+
+	CareSubtypeDiaper = "diaper"
+	CareSubtypeBath   = "bath"
+	CareSubtypeOther  = "other"
+
+	HealthSubtypeTemperature = "temperature"
+	HealthSubtypeMedicine    = "medicine"
+	HealthSubtypeGrowth      = "growth"
+	HealthSubtypeTeeth       = "teeth"
 )
 
 // ValidationError 表示记录字段不符合业务校验规则，映射为 HTTP 400。
@@ -75,8 +92,6 @@ type FeedingInput struct {
 // FeedingDailySummary 表示某一本地自然日的喂养小计。
 type FeedingDailySummary struct {
 	TotalML           int `json:"total_ml"`
-	FormulaCount      int `json:"formula_count"`
-	BottleBreastCount int `json:"bottle_breast_count"`
 	DirectBreastCount int `json:"direct_breast_count"`
 	DirectBreastMin   int `json:"direct_breast_min"`
 	SolidCount        int `json:"solid_count"`
@@ -108,12 +123,9 @@ type SleepInput struct {
 
 // SleepDailySummary 表示某一本地自然日的睡眠小计（跨夜按自然日边界切分）。
 type SleepDailySummary struct {
-	TotalMin   int `json:"total_min"`
-	NapCount   int `json:"nap_count"`
-	NapMin     int `json:"nap_min"`
-	NightCount int `json:"night_count"`
-	NightMin   int `json:"night_min"`
-	TotalCount int `json:"total_count"`
+	TotalMin int `json:"total_min"`
+	NapCount int `json:"nap_count"`
+	NightMin int `json:"night_min"`
 }
 
 // CareRecord 对应 SQLite 中的 care_records 表。
@@ -146,12 +158,11 @@ type CareInput struct {
 
 // CareDailySummary 表示某一本地自然日的护理小计。
 type CareDailySummary struct {
-	TotalCount  int `json:"total_count"`
-	DiaperCount int `json:"diaper_count"`
-	PeeCount    int `json:"pee_count"`
-	PoopCount   int `json:"poop_count"`
-	BathCount   int `json:"bath_count"`
-	OtherCount  int `json:"other_count"`
+	TotalCount int `json:"total_count"`
+	PeeCount   int `json:"pee_count"`
+	PoopCount  int `json:"poop_count"`
+	BathCount  int `json:"bath_count"`
+	OtherCount int `json:"other_count"`
 }
 
 // HealthRecord 对应 SQLite 中的 health_records 表。
@@ -190,12 +201,11 @@ type HealthInput struct {
 
 // HealthDailySummary 表示某一本地自然日的健康记录小计。
 type HealthDailySummary struct {
-	TotalCount       int      `json:"total_count"`
-	TemperatureCount int      `json:"temperature_count"`
-	MedicineCount    int      `json:"medicine_count"`
-	GrowthCount      int      `json:"growth_count"`
-	TeethCount       int      `json:"teeth_count"`
-	LatestTempC      *float64 `json:"latest_temp_c"`
+	TotalCount    int      `json:"total_count"`
+	MedicineCount int      `json:"medicine_count"`
+	GrowthCount   int      `json:"growth_count"`
+	TeethCount    int      `json:"teeth_count"`
+	LatestTempC   *float64 `json:"latest_temp_c"`
 }
 
 // ListFilter 表示记录列表查询的筛选与分页参数。
@@ -247,4 +257,26 @@ type SmartDefaults struct {
 	Feeding FeedingDefaults `json:"feeding"`
 	Health  HealthDefaults  `json:"health"`
 	Care    CareDefaults    `json:"care"`
+}
+
+// WindowOptions 控制 ReadWindow 是否包含健康记录，避免看板今日汇总轮询多打一次无用查询。
+type WindowOptions struct {
+	IncludeHealth bool
+}
+
+// WindowSnapshot 封装时间窗口 [start, end) 内的日常记录，
+// 其中喂养/护理/健康按 recorded_at 落入窗口筛选，睡眠按与窗口存在交集筛选。
+type WindowSnapshot struct {
+	Feedings []FeedingRecord
+	Sleeps   []SleepRecord
+	Cares    []CareRecord
+	Healths  []HealthRecord
+}
+
+// LatestHighlights 汇总跨时间窗口的最近照护标记（上次喂养、上次换尿布、最近一次体温）。
+type LatestHighlights struct {
+	LastFeedingAt *string
+	LastDiaperAt  *string
+	LatestTempC   *float64
+	LatestTempAt  *string
 }

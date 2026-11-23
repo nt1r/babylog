@@ -1,5 +1,9 @@
 import { QueryClient } from '@tanstack/react-query';
 
+export const RECORDS_QUERY_KEY = ['records'] as const;
+export const RECORD_DEFAULTS_QUERY_KEY = ['record-defaults'] as const;
+export const DASHBOARD_QUERY_KEY = ['dashboard'] as const;
+
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

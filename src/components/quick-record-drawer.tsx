@@ -1,378 +1,117 @@
-import { useQueryClient } from '@tanstack/react-query';
-import { format, parseISO, subMinutes } from 'date-fns';
-import { AlertCircle, Baby, HeartPulse, Milk, MoonStar, Sparkles } from 'lucide-react';
+import { format } from 'date-fns';
+import { AlertCircle, Sparkles } from 'lucide-react';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { EntityDrawer } from '@/components/entity-drawer';
-import { CareFields, type CareFormState } from '@/components/quick-record/care-fields';
-import { FeedingFields, type FeedingFormState } from '@/components/quick-record/feeding-fields';
-import { HealthFields, type HealthFormState } from '@/components/quick-record/health-fields';
-import { SleepFields, type SleepFormState } from '@/components/quick-record/sleep-fields';
-import { submitQuickRecord } from '@/components/quick-record/submit';
+import { CareFields } from '@/components/quick-record/care-fields';
+import { resolveCarePresets } from '@/components/quick-record/codecs/care';
+import {
+  applySmartDefaultsToDraft,
+  buildQuickRecordSubmission,
+  createQuickRecordDraft,
+  type QuickRecordDraft,
+} from '@/components/quick-record/codecs/draft';
+import { resolveFeedingPresets } from '@/components/quick-record/codecs/feeding';
+import { resolveHealthPresets } from '@/components/quick-record/codecs/health';
+import { computeSleepDurationMin } from '@/components/quick-record/codecs/sleep';
+import { FeedingFields } from '@/components/quick-record/feeding-fields';
+import { HealthFields } from '@/components/quick-record/health-fields';
+import { SleepFields } from '@/components/quick-record/sleep-fields';
 import { TimeOffsetPicker } from '@/components/quick-record/time-offset-picker';
 import { Button } from '@/components/ui/button';
 import { Field, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { toast } from '@/components/ui/toast';
-import type { RecordCategory } from '@/lib/categories';
-import {
-  type CareSubtype,
-  type FeedingSubtype,
-  type HealthSubtype,
-  invalidateAllRecordQueries,
-  type SleepSubtype,
-  type SmartDefaults,
-  useSmartDefaultsQuery,
-} from '@/lib/records';
-import { combineLocalDateTimeToISO, guessSleepSubtype, splitLocalDateTime } from '@/lib/time';
+import { RECORD_CATEGORIES, RECORD_CATEGORY_META } from '@/lib/categories';
+import { useSaveRecordMutation, useSmartDefaultsQuery } from '@/lib/records';
 import { cn } from '@/lib/utils';
-import { usePreferencesStore } from '@/stores/preferences';
-
-const CATEGORIES: ReadonlyArray<{
-  id: RecordCategory;
-  label: string;
-  icon: typeof Milk;
-  activeClass: string;
-}> = [
-  {
-    id: 'feeding',
-    label: '喂养',
-    icon: Milk,
-    activeClass: 'border-feeding bg-feeding-soft text-feeding-soft-foreground',
-  },
-  {
-    id: 'sleep',
-    label: '睡眠',
-    icon: MoonStar,
-    activeClass: 'border-sleep bg-sleep-soft text-sleep-soft-foreground',
-  },
-  {
-    id: 'care',
-    label: '护理',
-    icon: Baby,
-    activeClass: 'border-care bg-care-soft text-care-soft-foreground',
-  },
-  {
-    id: 'health',
-    label: '健康',
-    icon: HeartPulse,
-    activeClass: 'border-health bg-health-soft text-health-soft-foreground',
-  },
-];
-
-const SOLID_FOOD_FALLBACKS = ['高铁米粉', '南瓜泥', '苹果泥', '蛋黄', '蔬菜粥'] as const;
-const CARE_OTHER_FALLBACKS = ['剪指甲', '抚触按摩', '洗鼻子', '涂润肤露'] as const;
-
-function buildDefaultFeeding(
-  initialCategory: RecordCategory,
-  initialSubtype: string | null,
-  defaults?: SmartDefaults,
-): FeedingFormState {
-  const sub: FeedingSubtype =
-    initialCategory === 'feeding' &&
-    (initialSubtype === 'breast' || initialSubtype === 'formula' || initialSubtype === 'solid')
-      ? initialSubtype
-      : (defaults?.feeding.last_feeding_subtype ?? 'formula');
-  return {
-    subtype: sub,
-    feedingMode: 'direct',
-    breastSide: defaults?.feeding.suggested_breast_side ?? 'left',
-    amountMLText: String(defaults?.feeding.last_milk_ml ?? 90),
-    breastMinText: '15',
-    solidFood: '',
-    solidAmount: '',
-    acceptance: '',
-  };
-}
-
-function buildDefaultSleep(now: Date, initialCategory: RecordCategory, initialSubtype: string | null): SleepFormState {
-  const sub: SleepSubtype =
-    initialCategory === 'sleep' && (initialSubtype === 'nap' || initialSubtype === 'night')
-      ? initialSubtype
-      : guessSleepSubtype(now);
-  const startParts = splitLocalDateTime(subMinutes(now, sub === 'night' ? 480 : 60));
-  const endParts = splitLocalDateTime(now);
-  return {
-    subtype: sub,
-    startDate: startParts.date,
-    startTime: startParts.time,
-    endDate: endParts.date,
-    endTime: endParts.time,
-  };
-}
-
-function buildDefaultCare(initialCategory: RecordCategory, initialSubtype: string | null): CareFormState {
-  const sub: CareSubtype =
-    initialCategory === 'care' &&
-    (initialSubtype === 'diaper' || initialSubtype === 'bath' || initialSubtype === 'other')
-      ? initialSubtype
-      : 'diaper';
-  return {
-    subtype: sub,
-    diaperKind: 'pee',
-    stoolConsistency: '',
-    stoolColor: '',
-    careTitle: '',
-  };
-}
-
-function buildDefaultHealth(
-  initialCategory: RecordCategory,
-  initialSubtype: string | null,
-  defaults?: SmartDefaults,
-): HealthFormState {
-  const sub: HealthSubtype =
-    initialCategory === 'health' &&
-    (initialSubtype === 'temperature' ||
-      initialSubtype === 'medicine' ||
-      initialSubtype === 'growth' ||
-      initialSubtype === 'teeth')
-      ? initialSubtype
-      : 'temperature';
-  return {
-    subtype: sub,
-    temperatureText: (defaults?.health.last_temperature_c ?? 36.6).toFixed(1),
-    medicineName: '',
-    medicineDosage: '',
-    weightKg: '',
-    heightCm: '',
-    headCm: '',
-    toothNote: '',
-  };
-}
+import { useQuickRecordStore } from '@/stores/quick-record';
 
 export function QuickRecordDrawer() {
-  const queryClient = useQueryClient();
-  const open = usePreferencesStore((state) => state.quickRecordOpen);
-  const initialCategory = usePreferencesStore((state) => state.quickRecordCategory);
-  const mode = usePreferencesStore((state) => state.quickRecordMode);
-  const editing = usePreferencesStore((state) => state.quickRecordEditing);
-  const initialSubtype = usePreferencesStore((state) => state.quickRecordInitialSubtype);
-  const setOpen = usePreferencesStore((state) => state.setQuickRecordOpen);
+  const open = useQuickRecordStore((state) => state.open);
+  const intent = useQuickRecordStore((state) => state.intent);
+  const setOpen = useQuickRecordStore((state) => state.setOpen);
 
   const defaultsQuery = useSmartDefaultsQuery(open);
   const defaults = defaultsQuery.data;
-  const isEdit = mode === 'edit' && editing !== null;
+  const defaultsUpdatedAt = defaultsQuery.dataUpdatedAt;
+  const defaultsFetching = defaultsQuery.isFetching;
+  const saveMutation = useSaveRecordMutation();
 
-  const [category, setCategory] = useState<RecordCategory>(initialCategory);
-  const [dateStr, setDateStr] = useState(() => splitLocalDateTime(new Date()).date);
-  const [timeStr, setTimeStr] = useState(() => splitLocalDateTime(new Date()).time);
-  const [note, setNote] = useState('');
+  const [draft, setDraft] = useState<QuickRecordDraft>(() => createQuickRecordDraft(intent, undefined, new Date()));
   const [formError, setFormError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [sleepSubtypeLocked, setSleepSubtypeLocked] = useState(false);
 
-  const [feeding, setFeeding] = useState<FeedingFormState>(() => buildDefaultFeeding('feeding', null));
-  const [sleep, setSleep] = useState<SleepFormState>(() => buildDefaultSleep(new Date(), 'sleep', null));
-  const [care, setCare] = useState<CareFormState>(() => buildDefaultCare('care', null));
-  const [health, setHealth] = useState<HealthFormState>(() => buildDefaultHealth('health', null));
-
-  // 用 ref 追踪本次抽屉打开生命周期内的用户编辑状态与默认值回填状态，
-  // 防止异步到达的 defaults 或窗口焦点刷新冲掉用户已经修改的表单内容。
-  const userTouchedRef = useRef(false);
-  const defaultsAppliedRef = useRef(false);
-  const defaultsRef = useRef(defaults);
-  defaultsRef.current = defaults;
+  const defaultsSnapRef = useRef({ defaults, updatedAt: defaultsUpdatedAt, isFetching: defaultsFetching });
+  defaultsSnapRef.current = { defaults, updatedAt: defaultsUpdatedAt, isFetching: defaultsFetching };
 
   useEffect(() => {
-    if (!open) {
-      userTouchedRef.current = false;
-      defaultsAppliedRef.current = false;
-      return;
-    }
-
-    const now = new Date();
-    const nowParts = splitLocalDateTime(now);
-    const currentDefaults = defaultsRef.current;
-
-    userTouchedRef.current = false;
-    defaultsAppliedRef.current = Boolean(currentDefaults);
+    if (!open) return;
     setFormError('');
-    setSubmitting(false);
+    const snap = defaultsSnapRef.current;
+    // 若缓存正处于后台刷新（例如刚提交完记录立刻重开），不锁死 defaultsAppliedAt，
+    // 以便最新 defaults 返回且用户尚未编辑字段时自动同步。
+    const appliedAt = snap.defaults && !snap.isFetching && snap.updatedAt > 0 ? snap.updatedAt : null;
+    setDraft(createQuickRecordDraft(intent, snap.defaults, new Date(), appliedAt));
+  }, [open, intent]);
 
-    if (editing && (mode === 'edit' || mode === 'duplicate')) {
-      setCategory(editing.category);
-      setSleepSubtypeLocked(true);
-      const useOriginalTime = mode === 'edit';
-
-      if (editing.category === 'feeding') {
-        const r = editing.record;
-        const dt = useOriginalTime ? splitLocalDateTime(parseISO(r.recorded_at)) : nowParts;
-        setDateStr(dt.date);
-        setTimeStr(dt.time);
-        setNote(r.note);
-        setFeeding({
-          subtype: r.subtype,
-          feedingMode: r.feeding_mode ?? 'direct',
-          breastSide: r.breast_side ?? currentDefaults?.feeding.suggested_breast_side ?? 'left',
-          amountMLText: String(r.amount_ml ?? currentDefaults?.feeding.last_milk_ml ?? 90),
-          breastMinText: String(r.duration_min ?? 15),
-          solidFood: r.solid_food ?? '',
-          solidAmount: r.solid_amount ?? '',
-          acceptance: r.acceptance ?? '',
-        });
-        return;
-      }
-
-      if (editing.category === 'sleep') {
-        const r = editing.record;
-        setNote(r.note);
-        if (useOriginalTime) {
-          const st = splitLocalDateTime(parseISO(r.started_at));
-          const et = splitLocalDateTime(parseISO(r.ended_at));
-          setSleep({
-            subtype: r.subtype,
-            startDate: st.date,
-            startTime: st.time,
-            endDate: et.date,
-            endTime: et.time,
-          });
-        } else {
-          const st = splitLocalDateTime(subMinutes(now, r.duration_min));
-          setSleep({
-            subtype: r.subtype,
-            startDate: st.date,
-            startTime: st.time,
-            endDate: nowParts.date,
-            endTime: nowParts.time,
-          });
-        }
-        return;
-      }
-
-      if (editing.category === 'care') {
-        const r = editing.record;
-        const dt = useOriginalTime ? splitLocalDateTime(parseISO(r.recorded_at)) : nowParts;
-        setDateStr(dt.date);
-        setTimeStr(dt.time);
-        setNote(r.note);
-        setCare({
-          subtype: r.subtype,
-          diaperKind: r.diaper_kind ?? 'pee',
-          stoolConsistency: r.stool_consistency ?? '',
-          stoolColor: r.stool_color ?? '',
-          careTitle: r.care_title ?? '',
-        });
-        return;
-      }
-
-      if (editing.category === 'health') {
-        const r = editing.record;
-        const dt = useOriginalTime ? splitLocalDateTime(parseISO(r.recorded_at)) : nowParts;
-        setDateStr(dt.date);
-        setTimeStr(dt.time);
-        setNote(r.note);
-        setHealth({
-          subtype: r.subtype,
-          temperatureText: (r.temperature_c ?? currentDefaults?.health.last_temperature_c ?? 36.6).toFixed(1),
-          medicineName: r.medicine_name ?? '',
-          medicineDosage: r.medicine_dosage ?? '',
-          weightKg: r.weight_kg !== null ? String(r.weight_kg) : '',
-          heightCm: r.height_cm !== null ? String(r.height_cm) : '',
-          headCm: r.head_cm !== null ? String(r.head_cm) : '',
-          toothNote: r.tooth_note ?? '',
-        });
-        return;
-      }
-    }
-
-    setCategory(initialCategory);
-    setSleepSubtypeLocked(initialCategory === 'sleep' && (initialSubtype === 'nap' || initialSubtype === 'night'));
-    setDateStr(nowParts.date);
-    setTimeStr(nowParts.time);
-    setNote('');
-    setFeeding(buildDefaultFeeding(initialCategory, initialSubtype, currentDefaults));
-    setSleep(buildDefaultSleep(now, initialCategory, initialSubtype));
-    setCare(buildDefaultCare(initialCategory, initialSubtype));
-    setHealth(buildDefaultHealth(initialCategory, initialSubtype, currentDefaults));
-  }, [open, initialCategory, mode, editing, initialSubtype]);
-
-  // 仅在新建模式且用户尚未手动输入过时，用首次异步返回的智能默认值补齐预填项。
+  // 异步到达的最新智能默认值通过纯函数守卫，仅在「新建态且用户尚未编辑任何字段」时回填。
   useEffect(() => {
-    if (!open || mode !== 'create' || !defaults || defaultsAppliedRef.current || userTouchedRef.current) {
-      return;
-    }
-    defaultsAppliedRef.current = true;
-    setFeeding(buildDefaultFeeding(initialCategory, initialSubtype, defaults));
-    setHealth(buildDefaultHealth(initialCategory, initialSubtype, defaults));
-  }, [open, mode, defaults, initialCategory, initialSubtype]);
+    if (!open || !defaults || defaultsFetching || defaultsUpdatedAt <= 0) return;
+    setDraft((prev) => applySmartDefaultsToDraft(prev, intent, defaults, defaultsUpdatedAt));
+  }, [open, intent, defaults, defaultsFetching, defaultsUpdatedAt]);
 
-  function markTouched() {
-    userTouchedRef.current = true;
+  function updateDraft(updater: (prev: QuickRecordDraft) => QuickRecordDraft) {
     if (formError) setFormError('');
+    setDraft((prev) => ({ ...updater(prev), userTouched: true }));
   }
 
-  const activeCategory = CATEGORIES.find((item) => item.id === category) ?? CATEGORIES[0];
+  // 顶部 L1 分类切换不视为编辑表单字段，避免冷启动切换分类后阻断对应品类的默认值回填。
+  function selectCategory(nextCategory: QuickRecordDraft['category']) {
+    if (formError) setFormError('');
+    setDraft((prev) => ({ ...prev, category: nextCategory }));
+  }
+
+  const isEdit = intent.mode === 'edit';
+  const activeCategory = RECORD_CATEGORY_META[draft.category];
   const todayMaxDate = format(new Date(), 'yyyy-MM-dd');
+  const sleepDurationMin = computeSleepDurationMin(draft.sleep);
 
-  const sleepPreviewMin = (() => {
-    const st = combineLocalDateTimeToISO(sleep.startDate, sleep.startTime);
-    const et = combineLocalDateTimeToISO(sleep.endDate, sleep.endTime);
-    if (!st || !et) return 0;
-    return Math.round((new Date(et).getTime() - new Date(st).getTime()) / 60000);
-  })();
-
-  const frequentMilk = defaults?.feeding.frequent_milk_ml ?? [60, 90, 120];
-  const solidPresets =
-    defaults && defaults.feeding.recent_solid_foods.length > 0
-      ? defaults.feeding.recent_solid_foods
-      : [...SOLID_FOOD_FALLBACKS];
-  const medicinePresets =
-    defaults && defaults.health.recent_medicines.length > 0
-      ? defaults.health.recent_medicines
-      : [
-          { name: '维生素 D3', dosage: '1 粒' },
-          { name: '维生素 AD', dosage: '1 粒' },
-        ];
-  const careOtherPresets =
-    defaults && defaults.care.recent_other_titles.length > 0
-      ? Array.from(new Set([...defaults.care.recent_other_titles, ...CARE_OTHER_FALLBACKS])).slice(0, 6)
-      : [...CARE_OTHER_FALLBACKS];
+  const feedingPresets = resolveFeedingPresets(defaults);
+  const careOtherPresets = resolveCarePresets(defaults);
+  const medicinePresets = resolveHealthPresets(defaults);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (submitting) return;
+    if (saveMutation.isPending) return;
 
     setFormError('');
-    setSubmitting(true);
+    const built = buildQuickRecordSubmission(draft, intent);
+    if (!built.ok) {
+      setFormError(built.error);
+      return;
+    }
+
     try {
-      const result = await submitQuickRecord({
-        category,
-        isEdit,
-        editing,
-        dateStr,
-        timeStr,
-        note,
-        feeding,
-        sleep,
-        sleepPreviewMin,
-        care,
-        health,
-      });
-      if (!result.ok) {
-        setFormError(result.error);
-        return;
-      }
-      toast.success(result.toastTitle, result.toastDescription);
-      invalidateAllRecordQueries(queryClient);
+      await saveMutation.mutateAsync(built.request);
+      toast.success(built.toastTitle, built.toastDescription);
       setOpen(false);
     } catch (cause) {
       setFormError(cause instanceof Error ? cause.message : '保存失败，请稍后重试');
-    } finally {
-      setSubmitting(false);
     }
   }
 
   const drawerTitle = isEdit
-    ? `编辑${activeCategory.label}记录`
-    : mode === 'duplicate'
-      ? `再记一笔${activeCategory.label}`
+    ? `编辑${activeCategory.shortLabel}记录`
+    : intent.mode === 'duplicate'
+      ? `再记一笔${activeCategory.shortLabel}`
       : '快速记一笔';
 
   return (
     <EntityDrawer
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={(next) => {
+        if (!saveMutation.isPending) setOpen(next);
+      }}
       title={drawerTitle}
       icon={<Sparkles className="size-4.5" />}
       footer={
@@ -390,7 +129,7 @@ export function QuickRecordDrawer() {
             <Button
               type="button"
               variant="outline"
-              disabled={submitting}
+              disabled={saveMutation.isPending}
               className="h-11 rounded-xl sm:h-10 sm:px-4"
               onClick={() => setOpen(false)}
             >
@@ -399,11 +138,11 @@ export function QuickRecordDrawer() {
             <Button
               type="submit"
               form="quick-record-form"
-              disabled={submitting}
+              disabled={saveMutation.isPending}
               className="h-11 rounded-xl sm:h-10 sm:px-5"
             >
-              {submitting ? <Spinner className="size-4" aria-hidden="true" role="presentation" /> : null}
-              {submitting ? '保存中…' : isEdit ? '保存修改' : '保存记录'}
+              {saveMutation.isPending ? <Spinner className="size-4" aria-hidden="true" role="presentation" /> : null}
+              {saveMutation.isPending ? '保存中…' : isEdit ? '保存修改' : '保存记录'}
             </Button>
           </div>
         </div>
@@ -412,18 +151,16 @@ export function QuickRecordDrawer() {
       <form id="quick-record-form" onSubmit={handleSubmit} noValidate className="flex flex-col gap-5">
         {!isEdit ? (
           <fieldset aria-label="记录分类" className="grid min-w-0 grid-cols-4 gap-1 border-0 p-0 sm:gap-1.5">
-            {CATEGORIES.map((item) => {
+            {RECORD_CATEGORIES.map((categoryId) => {
+              const item = RECORD_CATEGORY_META[categoryId];
               const Icon = item.icon;
-              const selected = item.id === category;
+              const selected = item.id === draft.category;
               return (
                 <button
                   key={item.id}
                   type="button"
                   aria-pressed={selected}
-                  onClick={() => {
-                    markTouched();
-                    setCategory(item.id);
-                  }}
+                  onClick={() => selectCategory(item.id)}
                   className={cn(
                     'flex h-10 cursor-pointer items-center justify-center gap-1 rounded-xl border px-1.5 text-[13px] font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring sm:gap-1.5 sm:px-2',
                     selected
@@ -432,78 +169,64 @@ export function QuickRecordDrawer() {
                   )}
                 >
                   <Icon className="size-4 shrink-0" strokeWidth={1.8} />
-                  <span>{item.label}</span>
+                  <span>{item.shortLabel}</span>
                 </button>
               );
             })}
           </fieldset>
         ) : null}
 
-        {category === 'feeding' ? (
+        {draft.category === 'feeding' ? (
           <FeedingFields
-            state={feeding}
-            frequentMilk={frequentMilk}
-            solidPresets={solidPresets}
-            lastBreastSide={defaults?.feeding.last_breast_side ?? null}
-            suggestedBreastSide={defaults?.feeding.suggested_breast_side ?? 'left'}
-            onChange={(patch) => {
-              markTouched();
-              setFeeding((prev) => ({ ...prev, ...patch }));
-            }}
+            state={draft.feeding}
+            frequentMilk={feedingPresets.frequentMilk}
+            solidPresets={feedingPresets.solidPresets}
+            lastBreastSide={feedingPresets.lastBreastSide}
+            suggestedBreastSide={feedingPresets.suggestedBreastSide}
+            onChange={(patch) => updateDraft((prev) => ({ ...prev, feeding: { ...prev.feeding, ...patch } }))}
           />
         ) : null}
 
-        {category === 'sleep' ? (
+        {draft.category === 'sleep' ? (
           <SleepFields
-            state={sleep}
+            state={draft.sleep}
             maxDate={todayMaxDate}
-            durationMin={sleepPreviewMin}
-            subtypeLocked={sleepSubtypeLocked}
-            onSubtypeSelect={(subtype) => {
-              markTouched();
-              setSleepSubtypeLocked(true);
-              setSleep((prev) => ({ ...prev, subtype }));
-            }}
-            onChange={(patch) => {
-              markTouched();
-              setSleep((prev) => ({ ...prev, ...patch }));
-            }}
+            durationMin={sleepDurationMin}
+            subtypeLocked={draft.sleepSubtypeLocked}
+            onSubtypeSelect={(subtype) =>
+              updateDraft((prev) => ({
+                ...prev,
+                sleepSubtypeLocked: true,
+                sleep: { ...prev.sleep, subtype },
+              }))
+            }
+            onChange={(patch) => updateDraft((prev) => ({ ...prev, sleep: { ...prev.sleep, ...patch } }))}
           />
         ) : null}
 
-        {category === 'care' ? (
+        {draft.category === 'care' ? (
           <CareFields
-            state={care}
+            state={draft.care}
             otherPresets={careOtherPresets}
-            onChange={(patch) => {
-              markTouched();
-              setCare((prev) => ({ ...prev, ...patch }));
-            }}
+            onChange={(patch) => updateDraft((prev) => ({ ...prev, care: { ...prev.care, ...patch } }))}
           />
         ) : null}
 
-        {category === 'health' ? (
+        {draft.category === 'health' ? (
           <HealthFields
-            state={health}
+            state={draft.health}
             medicinePresets={medicinePresets}
-            onChange={(patch) => {
-              markTouched();
-              setHealth((prev) => ({ ...prev, ...patch }));
-            }}
+            onChange={(patch) => updateDraft((prev) => ({ ...prev, health: { ...prev.health, ...patch } }))}
           />
         ) : null}
 
         {/* 核心业务字段优先展示在首屏；睡眠自带起止时间区间，其余三类在下方统一提供记录时间与快捷偏移。 */}
-        {category !== 'sleep' ? (
+        {draft.category !== 'sleep' ? (
           <TimeOffsetPicker
-            dateStr={dateStr}
-            timeStr={timeStr}
+            dateStr={draft.dateStr}
+            timeStr={draft.timeStr}
             maxDate={todayMaxDate}
-            onChange={(nextDate, nextTime) => {
-              markTouched();
-              setDateStr(nextDate);
-              setTimeStr(nextTime);
-            }}
+            onChange={(dateStr, timeStr) => updateDraft((prev) => ({ ...prev, dateStr, timeStr }))}
           />
         ) : null}
 
@@ -511,12 +234,9 @@ export function QuickRecordDrawer() {
           <FieldLabel htmlFor="quick-record-note">备注（可选）</FieldLabel>
           <Input
             id="quick-record-note"
-            value={note}
+            value={draft.note}
             maxLength={500}
-            onChange={(event) => {
-              markTouched();
-              setNote(event.target.value);
-            }}
+            onChange={(event) => updateDraft((prev) => ({ ...prev, note: event.target.value }))}
             placeholder="记录宝宝的精神状态、吐奶情况或小变化…"
           />
         </Field>

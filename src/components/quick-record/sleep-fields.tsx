@@ -1,14 +1,11 @@
 import { subMinutes } from 'date-fns';
+import type { SleepFormState } from '@/components/quick-record/codecs/sleep';
 import { DateTimeInputRow } from '@/components/quick-record/date-time-input-row';
 import { QuickChip, SegmentedControl } from '@/components/quick-record/record-controls';
 import { FieldGroup } from '@/components/ui/field';
+import { SLEEP_SUBTYPE_OPTIONS } from '@/lib/categories';
 import type { SleepSubtype } from '@/lib/records';
 import { combineLocalDateTimeToISO, formatDurationMin, guessSleepSubtype, splitLocalDateTime } from '@/lib/time';
-
-const SLEEP_SUBTYPE_OPTIONS = [
-  { value: 'nap', label: '白天小睡' },
-  { value: 'night', label: '夜间整觉' },
-] as const;
 
 const SLEEP_DURATION_PRESETS = [
   { label: '30 分钟', minutes: 30 },
@@ -17,14 +14,6 @@ const SLEEP_DURATION_PRESETS = [
   { label: '2 小时', minutes: 120 },
   { label: '8 小时', minutes: 480 },
 ] as const;
-
-export interface SleepFormState {
-  subtype: SleepSubtype;
-  startDate: string;
-  startTime: string;
-  endDate: string;
-  endTime: string;
-}
 
 interface SleepFieldsProps {
   readonly state: SleepFormState;

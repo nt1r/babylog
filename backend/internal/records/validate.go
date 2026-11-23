@@ -44,15 +44,15 @@ func validateTimestamp(raw string, now time.Time) (time.Time, error) {
 	return parsed, nil
 }
 
-// ValidateFeeding 校验并标准化喂养记录，返回可直接入库的归一化输入与 UTC 时间。
-func ValidateFeeding(in FeedingInput, now time.Time) (FeedingInput, time.Time, error) {
+// ValidateFeeding 校验并标准化喂养记录，返回可直接入库的归一化输入。
+func ValidateFeeding(in FeedingInput, now time.Time) (FeedingInput, error) {
 	recordedAt, err := validateTimestamp(in.RecordedAt, now)
 	if err != nil {
-		return FeedingInput{}, time.Time{}, err
+		return FeedingInput{}, err
 	}
 	note, err := validateNote(in.Note)
 	if err != nil {
-		return FeedingInput{}, time.Time{}, err
+		return FeedingInput{}, err
 	}
 
 	out := FeedingInput{
@@ -62,22 +62,22 @@ func ValidateFeeding(in FeedingInput, now time.Time) (FeedingInput, time.Time, e
 	}
 
 	switch out.Subtype {
-	case "breast":
+	case FeedingSubtypeBreast:
 		if in.FeedingMode == nil {
-			return FeedingInput{}, time.Time{}, &ValidationError{Message: "请选择母乳方式（亲喂或瓶喂）"}
+			return FeedingInput{}, &ValidationError{Message: "请选择母乳方式（亲喂或瓶喂）"}
 		}
 		mode := strings.TrimSpace(*in.FeedingMode)
 		switch mode {
 		case "direct":
 			if in.BreastSide == nil {
-				return FeedingInput{}, time.Time{}, &ValidationError{Message: "请选择亲喂侧别"}
+				return FeedingInput{}, &ValidationError{Message: "请选择亲喂侧别"}
 			}
 			side := strings.TrimSpace(*in.BreastSide)
 			if side != "left" && side != "right" && side != "both" {
-				return FeedingInput{}, time.Time{}, &ValidationError{Message: "请选择有效的亲喂侧别"}
+				return FeedingInput{}, &ValidationError{Message: "请选择有效的亲喂侧别"}
 			}
 			if in.DurationMin == nil || *in.DurationMin < MinBreastMin || *in.DurationMin > MaxBreastMin {
-				return FeedingInput{}, time.Time{}, &ValidationError{Message: "亲喂时长应在 1 至 180 分钟之间"}
+				return FeedingInput{}, &ValidationError{Message: "亲喂时长应在 1 至 180 分钟之间"}
 			}
 			dur := *in.DurationMin
 			out.FeedingMode = strPtr("direct")
@@ -85,39 +85,39 @@ func ValidateFeeding(in FeedingInput, now time.Time) (FeedingInput, time.Time, e
 			out.DurationMin = &dur
 		case "bottle":
 			if in.AmountML == nil || *in.AmountML < MinMilkML || *in.AmountML > MaxMilkML {
-				return FeedingInput{}, time.Time{}, &ValidationError{Message: "瓶喂母乳奶量应在 1 至 1000 ml 之间"}
+				return FeedingInput{}, &ValidationError{Message: "瓶喂母乳奶量应在 1 至 1000 ml 之间"}
 			}
 			ml := *in.AmountML
 			out.FeedingMode = strPtr("bottle")
 			out.AmountML = &ml
 		default:
-			return FeedingInput{}, time.Time{}, &ValidationError{Message: "请选择有效的母乳方式"}
+			return FeedingInput{}, &ValidationError{Message: "请选择有效的母乳方式"}
 		}
 
-	case "formula":
+	case FeedingSubtypeFormula:
 		if in.AmountML == nil || *in.AmountML < MinMilkML || *in.AmountML > MaxMilkML {
-			return FeedingInput{}, time.Time{}, &ValidationError{Message: "配方奶奶量应在 1 至 1000 ml 之间"}
+			return FeedingInput{}, &ValidationError{Message: "配方奶奶量应在 1 至 1000 ml 之间"}
 		}
 		ml := *in.AmountML
 		out.AmountML = &ml
 
-	case "solid":
+	case FeedingSubtypeSolid:
 		food, err := trimOptionalString(in.SolidFood, 80, "辅食名称")
 		if err != nil {
-			return FeedingInput{}, time.Time{}, err
+			return FeedingInput{}, err
 		}
 		if food == nil {
-			return FeedingInput{}, time.Time{}, &ValidationError{Message: "请填写辅食名称"}
+			return FeedingInput{}, &ValidationError{Message: "请填写辅食名称"}
 		}
 		amount, err := trimOptionalString(in.SolidAmount, 40, "辅食份量")
 		if err != nil {
-			return FeedingInput{}, time.Time{}, err
+			return FeedingInput{}, err
 		}
 		var acceptance *string
 		if in.Acceptance != nil && strings.TrimSpace(*in.Acceptance) != "" {
 			acc := strings.TrimSpace(*in.Acceptance)
 			if acc != "like" && acc != "neutral" && acc != "dislike" {
-				return FeedingInput{}, time.Time{}, &ValidationError{Message: "请选择有效的辅食接受度"}
+				return FeedingInput{}, &ValidationError{Message: "请选择有效的辅食接受度"}
 			}
 			acceptance = &acc
 		}
@@ -126,16 +126,16 @@ func ValidateFeeding(in FeedingInput, now time.Time) (FeedingInput, time.Time, e
 		out.Acceptance = acceptance
 
 	default:
-		return FeedingInput{}, time.Time{}, &ValidationError{Message: "请选择有效的喂养类型"}
+		return FeedingInput{}, &ValidationError{Message: "请选择有效的喂养类型"}
 	}
 
-	return out, recordedAt, nil
+	return out, nil
 }
 
 // ValidateSleep 校验睡眠补录区间并由服务端统一计算 duration_min。
 func ValidateSleep(in SleepInput, now time.Time) (SleepInput, int, error) {
 	subtype := strings.TrimSpace(in.Subtype)
-	if subtype != "nap" && subtype != "night" {
+	if subtype != SleepSubtypeNap && subtype != SleepSubtypeNight {
 		return SleepInput{}, 0, &ValidationError{Message: "请选择有效的睡眠类型"}
 	}
 	startedAt, err := validateTimestamp(in.StartedAt, now)
@@ -171,14 +171,14 @@ func ValidateSleep(in SleepInput, now time.Time) (SleepInput, int, error) {
 }
 
 // ValidateCare 校验并标准化日常护理记录。
-func ValidateCare(in CareInput, now time.Time) (CareInput, time.Time, error) {
+func ValidateCare(in CareInput, now time.Time) (CareInput, error) {
 	recordedAt, err := validateTimestamp(in.RecordedAt, now)
 	if err != nil {
-		return CareInput{}, time.Time{}, err
+		return CareInput{}, err
 	}
 	note, err := validateNote(in.Note)
 	if err != nil {
-		return CareInput{}, time.Time{}, err
+		return CareInput{}, err
 	}
 
 	out := CareInput{
@@ -188,13 +188,13 @@ func ValidateCare(in CareInput, now time.Time) (CareInput, time.Time, error) {
 	}
 
 	switch out.Subtype {
-	case "diaper":
+	case CareSubtypeDiaper:
 		if in.DiaperKind == nil {
-			return CareInput{}, time.Time{}, &ValidationError{Message: "请选择尿布类型（嘘嘘/便便/混合）"}
+			return CareInput{}, &ValidationError{Message: "请选择尿布类型（嘘嘘/便便/混合）"}
 		}
 		kind := strings.TrimSpace(*in.DiaperKind)
 		if kind != "pee" && kind != "poop" && kind != "both" {
-			return CareInput{}, time.Time{}, &ValidationError{Message: "请选择有效的尿布类型"}
+			return CareInput{}, &ValidationError{Message: "请选择有效的尿布类型"}
 		}
 		out.DiaperKind = strPtr(kind)
 
@@ -206,7 +206,7 @@ func ValidateCare(in CareInput, now time.Time) (CareInput, time.Time, error) {
 				case "watery", "soft", "formed", "hard":
 					out.StoolConsistency = &c
 				default:
-					return CareInput{}, time.Time{}, &ValidationError{Message: "请选择有效的便便性状"}
+					return CareInput{}, &ValidationError{Message: "请选择有效的便便性状"}
 				}
 			}
 			if in.StoolColor != nil && strings.TrimSpace(*in.StoolColor) != "" {
@@ -215,40 +215,40 @@ func ValidateCare(in CareInput, now time.Time) (CareInput, time.Time, error) {
 				case "yellow", "green", "brown", "abnormal":
 					out.StoolColor = &color
 				default:
-					return CareInput{}, time.Time{}, &ValidationError{Message: "请选择有效的便便颜色"}
+					return CareInput{}, &ValidationError{Message: "请选择有效的便便颜色"}
 				}
 			}
 		}
 
-	case "bath":
+	case CareSubtypeBath:
 		// 洗澡无需额外必填字段。
 
-	case "other":
+	case CareSubtypeOther:
 		title, err := trimOptionalString(in.CareTitle, 60, "护理内容")
 		if err != nil {
-			return CareInput{}, time.Time{}, err
+			return CareInput{}, err
 		}
 		if title == nil {
-			return CareInput{}, time.Time{}, &ValidationError{Message: "请填写或选择护理内容"}
+			return CareInput{}, &ValidationError{Message: "请填写或选择护理内容"}
 		}
 		out.CareTitle = title
 
 	default:
-		return CareInput{}, time.Time{}, &ValidationError{Message: "请选择有效的护理类型"}
+		return CareInput{}, &ValidationError{Message: "请选择有效的护理类型"}
 	}
 
-	return out, recordedAt, nil
+	return out, nil
 }
 
 // ValidateHealth 校验并标准化健康与生长记录。
-func ValidateHealth(in HealthInput, now time.Time) (HealthInput, time.Time, error) {
+func ValidateHealth(in HealthInput, now time.Time) (HealthInput, error) {
 	recordedAt, err := validateTimestamp(in.RecordedAt, now)
 	if err != nil {
-		return HealthInput{}, time.Time{}, err
+		return HealthInput{}, err
 	}
 	note, err := validateNote(in.Note)
 	if err != nil {
-		return HealthInput{}, time.Time{}, err
+		return HealthInput{}, err
 	}
 
 	out := HealthInput{
@@ -258,40 +258,40 @@ func ValidateHealth(in HealthInput, now time.Time) (HealthInput, time.Time, erro
 	}
 
 	switch out.Subtype {
-	case "temperature":
+	case HealthSubtypeTemperature:
 		if in.TemperatureC == nil {
-			return HealthInput{}, time.Time{}, &ValidationError{Message: "请填写体温数值"}
+			return HealthInput{}, &ValidationError{Message: "请填写体温数值"}
 		}
 		v := *in.TemperatureC
 		if math.IsNaN(v) || math.IsInf(v, 0) || v < MinTemperatureC || v > MaxTemperatureC {
-			return HealthInput{}, time.Time{}, &ValidationError{Message: "体温应在 34.0 至 43.0 ℃ 之间"}
+			return HealthInput{}, &ValidationError{Message: "体温应在 34.0 至 43.0 ℃ 之间"}
 		}
 		rounded := math.Round(v*10) / 10
 		out.TemperatureC = &rounded
 
-	case "medicine":
+	case HealthSubtypeMedicine:
 		name, err := trimOptionalString(in.MedicineName, 80, "药品名称")
 		if err != nil {
-			return HealthInput{}, time.Time{}, err
+			return HealthInput{}, err
 		}
 		if name == nil {
-			return HealthInput{}, time.Time{}, &ValidationError{Message: "请填写药品名称"}
+			return HealthInput{}, &ValidationError{Message: "请填写药品名称"}
 		}
 		dosage, err := trimOptionalString(in.MedicineDosage, 40, "剂量")
 		if err != nil {
-			return HealthInput{}, time.Time{}, err
+			return HealthInput{}, err
 		}
 		out.MedicineName = name
 		out.MedicineDosage = dosage
 
-	case "growth":
+	case HealthSubtypeGrowth:
 		if in.WeightKg == nil && in.HeightCm == nil && in.HeadCm == nil {
-			return HealthInput{}, time.Time{}, &ValidationError{Message: "体重、身高、头围请至少填写一项"}
+			return HealthInput{}, &ValidationError{Message: "体重、身高、头围请至少填写一项"}
 		}
 		if in.WeightKg != nil {
 			v := *in.WeightKg
 			if math.IsNaN(v) || math.IsInf(v, 0) || v < MinWeightKg || v > MaxWeightKg {
-				return HealthInput{}, time.Time{}, &ValidationError{Message: "体重应在 0.3 至 40.0 kg 之间"}
+				return HealthInput{}, &ValidationError{Message: "体重应在 0.3 至 40.0 kg 之间"}
 			}
 			rounded := math.Round(v*100) / 100
 			out.WeightKg = &rounded
@@ -299,7 +299,7 @@ func ValidateHealth(in HealthInput, now time.Time) (HealthInput, time.Time, erro
 		if in.HeightCm != nil {
 			v := *in.HeightCm
 			if math.IsNaN(v) || math.IsInf(v, 0) || v < MinHeightCm || v > MaxHeightCm {
-				return HealthInput{}, time.Time{}, &ValidationError{Message: "身高应在 20.0 至 150.0 cm 之间"}
+				return HealthInput{}, &ValidationError{Message: "身高应在 20.0 至 150.0 cm 之间"}
 			}
 			rounded := math.Round(v*10) / 10
 			out.HeightCm = &rounded
@@ -307,25 +307,25 @@ func ValidateHealth(in HealthInput, now time.Time) (HealthInput, time.Time, erro
 		if in.HeadCm != nil {
 			v := *in.HeadCm
 			if math.IsNaN(v) || math.IsInf(v, 0) || v < MinHeadCm || v > MaxHeadCm {
-				return HealthInput{}, time.Time{}, &ValidationError{Message: "头围应在 20.0 至 70.0 cm 之间"}
+				return HealthInput{}, &ValidationError{Message: "头围应在 20.0 至 70.0 cm 之间"}
 			}
 			rounded := math.Round(v*10) / 10
 			out.HeadCm = &rounded
 		}
 
-	case "teeth":
+	case HealthSubtypeTeeth:
 		tooth, err := trimOptionalString(in.ToothNote, 80, "长牙记录")
 		if err != nil {
-			return HealthInput{}, time.Time{}, err
+			return HealthInput{}, err
 		}
 		if tooth == nil {
-			return HealthInput{}, time.Time{}, &ValidationError{Message: "请填写萌出牙位或长牙说明"}
+			return HealthInput{}, &ValidationError{Message: "请填写萌出牙位或长牙说明"}
 		}
 		out.ToothNote = tooth
 
 	default:
-		return HealthInput{}, time.Time{}, &ValidationError{Message: "请选择有效的健康记录类型"}
+		return HealthInput{}, &ValidationError{Message: "请选择有效的健康记录类型"}
 	}
 
-	return out, recordedAt, nil
+	return out, nil
 }

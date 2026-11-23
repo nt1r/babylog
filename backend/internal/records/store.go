@@ -3,6 +3,7 @@ package records
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 	"github.com/nt1r/babylog/backend/internal/timeutil"
 )
 
-// Store 封装四大日常记录在 SQLite 中的持久化、分页筛选、每日小计与智能默认值聚合。
+// Store 封装四大日常记录在 SQLite 中的持久化、分页筛选、每日小计、时间窗口读取与智能默认值聚合。
 type Store struct {
 	db  *gorm.DB
 	now func() time.Time
@@ -33,6 +34,13 @@ func (s *Store) WithClock(fn func() time.Time) *Store {
 	return s
 }
 
+var (
+	feedingSubtypes = []string{FeedingSubtypeBreast, FeedingSubtypeFormula, FeedingSubtypeSolid}
+	sleepSubtypes   = []string{SleepSubtypeNap, SleepSubtypeNight}
+	careSubtypes    = []string{CareSubtypeDiaper, CareSubtypeBath, CareSubtypeOther}
+	healthSubtypes  = []string{HealthSubtypeTemperature, HealthSubtypeMedicine, HealthSubtypeGrowth, HealthSubtypeTeeth}
+)
+
 func normalizeFilter(f ListFilter) ListFilter {
 	if f.Loc == nil {
 		f.Loc, _ = timeutil.LoadLocation("")
@@ -52,6 +60,10 @@ func normalizeFilter(f ListFilter) ListFilter {
 	return f
 }
 
+func isAllowedSubtypeFilter(subtype string, allowed []string) bool {
+	return subtype == "" || subtype == "all" || slices.Contains(allowed, subtype)
+}
+
 // rangeBoundsUTC 根据 range 参数计算本地自然日范围对应的 UTC 起止边界；若 range=="all" 则 hasRange=false。
 func (s *Store) rangeBoundsUTC(rangeKey string, loc *time.Location) (startUTC, endUTC string, hasRange bool, err error) {
 	todayStart, todayEnd := timeutil.LocalDayBounds(s.now(), loc)
@@ -69,34 +81,217 @@ func (s *Store) rangeBoundsUTC(rangeKey string, loc *time.Location) (startUTC, e
 	}
 }
 
-// dateKeysBoundsUTC 返回当前页所涉及本地自然日键的最小 UTC 起点与最大 UTC 终点，
-// 用于对这些日期做二次全量小计查询，避免分页截断导致某天小计偏小。
-func dateKeysBoundsUTC(keys map[string]struct{}, loc *time.Location) (string, string, bool) {
+type utcRange struct {
+	start    time.Time
+	end      time.Time
+	startUTC string
+	endUTC   string
+}
+
+// mergedDateRangesUTC 将当前页命中的本地自然日键按升序合并为连续的 UTC 时间区间列表，
+// 既避免稀疏分页（如 range=all 跨越数月）全扫中间无关日期，也对连续多日保持单区间高效查询。
+func mergedDateRangesUTC(keys map[string]struct{}, loc *time.Location) []utcRange {
 	if len(keys) == 0 {
-		return "", "", false
+		return nil
 	}
-	var minKey, maxKey string
+	sorted := make([]string, 0, len(keys))
 	for k := range keys {
-		if minKey == "" || k < minKey {
-			minKey = k
+		sorted = append(sorted, k)
+	}
+	sort.Strings(sorted)
+
+	ranges := make([]utcRange, 0, len(sorted))
+	for _, k := range sorted {
+		dayStart, err := time.ParseInLocation(timeutil.DateLayout, k, loc)
+		if err != nil {
+			continue
 		}
-		if maxKey == "" || k > maxKey {
-			maxKey = k
+		dayEnd := dayStart.AddDate(0, 0, 1)
+		if n := len(ranges); n > 0 && dayStart.Equal(ranges[n-1].end) {
+			ranges[n-1].end = dayEnd
+			ranges[n-1].endUTC = timeutil.FormatUTC(dayEnd)
+			continue
+		}
+		ranges = append(ranges, utcRange{
+			start:    dayStart,
+			end:      dayEnd,
+			startUTC: timeutil.FormatUTC(dayStart),
+			endUTC:   timeutil.FormatUTC(dayEnd),
+		})
+	}
+	return ranges
+}
+
+// applyTimeRanges 将一个或多个参数化时间区间附加到查询上（overlap=true 用于睡眠区间交集查询）。
+func (s *Store) applyTimeRanges(q *gorm.DB, ranges []utcRange, overlap bool) *gorm.DB {
+	if len(ranges) == 0 {
+		return q
+	}
+	cond := "recorded_at >= ? AND recorded_at < ?"
+	if overlap {
+		cond = "ended_at > ? AND started_at < ?"
+	}
+	if len(ranges) == 1 {
+		return q.Where(cond, ranges[0].startUTC, ranges[0].endUTC)
+	}
+	group := s.db.Where(cond, ranges[0].startUTC, ranges[0].endUTC)
+	for _, r := range ranges[1:] {
+		group = group.Or(cond, r.startUTC, r.endUTC)
+	}
+	return q.Where(group)
+}
+
+// ==================== Shared Persistence Helpers ====================
+
+func deleteRecord[T any](s *Store, ctx context.Context, babyID, id int64) error {
+	var model T
+	res := s.db.WithContext(ctx).Where("id = ? AND baby_id = ?", id, babyID).Delete(&model)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// updateRecord 在单个事务内按 babyID+id 读取记录、应用字段变更并显式 Select 更新，
+// 确保跨子类型切换时将不再适用的可空列显式置为 NULL。
+func updateRecord[T any](s *Store, ctx context.Context, babyID, id int64, cols []string, apply func(*T)) (*T, error) {
+	var rec T
+	txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("id = ? AND baby_id = ?", id, babyID).First(&rec).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+		apply(&rec)
+		return tx.Model(&rec).Select(cols).Updates(&rec).Error
+	})
+	if txErr != nil {
+		return nil, txErr
+	}
+	return &rec, nil
+}
+
+func (s *Store) prepareListFilter(f ListFilter, allowedSubtypes []string, invalidMsg string) (ListFilter, string, string, bool, error) {
+	f = normalizeFilter(f)
+	if !isAllowedSubtypeFilter(f.Subtype, allowedSubtypes) {
+		return f, "", "", false, &ValidationError{Message: invalidMsg}
+	}
+	startUTC, endUTC, hasRange, err := s.rangeBoundsUTC(f.Range, f.Loc)
+	if err != nil {
+		return f, "", "", false, err
+	}
+	return f, startUTC, endUTC, hasRange, nil
+}
+
+func queryPage[T any](s *Store, ctx context.Context, babyID int64, f ListFilter, startUTC, endUTC string, hasRange, overlap bool, orderBy string) ([]T, int64, error) {
+	var model T
+	base := s.db.WithContext(ctx).Model(&model).Where("baby_id = ?", babyID)
+	if f.Subtype != "" && f.Subtype != "all" {
+		base = base.Where("subtype = ?", f.Subtype)
+	}
+	if hasRange {
+		if overlap {
+			base = base.Where("ended_at > ? AND started_at < ?", startUTC, endUTC)
+		} else {
+			base = base.Where("recorded_at >= ? AND recorded_at < ?", startUTC, endUTC)
 		}
 	}
-	minDay, err1 := time.ParseInLocation(timeutil.DateLayout, minKey, loc)
-	maxDay, err2 := time.ParseInLocation(timeutil.DateLayout, maxKey, loc)
-	if err1 != nil || err2 != nil {
-		return "", "", false
+
+	var total int64
+	if err := base.Count(&total).Error; err != nil {
+		return nil, 0, err
 	}
-	return timeutil.FormatUTC(minDay), timeutil.FormatUTC(maxDay.AddDate(0, 0, 1)), true
+
+	items := make([]T, 0)
+	if total == 0 || int64(f.Offset) >= total {
+		return items, total, nil
+	}
+	if err := base.Order(orderBy).Limit(f.Limit).Offset(f.Offset).Find(&items).Error; err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+type pointListSpec[T any, S any] struct {
+	allowedSubtypes []string
+	invalidMsg      string
+	summaryOrderBy  string
+	recordedAt      func(T) string
+	accumulate      func(*S, T)
+}
+
+// listPointRecords 统一处理喂养、护理、健康三类时刻型记录的分页查询与按日完整小计聚合，
+// 二次小计查询仅扫描当前页涉及的合并日期区间，防止分页截断失真与稀疏跨月全表扫描。
+func listPointRecords[T any, S any](s *Store, ctx context.Context, babyID int64, f ListFilter, spec pointListSpec[T, S]) (*ListResult[T, S], error) {
+	f, startUTC, endUTC, hasRange, err := s.prepareListFilter(f, spec.allowedSubtypes, spec.invalidMsg)
+	if err != nil {
+		return nil, err
+	}
+
+	items, total, err := queryPage[T](s, ctx, babyID, f, startUTC, endUTC, hasRange, false, "recorded_at DESC, id DESC")
+	if err != nil {
+		return nil, err
+	}
+
+	dateKeys := make(map[string]struct{})
+	for _, it := range items {
+		if ts, parseErr := timeutil.ParseTimestamp(spec.recordedAt(it)); parseErr == nil {
+			dateKeys[timeutil.LocalDateKey(ts, f.Loc)] = struct{}{}
+		}
+	}
+
+	summaries := make(map[string]S, len(dateKeys))
+	if ranges := mergedDateRangesUTC(dateKeys, f.Loc); len(ranges) > 0 {
+		var model T
+		q := s.db.WithContext(ctx).Model(&model).Where("baby_id = ?", babyID)
+		q = s.applyTimeRanges(q, ranges, false)
+		if spec.summaryOrderBy != "" {
+			q = q.Order(spec.summaryOrderBy)
+		}
+		if f.Subtype != "" && f.Subtype != "all" {
+			q = q.Where("subtype = ?", f.Subtype)
+		}
+		var allForDays []T
+		if err := q.Find(&allForDays).Error; err != nil {
+			return nil, err
+		}
+		for _, r := range allForDays {
+			ts, parseErr := timeutil.ParseTimestamp(spec.recordedAt(r))
+			if parseErr != nil {
+				continue
+			}
+			key := timeutil.LocalDateKey(ts, f.Loc)
+			if _, wanted := dateKeys[key]; !wanted {
+				continue
+			}
+			sum := summaries[key]
+			spec.accumulate(&sum, r)
+			summaries[key] = sum
+		}
+	}
+
+	return &ListResult[T, S]{
+		Items:          items,
+		Total:          total,
+		HasMore:        int64(f.Offset+len(items)) < total,
+		DailySummaries: summaries,
+	}, nil
 }
 
 // ==================== Feeding ====================
 
+var feedingUpdateCols = []string{
+	"subtype", "feeding_mode", "breast_side", "amount_ml", "duration_min",
+	"solid_food", "solid_amount", "acceptance", "recorded_at", "note", "updated_at",
+}
+
 func (s *Store) CreateFeeding(ctx context.Context, babyID int64, in FeedingInput) (*FeedingRecord, error) {
 	now := s.now()
-	clean, _, err := ValidateFeeding(in, now)
+	clean, err := ValidateFeeding(in, now)
 	if err != nil {
 		return nil, err
 	}
@@ -124,20 +319,11 @@ func (s *Store) CreateFeeding(ctx context.Context, babyID int64, in FeedingInput
 
 func (s *Store) UpdateFeeding(ctx context.Context, babyID, id int64, in FeedingInput) (*FeedingRecord, error) {
 	now := s.now()
-	clean, _, err := ValidateFeeding(in, now)
+	clean, err := ValidateFeeding(in, now)
 	if err != nil {
 		return nil, err
 	}
-
-	var rec FeedingRecord
-	txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("id = ? AND baby_id = ?", id, babyID).First(&rec).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrNotFound
-			}
-			return err
-		}
-
+	return updateRecord(s, ctx, babyID, id, feedingUpdateCols, func(rec *FeedingRecord) {
 		rec.Subtype = clean.Subtype
 		rec.FeedingMode = clean.FeedingMode
 		rec.BreastSide = clean.BreastSide
@@ -149,101 +335,28 @@ func (s *Store) UpdateFeeding(ctx context.Context, babyID, id int64, in FeedingI
 		rec.RecordedAt = clean.RecordedAt
 		rec.Note = clean.Note
 		rec.UpdatedAt = timeutil.FormatUTC(now)
-
-		return tx.Model(&rec).Select(
-			"subtype", "feeding_mode", "breast_side", "amount_ml", "duration_min",
-			"solid_food", "solid_amount", "acceptance", "recorded_at", "note", "updated_at",
-		).Updates(&rec).Error
 	})
-	if txErr != nil {
-		return nil, txErr
-	}
-	return &rec, nil
 }
 
 func (s *Store) DeleteFeeding(ctx context.Context, babyID, id int64) error {
-	res := s.db.WithContext(ctx).Where("id = ? AND baby_id = ?", id, babyID).Delete(&FeedingRecord{})
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return deleteRecord[FeedingRecord](s, ctx, babyID, id)
 }
 
-// ListFeeding 按子类型、本地自然日范围与分页参数返回喂养记录，
-// 并对当前页涉及的所有本地自然日做完整小计聚合，防止跨页截断造成当日奶量显示失真。
+// ListFeeding 按子类型、本地自然日范围与分页参数返回喂养记录及当前页涉及日期的完整每日小计。
 func (s *Store) ListFeeding(ctx context.Context, babyID int64, f ListFilter) (*ListResult[FeedingRecord, FeedingDailySummary], error) {
-	f = normalizeFilter(f)
-	if f.Subtype != "" && f.Subtype != "all" && f.Subtype != "breast" && f.Subtype != "formula" && f.Subtype != "solid" {
-		return nil, &ValidationError{Message: "喂养子类型筛选参数无效"}
-	}
-	startUTC, endUTC, hasRange, err := s.rangeBoundsUTC(f.Range, f.Loc)
-	if err != nil {
-		return nil, err
-	}
-
-	base := s.db.WithContext(ctx).Model(&FeedingRecord{}).Where("baby_id = ?", babyID)
-	if f.Subtype != "" && f.Subtype != "all" {
-		base = base.Where("subtype = ?", f.Subtype)
-	}
-	if hasRange {
-		base = base.Where("recorded_at >= ? AND recorded_at < ?", startUTC, endUTC)
-	}
-
-	var total int64
-	if err := base.Count(&total).Error; err != nil {
-		return nil, err
-	}
-
-	items := make([]FeedingRecord, 0)
-	if err := base.Order("recorded_at DESC, id DESC").Limit(f.Limit).Offset(f.Offset).Find(&items).Error; err != nil {
-		return nil, err
-	}
-
-	dateKeys := make(map[string]struct{})
-	for _, it := range items {
-		if ts, parseErr := timeutil.ParseTimestamp(it.RecordedAt); parseErr == nil {
-			dateKeys[timeutil.LocalDateKey(ts, f.Loc)] = struct{}{}
-		}
-	}
-
-	summaries := make(map[string]FeedingDailySummary, len(dateKeys))
-	if sumStart, sumEnd, ok := dateKeysBoundsUTC(dateKeys, f.Loc); ok {
-		q := s.db.WithContext(ctx).Model(&FeedingRecord{}).
-			Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, sumStart, sumEnd)
-		if f.Subtype != "" && f.Subtype != "all" {
-			q = q.Where("subtype = ?", f.Subtype)
-		}
-		var allForDays []FeedingRecord
-		if err := q.Find(&allForDays).Error; err != nil {
-			return nil, err
-		}
-		for _, r := range allForDays {
-			ts, parseErr := timeutil.ParseTimestamp(r.RecordedAt)
-			if parseErr != nil {
-				continue
-			}
-			key := timeutil.LocalDateKey(ts, f.Loc)
-			if _, wanted := dateKeys[key]; !wanted {
-				continue
-			}
-			sum := summaries[key]
-			AccumulateFeedingSummary(&sum, r)
-			summaries[key] = sum
-		}
-	}
-
-	return &ListResult[FeedingRecord, FeedingDailySummary]{
-		Items:          items,
-		Total:          total,
-		HasMore:        int64(f.Offset+len(items)) < total,
-		DailySummaries: summaries,
-	}, nil
+	return listPointRecords(s, ctx, babyID, f, pointListSpec[FeedingRecord, FeedingDailySummary]{
+		allowedSubtypes: feedingSubtypes,
+		invalidMsg:      "喂养子类型筛选参数无效",
+		recordedAt:      func(r FeedingRecord) string { return r.RecordedAt },
+		accumulate:      AccumulateFeedingSummary,
+	})
 }
 
 // ==================== Sleep ====================
+
+var sleepUpdateCols = []string{
+	"subtype", "started_at", "ended_at", "duration_min", "note", "updated_at",
+}
 
 func (s *Store) CreateSleep(ctx context.Context, babyID int64, in SleepInput) (*SleepRecord, error) {
 	now := s.now()
@@ -274,85 +387,53 @@ func (s *Store) UpdateSleep(ctx context.Context, babyID, id int64, in SleepInput
 	if err != nil {
 		return nil, err
 	}
-
-	var rec SleepRecord
-	txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("id = ? AND baby_id = ?", id, babyID).First(&rec).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrNotFound
-			}
-			return err
-		}
-
+	return updateRecord(s, ctx, babyID, id, sleepUpdateCols, func(rec *SleepRecord) {
 		rec.Subtype = clean.Subtype
 		rec.StartedAt = clean.StartedAt
 		rec.EndedAt = clean.EndedAt
 		rec.DurationMin = durationMin
 		rec.Note = clean.Note
 		rec.UpdatedAt = timeutil.FormatUTC(now)
-
-		return tx.Model(&rec).Select(
-			"subtype", "started_at", "ended_at", "duration_min", "note", "updated_at",
-		).Updates(&rec).Error
 	})
-	if txErr != nil {
-		return nil, txErr
-	}
-	return &rec, nil
 }
 
 func (s *Store) DeleteSleep(ctx context.Context, babyID, id int64) error {
-	res := s.db.WithContext(ctx).Where("id = ? AND baby_id = ?", id, babyID).Delete(&SleepRecord{})
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return deleteRecord[SleepRecord](s, ctx, babyID, id)
 }
 
 // ListSleep 返回与目标本地日期范围有交集的睡眠记录，并按自然日边界切分每日小计。
+// 跨夜睡眠会将覆盖到的所有本地自然日均纳入小计键，保证入睡日分组与醒来日统计均准确无漏。
 func (s *Store) ListSleep(ctx context.Context, babyID int64, f ListFilter) (*ListResult[SleepRecord, SleepDailySummary], error) {
-	f = normalizeFilter(f)
-	if f.Subtype != "" && f.Subtype != "all" && f.Subtype != "nap" && f.Subtype != "night" {
-		return nil, &ValidationError{Message: "睡眠子类型筛选参数无效"}
-	}
-	startUTC, endUTC, hasRange, err := s.rangeBoundsUTC(f.Range, f.Loc)
+	f, startUTC, endUTC, hasRange, err := s.prepareListFilter(f, sleepSubtypes, "睡眠子类型筛选参数无效")
 	if err != nil {
 		return nil, err
 	}
 
-	base := s.db.WithContext(ctx).Model(&SleepRecord{}).Where("baby_id = ?", babyID)
-	if f.Subtype != "" && f.Subtype != "all" {
-		base = base.Where("subtype = ?", f.Subtype)
-	}
-	if hasRange {
-		// 只要睡眠区间与目标本地日期范围存在交集（含跨夜睡眠）即纳入列表。
-		base = base.Where("ended_at > ? AND started_at < ?", startUTC, endUTC)
-	}
-
-	var total int64
-	if err := base.Count(&total).Error; err != nil {
-		return nil, err
-	}
-
-	items := make([]SleepRecord, 0)
-	if err := base.Order("started_at DESC, id DESC").Limit(f.Limit).Offset(f.Offset).Find(&items).Error; err != nil {
+	items, total, err := queryPage[SleepRecord](s, ctx, babyID, f, startUTC, endUTC, hasRange, true, "started_at DESC, id DESC")
+	if err != nil {
 		return nil, err
 	}
 
 	dateKeys := make(map[string]struct{})
 	for _, it := range items {
-		if ts, parseErr := timeutil.ParseTimestamp(it.StartedAt); parseErr == nil {
-			dateKeys[timeutil.LocalDateKey(ts, f.Loc)] = struct{}{}
+		st, err1 := timeutil.ParseTimestamp(it.StartedAt)
+		if err1 != nil {
+			continue
+		}
+		// 始终保留入睡日键：即便跨夜睡眠在零点前不足 30 秒（四舍五入为 0 分钟），
+		// 前端仍按 started_at 归组查询入睡日小计，不可遗漏该日其余睡眠记录的统计。
+		dateKeys[timeutil.LocalDateKey(st, f.Loc)] = struct{}{}
+		if et, err2 := timeutil.ParseTimestamp(it.EndedAt); err2 == nil {
+			for key := range timeutil.SplitIntervalMinutesByLocalDay(st, et, f.Loc) {
+				dateKeys[key] = struct{}{}
+			}
 		}
 	}
 
 	summaries := make(map[string]SleepDailySummary, len(dateKeys))
-	if sumStart, sumEnd, ok := dateKeysBoundsUTC(dateKeys, f.Loc); ok {
-		q := s.db.WithContext(ctx).Model(&SleepRecord{}).
-			Where("baby_id = ? AND ended_at > ? AND started_at < ?", babyID, sumStart, sumEnd)
+	if ranges := mergedDateRangesUTC(dateKeys, f.Loc); len(ranges) > 0 {
+		q := s.db.WithContext(ctx).Model(&SleepRecord{}).Where("baby_id = ?", babyID)
+		q = s.applyTimeRanges(q, ranges, true)
 		if f.Subtype != "" && f.Subtype != "all" {
 			q = q.Where("subtype = ?", f.Subtype)
 		}
@@ -373,15 +454,7 @@ func (s *Store) ListSleep(ctx context.Context, babyID int64, f ListFilter) (*Lis
 					continue
 				}
 				sum := summaries[key]
-				sum.TotalMin += mins
-				sum.TotalCount++
-				if r.Subtype == "night" {
-					sum.NightCount++
-					sum.NightMin += mins
-				} else {
-					sum.NapCount++
-					sum.NapMin += mins
-				}
+				AccumulateSleepSummary(&sum, r, mins)
 				summaries[key] = sum
 			}
 		}
@@ -397,9 +470,14 @@ func (s *Store) ListSleep(ctx context.Context, babyID int64, f ListFilter) (*Lis
 
 // ==================== Care ====================
 
+var careUpdateCols = []string{
+	"subtype", "diaper_kind", "stool_consistency", "stool_color", "care_title",
+	"recorded_at", "note", "updated_at",
+}
+
 func (s *Store) CreateCare(ctx context.Context, babyID int64, in CareInput) (*CareRecord, error) {
 	now := s.now()
-	clean, _, err := ValidateCare(in, now)
+	clean, err := ValidateCare(in, now)
 	if err != nil {
 		return nil, err
 	}
@@ -424,20 +502,11 @@ func (s *Store) CreateCare(ctx context.Context, babyID int64, in CareInput) (*Ca
 
 func (s *Store) UpdateCare(ctx context.Context, babyID, id int64, in CareInput) (*CareRecord, error) {
 	now := s.now()
-	clean, _, err := ValidateCare(in, now)
+	clean, err := ValidateCare(in, now)
 	if err != nil {
 		return nil, err
 	}
-
-	var rec CareRecord
-	txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("id = ? AND baby_id = ?", id, babyID).First(&rec).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrNotFound
-			}
-			return err
-		}
-
+	return updateRecord(s, ctx, babyID, id, careUpdateCols, func(rec *CareRecord) {
 		rec.Subtype = clean.Subtype
 		rec.DiaperKind = clean.DiaperKind
 		rec.StoolConsistency = clean.StoolConsistency
@@ -446,104 +515,34 @@ func (s *Store) UpdateCare(ctx context.Context, babyID, id int64, in CareInput) 
 		rec.RecordedAt = clean.RecordedAt
 		rec.Note = clean.Note
 		rec.UpdatedAt = timeutil.FormatUTC(now)
-
-		return tx.Model(&rec).Select(
-			"subtype", "diaper_kind", "stool_consistency", "stool_color", "care_title",
-			"recorded_at", "note", "updated_at",
-		).Updates(&rec).Error
 	})
-	if txErr != nil {
-		return nil, txErr
-	}
-	return &rec, nil
 }
 
 func (s *Store) DeleteCare(ctx context.Context, babyID, id int64) error {
-	res := s.db.WithContext(ctx).Where("id = ? AND baby_id = ?", id, babyID).Delete(&CareRecord{})
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return deleteRecord[CareRecord](s, ctx, babyID, id)
 }
 
 // ListCare 返回筛选分页后的护理记录及当前页涉及本地日期的完整每日小计。
 func (s *Store) ListCare(ctx context.Context, babyID int64, f ListFilter) (*ListResult[CareRecord, CareDailySummary], error) {
-	f = normalizeFilter(f)
-	if f.Subtype != "" && f.Subtype != "all" && f.Subtype != "diaper" && f.Subtype != "bath" && f.Subtype != "other" {
-		return nil, &ValidationError{Message: "护理子类型筛选参数无效"}
-	}
-	startUTC, endUTC, hasRange, err := s.rangeBoundsUTC(f.Range, f.Loc)
-	if err != nil {
-		return nil, err
-	}
-
-	base := s.db.WithContext(ctx).Model(&CareRecord{}).Where("baby_id = ?", babyID)
-	if f.Subtype != "" && f.Subtype != "all" {
-		base = base.Where("subtype = ?", f.Subtype)
-	}
-	if hasRange {
-		base = base.Where("recorded_at >= ? AND recorded_at < ?", startUTC, endUTC)
-	}
-
-	var total int64
-	if err := base.Count(&total).Error; err != nil {
-		return nil, err
-	}
-
-	items := make([]CareRecord, 0)
-	if err := base.Order("recorded_at DESC, id DESC").Limit(f.Limit).Offset(f.Offset).Find(&items).Error; err != nil {
-		return nil, err
-	}
-
-	dateKeys := make(map[string]struct{})
-	for _, it := range items {
-		if ts, parseErr := timeutil.ParseTimestamp(it.RecordedAt); parseErr == nil {
-			dateKeys[timeutil.LocalDateKey(ts, f.Loc)] = struct{}{}
-		}
-	}
-
-	summaries := make(map[string]CareDailySummary, len(dateKeys))
-	if sumStart, sumEnd, ok := dateKeysBoundsUTC(dateKeys, f.Loc); ok {
-		q := s.db.WithContext(ctx).Model(&CareRecord{}).
-			Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, sumStart, sumEnd)
-		if f.Subtype != "" && f.Subtype != "all" {
-			q = q.Where("subtype = ?", f.Subtype)
-		}
-		var allForDays []CareRecord
-		if err := q.Find(&allForDays).Error; err != nil {
-			return nil, err
-		}
-		for _, r := range allForDays {
-			ts, parseErr := timeutil.ParseTimestamp(r.RecordedAt)
-			if parseErr != nil {
-				continue
-			}
-			key := timeutil.LocalDateKey(ts, f.Loc)
-			if _, wanted := dateKeys[key]; !wanted {
-				continue
-			}
-			sum := summaries[key]
-			AccumulateCareSummary(&sum, r)
-			summaries[key] = sum
-		}
-	}
-
-	return &ListResult[CareRecord, CareDailySummary]{
-		Items:          items,
-		Total:          total,
-		HasMore:        int64(f.Offset+len(items)) < total,
-		DailySummaries: summaries,
-	}, nil
+	return listPointRecords(s, ctx, babyID, f, pointListSpec[CareRecord, CareDailySummary]{
+		allowedSubtypes: careSubtypes,
+		invalidMsg:      "护理子类型筛选参数无效",
+		recordedAt:      func(r CareRecord) string { return r.RecordedAt },
+		accumulate:      AccumulateCareSummary,
+	})
 }
 
 // ==================== Health ====================
 
+var healthUpdateCols = []string{
+	"subtype", "temperature_c", "medicine_name", "medicine_dosage",
+	"weight_kg", "height_cm", "head_cm", "tooth_note",
+	"recorded_at", "note", "updated_at",
+}
+
 func (s *Store) CreateHealth(ctx context.Context, babyID int64, in HealthInput) (*HealthRecord, error) {
 	now := s.now()
-	clean, _, err := ValidateHealth(in, now)
+	clean, err := ValidateHealth(in, now)
 	if err != nil {
 		return nil, err
 	}
@@ -571,20 +570,11 @@ func (s *Store) CreateHealth(ctx context.Context, babyID int64, in HealthInput) 
 
 func (s *Store) UpdateHealth(ctx context.Context, babyID, id int64, in HealthInput) (*HealthRecord, error) {
 	now := s.now()
-	clean, _, err := ValidateHealth(in, now)
+	clean, err := ValidateHealth(in, now)
 	if err != nil {
 		return nil, err
 	}
-
-	var rec HealthRecord
-	txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("id = ? AND baby_id = ?", id, babyID).First(&rec).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrNotFound
-			}
-			return err
-		}
-
+	return updateRecord(s, ctx, babyID, id, healthUpdateCols, func(rec *HealthRecord) {
 		rec.Subtype = clean.Subtype
 		rec.TemperatureC = clean.TemperatureC
 		rec.MedicineName = clean.MedicineName
@@ -596,279 +586,107 @@ func (s *Store) UpdateHealth(ctx context.Context, babyID, id int64, in HealthInp
 		rec.RecordedAt = clean.RecordedAt
 		rec.Note = clean.Note
 		rec.UpdatedAt = timeutil.FormatUTC(now)
-
-		return tx.Model(&rec).Select(
-			"subtype", "temperature_c", "medicine_name", "medicine_dosage",
-			"weight_kg", "height_cm", "head_cm", "tooth_note",
-			"recorded_at", "note", "updated_at",
-		).Updates(&rec).Error
 	})
-	if txErr != nil {
-		return nil, txErr
-	}
-	return &rec, nil
 }
 
 func (s *Store) DeleteHealth(ctx context.Context, babyID, id int64) error {
-	res := s.db.WithContext(ctx).Where("id = ? AND baby_id = ?", id, babyID).Delete(&HealthRecord{})
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return deleteRecord[HealthRecord](s, ctx, babyID, id)
 }
 
 // ListHealth 返回筛选分页后的健康记录及当前页涉及本地日期的完整每日小计。
 func (s *Store) ListHealth(ctx context.Context, babyID int64, f ListFilter) (*ListResult[HealthRecord, HealthDailySummary], error) {
-	f = normalizeFilter(f)
-	if f.Subtype != "" && f.Subtype != "all" && f.Subtype != "temperature" && f.Subtype != "medicine" && f.Subtype != "growth" && f.Subtype != "teeth" {
-		return nil, &ValidationError{Message: "健康子类型筛选参数无效"}
-	}
-	startUTC, endUTC, hasRange, err := s.rangeBoundsUTC(f.Range, f.Loc)
-	if err != nil {
-		return nil, err
-	}
-
-	base := s.db.WithContext(ctx).Model(&HealthRecord{}).Where("baby_id = ?", babyID)
-	if f.Subtype != "" && f.Subtype != "all" {
-		base = base.Where("subtype = ?", f.Subtype)
-	}
-	if hasRange {
-		base = base.Where("recorded_at >= ? AND recorded_at < ?", startUTC, endUTC)
-	}
-
-	var total int64
-	if err := base.Count(&total).Error; err != nil {
-		return nil, err
-	}
-
-	items := make([]HealthRecord, 0)
-	if err := base.Order("recorded_at DESC, id DESC").Limit(f.Limit).Offset(f.Offset).Find(&items).Error; err != nil {
-		return nil, err
-	}
-
-	dateKeys := make(map[string]struct{})
-	for _, it := range items {
-		if ts, parseErr := timeutil.ParseTimestamp(it.RecordedAt); parseErr == nil {
-			dateKeys[timeutil.LocalDateKey(ts, f.Loc)] = struct{}{}
-		}
-	}
-
-	summaries := make(map[string]HealthDailySummary, len(dateKeys))
-	if sumStart, sumEnd, ok := dateKeysBoundsUTC(dateKeys, f.Loc); ok {
-		q := s.db.WithContext(ctx).Model(&HealthRecord{}).
-			Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, sumStart, sumEnd).
-			Order("recorded_at DESC, id DESC")
-		if f.Subtype != "" && f.Subtype != "all" {
-			q = q.Where("subtype = ?", f.Subtype)
-		}
-		var allForDays []HealthRecord
-		if err := q.Find(&allForDays).Error; err != nil {
-			return nil, err
-		}
-		for _, r := range allForDays {
-			ts, parseErr := timeutil.ParseTimestamp(r.RecordedAt)
-			if parseErr != nil {
-				continue
-			}
-			key := timeutil.LocalDateKey(ts, f.Loc)
-			if _, wanted := dateKeys[key]; !wanted {
-				continue
-			}
-			sum := summaries[key]
-			sum.TotalCount++
-			switch r.Subtype {
-			case "temperature":
-				sum.TemperatureCount++
-				if sum.LatestTempC == nil && r.TemperatureC != nil {
-					v := *r.TemperatureC
-					sum.LatestTempC = &v
-				}
-			case "medicine":
-				sum.MedicineCount++
-			case "growth":
-				sum.GrowthCount++
-			case "teeth":
-				sum.TeethCount++
-			}
-			summaries[key] = sum
-		}
-	}
-
-	return &ListResult[HealthRecord, HealthDailySummary]{
-		Items:          items,
-		Total:          total,
-		HasMore:        int64(f.Offset+len(items)) < total,
-		DailySummaries: summaries,
-	}, nil
+	return listPointRecords(s, ctx, babyID, f, pointListSpec[HealthRecord, HealthDailySummary]{
+		allowedSubtypes: healthSubtypes,
+		invalidMsg:      "健康子类型筛选参数无效",
+		summaryOrderBy:  "recorded_at DESC, id DESC",
+		recordedAt:      func(r HealthRecord) string { return r.RecordedAt },
+		accumulate:      AccumulateHealthSummary,
+	})
 }
 
-// ==================== Smart Defaults ====================
+// ==================== Window & Highlights Reads ====================
 
-// GetSmartDefaults 根据最近历史记录汇总智能默认值，为空历史提供开箱即用的兜底预设。
-// 仅回溯最近 60 条喂养（约 1 周）与 40 条健康记录，确保默认值紧贴宝宝当前月龄习惯而非早期历史。
-func (s *Store) GetSmartDefaults(ctx context.Context, babyID int64) (*SmartDefaults, error) {
-	defaults := &SmartDefaults{
-		Feeding: FeedingDefaults{
-			LastMilkML:          DefaultStarterMilk,
-			FrequentMilkML:      []int{60, 90, 120},
-			LastFeedingSubtype:  "formula",
-			SuggestedBreastSide: "left",
-			RecentSolidFoods:    []string{},
-		},
-		Health: HealthDefaults{
-			LastTemperatureC: DefaultStarterTemp,
-			RecentMedicines:  []MedicinePreset{},
-		},
-		Care: CareDefaults{
-			RecentOtherTitles: []string{},
-		},
+// ReadWindow 读取指定宝宝在 [start, end) 时间窗口内的日常记录快照，
+// 供首页看板等聚合模块使用，避免外部模块直接耦合记录表结构与 SQL 谓词。
+func (s *Store) ReadWindow(ctx context.Context, babyID int64, start, end time.Time, opts WindowOptions) (*WindowSnapshot, error) {
+	snap := &WindowSnapshot{}
+	if !end.After(start) {
+		return snap, nil
 	}
 
-	var feedings []FeedingRecord
+	startUTC := timeutil.FormatUTC(start)
+	endUTC := timeutil.FormatUTC(end)
+
+	if err := s.db.WithContext(ctx).
+		Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, startUTC, endUTC).
+		Find(&snap.Feedings).Error; err != nil {
+		return nil, err
+	}
+	if err := s.db.WithContext(ctx).
+		Where("baby_id = ? AND ended_at > ? AND started_at < ?", babyID, startUTC, endUTC).
+		Find(&snap.Sleeps).Error; err != nil {
+		return nil, err
+	}
+	if err := s.db.WithContext(ctx).
+		Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, startUTC, endUTC).
+		Find(&snap.Cares).Error; err != nil {
+		return nil, err
+	}
+	if opts.IncludeHealth {
+		if err := s.db.WithContext(ctx).
+			Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, startUTC, endUTC).
+			Find(&snap.Healths).Error; err != nil {
+			return nil, err
+		}
+	}
+
+	return snap, nil
+}
+
+// ReadLatestHighlights 读取指定宝宝跨时间窗口的最近一次喂养、换尿布与体温标记。
+func (s *Store) ReadLatestHighlights(ctx context.Context, babyID int64) (*LatestHighlights, error) {
+	hl := &LatestHighlights{}
+
+	var latestFeeding FeedingRecord
 	if err := s.db.WithContext(ctx).
 		Where("baby_id = ?", babyID).
 		Order("recorded_at DESC, id DESC").
-		Limit(60).
-		Find(&feedings).Error; err != nil {
+		Limit(1).
+		Find(&latestFeeding).Error; err != nil {
 		return nil, err
 	}
-
-	if len(feedings) > 0 {
-		defaults.Feeding.LastFeedingSubtype = feedings[0].Subtype
+	if latestFeeding.ID > 0 {
+		ts := latestFeeding.RecordedAt
+		hl.LastFeedingAt = &ts
 	}
 
-	type mlStat struct {
-		ml         int
-		count      int
-		firstIndex int
-	}
-	mlCounts := make(map[int]*mlStat)
-	hasLastMilk := false
-	hasLastBreast := false
-	solidSeen := make(map[string]struct{})
-
-	for idx, f := range feedings {
-		if f.AmountML != nil && *f.AmountML > 0 {
-			ml := *f.AmountML
-			if !hasLastMilk {
-				defaults.Feeding.LastMilkML = ml
-				hasLastMilk = true
-			}
-			if st, ok := mlCounts[ml]; ok {
-				st.count++
-			} else {
-				mlCounts[ml] = &mlStat{ml: ml, count: 1, firstIndex: idx}
-			}
-		}
-		if !hasLastBreast && f.Subtype == "breast" && f.FeedingMode != nil && *f.FeedingMode == "direct" && f.BreastSide != nil {
-			side := *f.BreastSide
-			defaults.Feeding.LastBreastSide = &side
-			switch side {
-			case "left":
-				defaults.Feeding.SuggestedBreastSide = "right"
-			case "right":
-				defaults.Feeding.SuggestedBreastSide = "left"
-			default:
-				defaults.Feeding.SuggestedBreastSide = "left"
-			}
-			hasLastBreast = true
-		}
-		if f.Subtype == "solid" && f.SolidFood != nil && len(defaults.Feeding.RecentSolidFoods) < 5 {
-			food := *f.SolidFood
-			if _, exists := solidSeen[food]; !exists {
-				solidSeen[food] = struct{}{}
-				defaults.Feeding.RecentSolidFoods = append(defaults.Feeding.RecentSolidFoods, food)
-			}
-		}
-	}
-
-	if len(mlCounts) > 0 {
-		stats := make([]*mlStat, 0, len(mlCounts))
-		for _, st := range mlCounts {
-			stats = append(stats, st)
-		}
-		sort.Slice(stats, func(i, j int) bool {
-			if stats[i].count != stats[j].count {
-				return stats[i].count > stats[j].count
-			}
-			return stats[i].firstIndex < stats[j].firstIndex
-		})
-		top := make([]int, 0, 3)
-		topSeen := make(map[int]struct{})
-		for _, st := range stats {
-			if len(top) >= 3 {
-				break
-			}
-			top = append(top, st.ml)
-			topSeen[st.ml] = struct{}{}
-		}
-		for _, fallback := range []int{60, 90, 120} {
-			if len(top) >= 3 {
-				break
-			}
-			if _, ok := topSeen[fallback]; !ok {
-				top = append(top, fallback)
-				topSeen[fallback] = struct{}{}
-			}
-		}
-		// 高频前 3 档按升序展示给前端胶囊，符合用户从少到多的视觉直觉。
-		sort.Ints(top)
-		defaults.Feeding.FrequentMilkML = top
-	}
-
-	var healths []HealthRecord
+	var latestTemp HealthRecord
 	if err := s.db.WithContext(ctx).
-		Where("baby_id = ? AND subtype IN ?", babyID, []string{"temperature", "medicine"}).
+		Where("baby_id = ? AND subtype = ?", babyID, HealthSubtypeTemperature).
 		Order("recorded_at DESC, id DESC").
-		Limit(40).
-		Find(&healths).Error; err != nil {
+		Limit(1).
+		Find(&latestTemp).Error; err != nil {
 		return nil, err
 	}
-
-	hasTemp := false
-	medSeen := make(map[string]struct{})
-	for _, h := range healths {
-		if !hasTemp && h.Subtype == "temperature" && h.TemperatureC != nil {
-			defaults.Health.LastTemperatureC = *h.TemperatureC
-			hasTemp = true
-		}
-		if h.Subtype == "medicine" && h.MedicineName != nil && len(defaults.Health.RecentMedicines) < 5 {
-			name := *h.MedicineName
-			if _, exists := medSeen[name]; !exists {
-				medSeen[name] = struct{}{}
-				dosage := ""
-				if h.MedicineDosage != nil {
-					dosage = *h.MedicineDosage
-				}
-				defaults.Health.RecentMedicines = append(defaults.Health.RecentMedicines, MedicinePreset{
-					Name:   name,
-					Dosage: dosage,
-				})
-			}
-		}
+	if latestTemp.ID > 0 && latestTemp.TemperatureC != nil {
+		v := *latestTemp.TemperatureC
+		ts := latestTemp.RecordedAt
+		hl.LatestTempC = &v
+		hl.LatestTempAt = &ts
 	}
 
-	var cares []CareRecord
+	var latestDiaper CareRecord
 	if err := s.db.WithContext(ctx).
-		Where("baby_id = ? AND subtype = ?", babyID, "other").
+		Where("baby_id = ? AND subtype = ?", babyID, CareSubtypeDiaper).
 		Order("recorded_at DESC, id DESC").
-		Limit(30).
-		Find(&cares).Error; err != nil {
+		Limit(1).
+		Find(&latestDiaper).Error; err != nil {
 		return nil, err
 	}
-	careSeen := make(map[string]struct{})
-	for _, c := range cares {
-		if c.CareTitle != nil && len(defaults.Care.RecentOtherTitles) < 5 {
-			title := *c.CareTitle
-			if _, exists := careSeen[title]; !exists {
-				careSeen[title] = struct{}{}
-				defaults.Care.RecentOtherTitles = append(defaults.Care.RecentOtherTitles, title)
-			}
-		}
+	if latestDiaper.ID > 0 {
+		ts := latestDiaper.RecordedAt
+		hl.LastDiaperAt = &ts
 	}
 
-	return defaults, nil
+	return hl, nil
 }

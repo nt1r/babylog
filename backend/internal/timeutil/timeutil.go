@@ -1,5 +1,5 @@
-// Package timeutil 提供 IANA 时区解析（内嵌 tzdata）、UTC RFC3339 规范化、本地自然日窗口、
-// 跨夜区间按自然日切分以及全天照护时段归桶等时间工具。
+// Package timeutil 提供 IANA 时区解析（内嵌 tzdata）、UTC RFC3339 规范化、本地自然日窗口
+// 以及跨夜区间按自然日切分等时间工具。
 package timeutil
 
 import (
@@ -18,9 +18,6 @@ const DateLayout = "2006-01-02"
 
 // MaxFutureSkew 允许客户端时钟相对服务端最多超前 5 分钟，避免点「刚刚」误报未来时间。
 const MaxFutureSkew = 5 * time.Minute
-
-// DaySlot 定义全天照护节律的 5 个有序时段标签。
-var DaySlots = []string{"清晨", "上午", "下午", "傍晚", "夜间"}
 
 // ErrInvalidTimezone 表示传入了无法识别的 IANA 时区名称。
 var ErrInvalidTimezone = errors.New("时区参数无效")
@@ -115,41 +112,4 @@ func SplitIntervalMinutesByLocalDay(start, end time.Time, loc *time.Location) ma
 		cur = segEnd
 	}
 	return result
-}
-
-// OverlapMinutes 计算区间 [start, end) 与窗口 [winStart, winEnd) 的重叠分钟数（四舍五入到最近分钟）。
-func OverlapMinutes(start, end, winStart, winEnd time.Time) int {
-	if !end.After(start) || !winEnd.After(winStart) {
-		return 0
-	}
-	s := start
-	if winStart.After(s) {
-		s = winStart
-	}
-	e := end
-	if winEnd.Before(e) {
-		e = winEnd
-	}
-	if !e.After(s) {
-		return 0
-	}
-	return int(math.Round(e.Sub(s).Minutes()))
-}
-
-// DaySlotLabel 返回给定时刻在指定时区下对应的照护时段标签：
-// 清晨(05:00-08:59)、上午(09:00-11:59)、下午(12:00-17:59)、傍晚(18:00-20:59)、夜间(21:00-04:59)。
-func DaySlotLabel(t time.Time, loc *time.Location) string {
-	hour := t.In(loc).Hour()
-	switch {
-	case hour >= 5 && hour < 9:
-		return "清晨"
-	case hour >= 9 && hour < 12:
-		return "上午"
-	case hour >= 12 && hour < 18:
-		return "下午"
-	case hour >= 18 && hour < 21:
-		return "傍晚"
-	default:
-		return "夜间"
-	}
 }

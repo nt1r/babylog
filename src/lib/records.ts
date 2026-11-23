@@ -6,10 +6,11 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
+import type { RecordCategory } from '@/lib/categories';
 import { apiRequest } from '@/lib/http';
+import { DASHBOARD_QUERY_KEY, RECORD_DEFAULTS_QUERY_KEY, RECORDS_QUERY_KEY } from '@/lib/query-client';
 import { getBrowserTimeZone } from '@/lib/time';
 
-export type CoreRecordCategory = 'feeding' | 'sleep' | 'care' | 'health';
 export type RecordRange = 'today' | '7d' | '30d' | 'all';
 
 export type FeedingSubtype = 'breast' | 'formula' | 'solid';
@@ -49,8 +50,6 @@ export interface FeedingInput {
 
 export interface FeedingDailySummary {
   total_ml: number;
-  formula_count: number;
-  bottle_breast_count: number;
   direct_breast_count: number;
   direct_breast_min: number;
   solid_count: number;
@@ -81,10 +80,7 @@ export interface SleepInput {
 export interface SleepDailySummary {
   total_min: number;
   nap_count: number;
-  nap_min: number;
-  night_count: number;
   night_min: number;
-  total_count: number;
 }
 
 export type CareSubtype = 'diaper' | 'bath' | 'other';
@@ -118,7 +114,6 @@ export interface CareInput {
 
 export interface CareDailySummary {
   total_count: number;
-  diaper_count: number;
   pee_count: number;
   poop_count: number;
   bath_count: number;
@@ -159,12 +154,21 @@ export interface HealthInput {
 
 export interface HealthDailySummary {
   total_count: number;
-  temperature_count: number;
   medicine_count: number;
   growth_count: number;
   teeth_count: number;
   latest_temp_c: number | null;
 }
+
+interface RecordTypeMap {
+  feeding: { record: FeedingRecord; input: FeedingInput; summary: FeedingDailySummary };
+  sleep: { record: SleepRecord; input: SleepInput; summary: SleepDailySummary };
+  care: { record: CareRecord; input: CareInput; summary: CareDailySummary };
+  health: { record: HealthRecord; input: HealthInput; summary: HealthDailySummary };
+}
+
+export type RecordOf<C extends RecordCategory> = RecordTypeMap[C]['record'];
+export type DailySummaryOf<C extends RecordCategory> = RecordTypeMap[C]['summary'];
 
 export interface ListResult<T, S> {
   items: T[];
@@ -196,11 +200,20 @@ export interface SmartDefaults {
   };
 }
 
-export type EditableRecord =
-  | { category: 'feeding'; record: FeedingRecord }
-  | { category: 'sleep'; record: SleepRecord }
-  | { category: 'care'; record: CareRecord }
-  | { category: 'health'; record: HealthRecord };
+export type EditableRecord = {
+  [C in RecordCategory]: { category: C; record: RecordOf<C> };
+}[RecordCategory];
+
+export type SaveRecordRequest =
+  | { readonly category: 'feeding'; readonly id?: number; readonly payload: FeedingInput }
+  | { readonly category: 'sleep'; readonly id?: number; readonly payload: SleepInput }
+  | { readonly category: 'care'; readonly id?: number; readonly payload: CareInput }
+  | { readonly category: 'health'; readonly id?: number; readonly payload: HealthInput };
+
+/** 将泛型分类与对应记录打包为判别联合 EditableRecord，供通用列表页安全传给编辑/复制抽屉。 */
+export function toEditableRecord<C extends RecordCategory>(category: C, record: RecordOf<C>): EditableRecord {
+  return { category, record } as EditableRecord;
+}
 
 export const BREAST_SIDE_LABELS: Record<BreastSide, string> = {
   left: '左侧',
@@ -251,10 +264,10 @@ export function getTemperatureSeverity(temp: number): {
   return { level: 'normal', label: '体温正常' };
 }
 
-export function invalidateAllRecordQueries(queryClient: QueryClient) {
-  void queryClient.invalidateQueries({ queryKey: ['records'] });
-  void queryClient.invalidateQueries({ queryKey: ['record-defaults'] });
-  void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+function invalidateAllRecordQueries(queryClient: QueryClient) {
+  void queryClient.invalidateQueries({ queryKey: RECORDS_QUERY_KEY });
+  void queryClient.invalidateQueries({ queryKey: RECORD_DEFAULTS_QUERY_KEY });
+  void queryClient.invalidateQueries({ queryKey: DASHBOARD_QUERY_KEY });
 }
 
 interface ListParams {
@@ -274,28 +287,13 @@ function buildListQueryString(params: ListParams): string {
   return q.toString();
 }
 
-export async function fetchFeedingList(params: ListParams, signal?: AbortSignal) {
-  return apiRequest<ListResult<FeedingRecord, FeedingDailySummary>>(
-    `/api/records/feeding?${buildListQueryString(params)}`,
-    { signal },
-  );
-}
-
-export async function fetchSleepList(params: ListParams, signal?: AbortSignal) {
-  return apiRequest<ListResult<SleepRecord, SleepDailySummary>>(`/api/records/sleep?${buildListQueryString(params)}`, {
-    signal,
-  });
-}
-
-export async function fetchCareList(params: ListParams, signal?: AbortSignal) {
-  return apiRequest<ListResult<CareRecord, CareDailySummary>>(`/api/records/care?${buildListQueryString(params)}`, {
-    signal,
-  });
-}
-
-export async function fetchHealthList(params: ListParams, signal?: AbortSignal) {
-  return apiRequest<ListResult<HealthRecord, HealthDailySummary>>(
-    `/api/records/health?${buildListQueryString(params)}`,
+export async function fetchRecordList<C extends RecordCategory>(
+  category: C,
+  params: ListParams,
+  signal?: AbortSignal,
+): Promise<ListResult<RecordOf<C>, DailySummaryOf<C>>> {
+  return apiRequest<ListResult<RecordOf<C>, DailySummaryOf<C>>>(
+    `/api/records/${category}?${buildListQueryString(params)}`,
     { signal },
   );
 }
@@ -304,60 +302,20 @@ export async function fetchSmartDefaults(signal?: AbortSignal): Promise<SmartDef
   return apiRequest<SmartDefaults>('/api/records/defaults', { signal });
 }
 
-export async function createFeedingRecord(input: FeedingInput): Promise<FeedingRecord> {
-  const res = await apiRequest<{ record: FeedingRecord }>('/api/records/feeding', { method: 'POST', body: input });
+export async function saveRecord(req: SaveRecordRequest): Promise<RecordOf<RecordCategory>> {
+  const path = req.id !== undefined ? `/api/records/${req.category}/${req.id}` : `/api/records/${req.category}`;
+  const method = req.id !== undefined ? 'PUT' : 'POST';
+  const res = await apiRequest<{ record: RecordOf<RecordCategory> }>(path, { method, body: req.payload });
   return res.record;
-}
-export async function updateFeedingRecord(id: number, input: FeedingInput): Promise<FeedingRecord> {
-  const res = await apiRequest<{ record: FeedingRecord }>(`/api/records/feeding/${id}`, {
-    method: 'PUT',
-    body: input,
-  });
-  return res.record;
-}
-export async function deleteFeedingRecord(id: number): Promise<void> {
-  await apiRequest<{ deleted: boolean }>(`/api/records/feeding/${id}`, { method: 'DELETE' });
 }
 
-export async function createSleepRecord(input: SleepInput): Promise<SleepRecord> {
-  const res = await apiRequest<{ record: SleepRecord }>('/api/records/sleep', { method: 'POST', body: input });
-  return res.record;
-}
-export async function updateSleepRecord(id: number, input: SleepInput): Promise<SleepRecord> {
-  const res = await apiRequest<{ record: SleepRecord }>(`/api/records/sleep/${id}`, { method: 'PUT', body: input });
-  return res.record;
-}
-export async function deleteSleepRecord(id: number): Promise<void> {
-  await apiRequest<{ deleted: boolean }>(`/api/records/sleep/${id}`, { method: 'DELETE' });
-}
-
-export async function createCareRecord(input: CareInput): Promise<CareRecord> {
-  const res = await apiRequest<{ record: CareRecord }>('/api/records/care', { method: 'POST', body: input });
-  return res.record;
-}
-export async function updateCareRecord(id: number, input: CareInput): Promise<CareRecord> {
-  const res = await apiRequest<{ record: CareRecord }>(`/api/records/care/${id}`, { method: 'PUT', body: input });
-  return res.record;
-}
-export async function deleteCareRecord(id: number): Promise<void> {
-  await apiRequest<{ deleted: boolean }>(`/api/records/care/${id}`, { method: 'DELETE' });
-}
-
-export async function createHealthRecord(input: HealthInput): Promise<HealthRecord> {
-  const res = await apiRequest<{ record: HealthRecord }>('/api/records/health', { method: 'POST', body: input });
-  return res.record;
-}
-export async function updateHealthRecord(id: number, input: HealthInput): Promise<HealthRecord> {
-  const res = await apiRequest<{ record: HealthRecord }>(`/api/records/health/${id}`, { method: 'PUT', body: input });
-  return res.record;
-}
-export async function deleteHealthRecord(id: number): Promise<void> {
-  await apiRequest<{ deleted: boolean }>(`/api/records/health/${id}`, { method: 'DELETE' });
+export async function deleteRecord(category: RecordCategory, id: number): Promise<void> {
+  await apiRequest<{ deleted: boolean }>(`/api/records/${category}/${id}`, { method: 'DELETE' });
 }
 
 export function useSmartDefaultsQuery(enabled = true) {
   return useQuery({
-    queryKey: ['record-defaults'],
+    queryKey: RECORD_DEFAULTS_QUERY_KEY,
     queryFn: ({ signal }) => fetchSmartDefaults(signal),
     enabled,
   });
@@ -395,51 +353,29 @@ export function flattenInfiniteList<T extends { id: number }, S>(
   return { items, total, dailySummaries };
 }
 
-export function useFeedingListQuery(params: InfiniteListParams) {
+export function useRecordListQuery<C extends RecordCategory>(category: C, params: InfiniteListParams) {
   return useInfiniteQuery({
-    queryKey: ['records', 'feeding', params],
+    queryKey: [...RECORDS_QUERY_KEY, category, params],
     initialPageParam: 0,
-    queryFn: ({ pageParam, signal }) => fetchFeedingList({ ...params, limit: PAGE_SIZE, offset: pageParam }, signal),
+    queryFn: ({ pageParam, signal }) =>
+      fetchRecordList(category, { ...params, limit: PAGE_SIZE, offset: pageParam }, signal),
     getNextPageParam: (lastPage, allPages) => (lastPage.has_more ? allPages.length * PAGE_SIZE : undefined),
   });
 }
 
-export function useSleepListQuery(params: InfiniteListParams) {
-  return useInfiniteQuery({
-    queryKey: ['records', 'sleep', params],
-    initialPageParam: 0,
-    queryFn: ({ pageParam, signal }) => fetchSleepList({ ...params, limit: PAGE_SIZE, offset: pageParam }, signal),
-    getNextPageParam: (lastPage, allPages) => (lastPage.has_more ? allPages.length * PAGE_SIZE : undefined),
-  });
-}
-
-export function useCareListQuery(params: InfiniteListParams) {
-  return useInfiniteQuery({
-    queryKey: ['records', 'care', params],
-    initialPageParam: 0,
-    queryFn: ({ pageParam, signal }) => fetchCareList({ ...params, limit: PAGE_SIZE, offset: pageParam }, signal),
-    getNextPageParam: (lastPage, allPages) => (lastPage.has_more ? allPages.length * PAGE_SIZE : undefined),
-  });
-}
-
-export function useHealthListQuery(params: InfiniteListParams) {
-  return useInfiniteQuery({
-    queryKey: ['records', 'health', params],
-    initialPageParam: 0,
-    queryFn: ({ pageParam, signal }) => fetchHealthList({ ...params, limit: PAGE_SIZE, offset: pageParam }, signal),
-    getNextPageParam: (lastPage, allPages) => (lastPage.has_more ? allPages.length * PAGE_SIZE : undefined),
-  });
-}
-
-export function useDeleteRecordMutation(category: CoreRecordCategory) {
+export function useSaveRecordMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (id: number) => {
-      if (category === 'feeding') return deleteFeedingRecord(id);
-      if (category === 'sleep') return deleteSleepRecord(id);
-      if (category === 'care') return deleteCareRecord(id);
-      return deleteHealthRecord(id);
-    },
+    mutationFn: (req: SaveRecordRequest) => saveRecord(req),
+    onSuccess: () => invalidateAllRecordQueries(queryClient),
+  });
+}
+
+export function useDeleteRecordMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ category, id }: { readonly category: RecordCategory; readonly id: number }) =>
+      deleteRecord(category, id),
     onSuccess: () => invalidateAllRecordQueries(queryClient),
   });
 }

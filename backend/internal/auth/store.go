@@ -25,6 +25,14 @@ func NewStore(db *gorm.DB) *Store {
 	}
 }
 
+// WithClock 替换内部时钟函数（用于确定性测试会话过期等时间行为）。
+func (s *Store) WithClock(fn func() time.Time) *Store {
+	if fn != nil {
+		s.now = fn
+	}
+	return s
+}
+
 // InitializeAdministrator 初始化唯一管理员（id = 1），若已存在则拒绝覆盖。
 func (s *Store) InitializeAdministrator(ctx context.Context, username, password string) error {
 	if err := ValidateUsername(username); err != nil {

@@ -14,11 +14,11 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { findNavItemByPath } from '@/navigation/menu';
-import { usePreferencesStore } from '@/stores/preferences';
+import { useQuickRecordStore } from '@/stores/quick-record';
 
 export function AdminHeader() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const openQuickRecord = usePreferencesStore((state) => state.openQuickRecord);
+  const openCreate = useQuickRecordStore((state) => state.openCreate);
   const currentItem = findNavItemByPath(pathname);
   // 记录列表页自身卡片头部已提供带子类型上下文的主按钮，避免桌面端上下双主色按钮重复。
   const showGlobalQuickRecord = !currentItem?.category;
@@ -44,7 +44,7 @@ export function AdminHeader() {
 
         <div className="flex shrink-0 items-center gap-1.5">
           {showGlobalQuickRecord ? (
-            <Button size="sm" className="hidden sm:inline-flex" onClick={() => openQuickRecord('feeding')}>
+            <Button size="sm" className="hidden sm:inline-flex" onClick={() => openCreate('feeding')}>
               <PlusIcon className="size-4" />
               记一笔
             </Button>
