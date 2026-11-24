@@ -18,6 +18,8 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { QuickChip } from '@/components/ui/choice-controls';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
@@ -171,16 +173,17 @@ function SettingsPage() {
 
                 <Field invalid={Boolean(fieldErrors.birthDate)}>
                   <FieldLabel htmlFor="settings-baby-birth">出生日期</FieldLabel>
-                  <Input
+                  <DatePicker
                     id="settings-baby-birth"
-                    type="date"
+                    captionLayout="dropdown"
                     max={todayStr}
                     value={birthDate}
-                    className="tabular-nums"
-                    aria-invalid={Boolean(fieldErrors.birthDate)}
-                    onChange={(event) => {
+                    invalid={Boolean(fieldErrors.birthDate)}
+                    ariaLabel="出生日期"
+                    drawerTitle="宝宝出生日期"
+                    onChange={(nextDate) => {
                       setDirty(true);
-                      setBirthDate(event.target.value);
+                      setBirthDate(nextDate);
                       if (fieldErrors.birthDate) setFieldErrors((prev) => ({ ...prev, birthDate: undefined }));
                     }}
                   />
@@ -191,23 +194,18 @@ function SettingsPage() {
                   <p className="text-[13px] font-medium text-foreground">性别</p>
                   <div className="flex flex-wrap gap-2">
                     {GENDER_OPTIONS.map((g) => (
-                      <button
+                      <QuickChip
                         key={g}
-                        type="button"
-                        aria-pressed={gender === g}
+                        variant="outline"
+                        active={gender === g}
                         onClick={() => {
                           setDirty(true);
                           setGender(g);
                         }}
-                        className={cn(
-                          'cursor-pointer rounded-full border px-4 py-1.5 text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                          gender === g
-                            ? 'border-primary bg-accent font-medium text-accent-foreground'
-                            : 'border-border/80 bg-background text-muted-foreground hover:bg-muted/50',
-                        )}
+                        className="h-9 px-4 text-sm sm:h-9"
                       >
                         {BABY_GENDER_LABELS[g]}
-                      </button>
+                      </QuickChip>
                     ))}
                   </div>
                 </div>

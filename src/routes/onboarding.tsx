@@ -8,6 +8,8 @@ import { LittleMoments } from '@/components/brand/little-moments';
 import { Alert, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
+import { ChoiceCardButton } from '@/components/ui/choice-controls';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
@@ -20,7 +22,6 @@ import {
   useCreateBabyMutation,
   validateBabyProfileForm,
 } from '@/lib/baby';
-import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth';
 
 export const Route = createFileRoute('/onboarding')({
@@ -159,15 +160,16 @@ function OnboardingPage() {
 
                 <Field invalid={Boolean(fieldErrors.birthDate)}>
                   <FieldLabel htmlFor="baby-birth-date">出生日期</FieldLabel>
-                  <Input
+                  <DatePicker
                     id="baby-birth-date"
-                    type="date"
+                    captionLayout="dropdown"
                     max={todayStr}
                     value={birthDate}
-                    className="tabular-nums"
-                    aria-invalid={Boolean(fieldErrors.birthDate)}
-                    onChange={(event) => {
-                      setBirthDate(event.target.value);
+                    invalid={Boolean(fieldErrors.birthDate)}
+                    ariaLabel="出生日期"
+                    drawerTitle="宝宝出生日期"
+                    onChange={(nextDate) => {
+                      setBirthDate(nextDate);
                       if (fieldErrors.birthDate) setFieldErrors((prev) => ({ ...prev, birthDate: undefined }));
                     }}
                   />
@@ -177,26 +179,17 @@ function OnboardingPage() {
                 <div className="space-y-2">
                   <p className="text-[13px] font-medium text-foreground">宝宝性别</p>
                   <div className="grid grid-cols-3 gap-2.5">
-                    {GENDER_OPTIONS.map((option) => {
-                      const active = gender === option.value;
-                      return (
-                        <button
-                          key={option.value}
-                          type="button"
-                          aria-pressed={active}
-                          onClick={() => setGender(option.value)}
-                          className={cn(
-                            'flex cursor-pointer flex-col items-center justify-center gap-0.5 rounded-xl border px-3 py-2.5 text-center transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                            active
-                              ? 'border-primary bg-accent text-accent-foreground'
-                              : 'border-border/80 bg-background/50 text-foreground hover:bg-muted/60',
-                          )}
-                        >
-                          <span className="text-sm font-medium">{option.label}</span>
-                          <span className="text-xs text-muted-foreground">{option.hint}</span>
-                        </button>
-                      );
-                    })}
+                    {GENDER_OPTIONS.map((option) => (
+                      <ChoiceCardButton
+                        key={option.value}
+                        active={gender === option.value}
+                        onClick={() => setGender(option.value)}
+                        className="h-auto flex-col gap-0.5 py-2.5 text-center"
+                      >
+                        <span className="text-sm font-medium">{option.label}</span>
+                        <span className="text-xs font-normal text-muted-foreground">{option.hint}</span>
+                      </ChoiceCardButton>
+                    ))}
                   </div>
                 </div>
 

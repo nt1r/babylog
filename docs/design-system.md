@@ -63,16 +63,16 @@
 ## 布局壳层与交互范式
 
 - **桌面端主框架**：采用 `Inset Sidebar` + 吸顶 `AdminHeader`（侧栏折叠、面包屑、快捷「记一笔」、主题切换、用户菜单），支持 `Ctrl/Cmd + B` 折叠侧栏至图标态。
-- **移动端主框架**：顶部保留抽屉导航与主题/账号入口，底部提供 5 槽位单手导航栏（核心 4 个入口 + 中央突出「快速记一笔」按钮，点击区不低于 `44px × 44px`）。
+- **移动端主框架**：顶部保留左侧抽屉导航（统一复用 [Drawer](../src/components/ui/drawer.tsx) 支持左滑手势关闭）与主题/账号入口，底部提供 5 槽位单手导航栏（核心 4 个入口 + 中央突出「快速记一笔」按钮，点击区不低于 `44px × 44px`）。
 - **页面与抽屉模板**：
   - 看板页：使用 `@container/main` 响应式栅格（问候区 -> 一键直记条 -> 4 列 KPI 卡 -> `2:1` Recharts 图表 -> 四分类快捷录入）；
   - 记录列表页：统一复用 [ListPageCard](../src/components/list-page-card.tsx) + `Tabs` 筛选 + [Empty](../src/components/ui/empty.tsx)；
-  - 录入/详情抽屉：统一复用 [EntityDrawer](../src/components/entity-drawer.tsx)（桌面端右侧滑出、移动端底部滑出）；
+  - 录入/详情抽屉：统一复用 [EntityDrawer](../src/components/entity-drawer.tsx)（基于 `@base-ui/react/drawer`，桌面端右侧滑出、移动端底部滑出并支持嵌套抽屉堆栈）；
   - 危险操作确认：统一复用 [DeleteConfirmDialog](../src/components/delete-confirm-dialog.tsx)。
 
 ## 样式组织与组件复用约定
 
-1. **基础 UI 原语与表单控件复用**：基础原语统一放在 `src/components/ui/`（基于 `@base-ui/react` 与 `class-variance-authority`，配置见 [components.json](../components.json)）；新增表单优先对齐 [field.tsx](../src/components/ui/field.tsx)（`FieldLabel` `13px`）、[input.tsx](../src/components/ui/input.tsx)（默认 `text-base md:text-sm`，桌面紧凑覆写须带 `md:` 前缀）、[checkbox.tsx](../src/components/ui/checkbox.tsx) 及 [record-controls.tsx](../src/components/quick-record/record-controls.tsx)（`SegmentedControl` / `ChoiceCardButton` / `QuickChip`）。
+1. **基础 UI 原语与表单控件复用**：基础原语统一放在 `src/components/ui/`（基于 `@base-ui/react`、`react-day-picker` 与 `class-variance-authority`，配置见 [components.json](../components.json)）；新增表单与交互统一复用 [field.tsx](../src/components/ui/field.tsx)（`FieldLabel` `13px`）、[input.tsx](../src/components/ui/input.tsx)（默认 `text-base md:text-sm`，桌面紧凑覆写须带 `md:` 前缀，`type="number"` 自动隐藏原生微调箭头并拦截聚焦滚轮误改）、[checkbox.tsx](../src/components/ui/checkbox.tsx)、[date-picker.tsx](../src/components/ui/date-picker.tsx)（全端等宽 `YYYY-MM-DD`，桌面 `Popover` + 移动端嵌套 `Drawer`）、[time-picker.tsx](../src/components/ui/time-picker.tsx)（全端 24 小时制 `HH:mm`，桌面 `Popover` + 移动端嵌套 `Drawer`）、[date-time-input-row.tsx](../src/components/date-time-input-row.tsx)、[choice-controls.tsx](../src/components/ui/choice-controls.tsx)（`SegmentedControl` / `ChoiceCardButton` / `QuickChip`）、[alert.tsx](../src/components/ui/alert.tsx)（含 `size="compact"`）及 [collapsible.tsx](../src/components/ui/collapsible.tsx)，禁止在业务代码直接使用裸 `input[type="checkbox" | "date" | "time"]`、裸 `<details>`、Tailwind 原始色阶或 `100vh`/`h-screen`。
 2. **主题启动无闪烁**：主题模式（`light` / `dark` / `system`）由 [src/scripts/theme-boot-script.ts](../src/scripts/theme-boot-script.ts) 在 HTML 渲染前同步写入 `<html>` 与 `<meta name="theme-color">`。
 3. **品牌与动效**：
    - UI 图标统一使用 `lucide-react`，线宽保持 `1.75–1.8`；

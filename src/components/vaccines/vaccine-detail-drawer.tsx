@@ -1,10 +1,13 @@
 import { AlertTriangle, HeartPulse, SaveIcon, Syringe, Trash2 } from 'lucide-react';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
+import { DateTimeInputRow } from '@/components/date-time-input-row';
 import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog';
 import { EntityDrawer } from '@/components/entity-drawer';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ChoiceCardButton, QuickChip } from '@/components/ui/choice-controls';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
@@ -12,7 +15,6 @@ import { Spinner } from '@/components/ui/spinner';
 import { toast } from '@/components/ui/toast';
 import { ClinicInputField } from '@/components/vaccines/clinic-input-field';
 import { VaccineKnowledgeSection } from '@/components/vaccines/vaccine-knowledge-section';
-import { cn } from '@/lib/utils';
 import {
   formatDoseOrderLabel,
   formatShortCnDate,
@@ -208,6 +210,7 @@ export function VaccineDetailDrawer({
     <>
       <EntityDrawer
         open={open}
+        pending={busy}
         onOpenChange={handleOpenChange}
         title={active ? active.vaccine_name : '疫苗详情'}
         description={
@@ -273,28 +276,18 @@ export function VaccineDetailDrawer({
               <div className="space-y-2">
                 <p className="text-[13px] font-medium text-foreground">接种状态</p>
                 <div className="grid grid-cols-3 gap-2">
-                  {STATUS_OPTIONS.map((opt) => {
-                    const selected = status === opt.value;
-                    return (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        aria-pressed={selected}
-                        onClick={() => {
-                          setStatus(opt.value);
-                          setFormError(null);
-                        }}
-                        className={cn(
-                          'flex h-10 cursor-pointer items-center justify-center rounded-xl border px-3 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                          selected
-                            ? 'border-primary bg-accent text-accent-foreground'
-                            : 'border-border/80 bg-background text-muted-foreground hover:bg-muted/50',
-                        )}
-                      >
-                        {opt.label}
-                      </button>
-                    );
-                  })}
+                  {STATUS_OPTIONS.map((opt) => (
+                    <ChoiceCardButton
+                      key={opt.value}
+                      active={status === opt.value}
+                      onClick={() => {
+                        setStatus(opt.value);
+                        setFormError(null);
+                      }}
+                    >
+                      {opt.label}
+                    </ChoiceCardButton>
+                  ))}
                 </div>
               </div>
 
@@ -329,12 +322,12 @@ export function VaccineDetailDrawer({
                   <Field>
                     <FieldLabel htmlFor="vac-planned-date">预计日期</FieldLabel>
                     <div className="flex items-center gap-2">
-                      <Input
+                      <DatePicker
                         id="vac-planned-date"
-                        type="date"
                         value={plannedDate || active.default_due_date}
-                        className="tabular-nums"
-                        onChange={(e) => setPlannedDate(e.target.value)}
+                        ariaLabel="预计日期"
+                        drawerTitle="预计接种日期"
+                        onChange={setPlannedDate}
                       />
                       {plannedDate ? (
                         <Button type="button" variant="outline" size="sm" onClick={() => setPlannedDate('')}>
@@ -351,28 +344,20 @@ export function VaccineDetailDrawer({
 
               {status === 'scheduled' ? (
                 <FieldGroup className="space-y-3">
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <Field>
-                      <FieldLabel htmlFor="vac-sched-date">预约日期</FieldLabel>
-                      <Input
-                        id="vac-sched-date"
-                        type="date"
-                        value={scheduledDate}
-                        className="tabular-nums"
-                        onChange={(e) => setScheduledDate(e.target.value)}
-                      />
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor="vac-sched-time">预约时间（可选）</FieldLabel>
-                      <Input
-                        id="vac-sched-time"
-                        type="time"
-                        value={scheduledTime}
-                        className="tabular-nums"
-                        onChange={(e) => setScheduledTime(e.target.value)}
-                      />
-                    </Field>
-                  </div>
+                  <DateTimeInputRow
+                    dateId="vac-sched-date"
+                    timeId="vac-sched-time"
+                    dateLabel="预约日期"
+                    timeLabel="预约时间（可选）"
+                    dateAriaLabel="预约日期"
+                    timeAriaLabel="预约时间（可选）"
+                    timePlaceholder="可选"
+                    timeClearable
+                    dateValue={scheduledDate}
+                    timeValue={scheduledTime}
+                    onDateChange={setScheduledDate}
+                    onTimeChange={setScheduledTime}
+                  />
 
                   <ClinicInputField
                     id="vac-clinic"
@@ -388,14 +373,14 @@ export function VaccineDetailDrawer({
                 <FieldGroup className="space-y-3">
                   <Field>
                     <FieldLabel htmlFor="vac-completed-date">实际接种日期</FieldLabel>
-                    <Input
+                    <DatePicker
                       id="vac-completed-date"
-                      type="date"
                       min={birthDate}
                       max={today}
                       value={vaccinatedAt}
-                      className="tabular-nums"
-                      onChange={(e) => setVaccinatedAt(e.target.value)}
+                      ariaLabel="实际接种日期"
+                      drawerTitle="实际接种日期"
+                      onChange={setVaccinatedAt}
                     />
                   </Field>
 
@@ -418,19 +403,14 @@ export function VaccineDetailDrawer({
                     />
                     <div className="flex flex-wrap gap-1.5 pt-1">
                       {VACCINE_SITE_PRESETS.map((preset) => (
-                        <button
+                        <QuickChip
                           key={preset}
-                          type="button"
+                          variant="outline"
+                          active={site === preset}
                           onClick={() => setSite(preset)}
-                          className={cn(
-                            'cursor-pointer rounded-full border px-2.5 py-0.5 text-xs transition-colors',
-                            site === preset
-                              ? 'border-primary bg-accent text-accent-foreground'
-                              : 'border-border/80 bg-muted/40 text-muted-foreground hover:bg-muted',
-                          )}
                         >
                           {preset}
-                        </button>
+                        </QuickChip>
                       ))}
                     </div>
                   </Field>
@@ -470,19 +450,14 @@ export function VaccineDetailDrawer({
                     />
                     <div className="flex flex-wrap gap-1.5 pt-1">
                       {VACCINE_REACTION_PRESETS.map((preset) => (
-                        <button
+                        <QuickChip
                           key={preset}
-                          type="button"
+                          variant="outline"
+                          active={reaction === preset}
                           onClick={() => setReaction(preset)}
-                          className={cn(
-                            'cursor-pointer rounded-full border px-2.5 py-0.5 text-xs transition-colors',
-                            reaction === preset
-                              ? 'border-primary bg-accent text-accent-foreground'
-                              : 'border-border/80 bg-muted/40 text-muted-foreground hover:bg-muted',
-                          )}
                         >
                           {preset}
-                        </button>
+                        </QuickChip>
                       ))}
                     </div>
                   </Field>

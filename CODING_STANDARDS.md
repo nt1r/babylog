@@ -6,14 +6,15 @@
 
 ### 设计系统与无障碍
 - 配色、圆角与业务分类色以 `docs/design-system.md`、`src/styles/tokens.css` 与 `src/styles/globals.css` 为准；业务界面复用语义 Token（含 `feeding` / `sleep` / `health` / `care` 分类色）与 Tailwind v4 工具类，不使用硬编码十六进制色值或 Tailwind 原始色阶。
-- 基础交互原语统一放在 `src/components/ui/`（基于 `@base-ui/react` + `class-variance-authority`）；业务表单复用 `Checkbox`、`FieldLabel`、`Input` 等原语，紧凑 `Input` 缩小桌面字号时使用 `md:text-[13px]` 保持移动端 `text-base`（`16px`），同层级表单标签与 `FieldLabel`（`13px`）对齐、卡片单选块与 `ChoiceCardButton`（`h-10 text-sm`）对齐。
+- 基础交互原语清单以 `docs/design-system.md` 为单一事实来源；移动端原生 `<input>` / `<select>`（含透明覆盖层）保持 `text-base md:text-sm`（`>= 16px`）避免 iOS 放大，桌面紧凑覆写须带 `md:` 前缀；同层级表单标签与 `FieldLabel`（`13px`）对齐、卡片单选块与 `ChoiceCardButton`（`h-10 text-sm`）对齐。
+- 响应式宽度与布局断点与 `useIsMobile`（`768px` = `md:`）保持一致；含内部滚动区的底部 `Drawer` 在滚动容器标注 `data-base-ui-swipe-ignore`，浮层与抽屉（`Popover`/`Drawer`）在 `disabled` 时仅拦截打开、始终放行关闭并在转为 `disabled` 时自动收起。
 - 亮/暗双色语义变量在 `src/styles/tokens.css` 中成对维护：亮色覆写限定在 `:root:not(.dark):not([data-theme="dark"]), .light, [data-theme="light"]`，暗色覆写限定在 `.dark, [data-theme="dark"]`。
 - 所有无障碍文案（`Spinner`、抽屉/弹窗关闭按钮、面包屑、步进按钮的 `aria-label`）使用中文；按钮内的 `Spinner` 标注 `aria-hidden="true" role="presentation"`，避免嵌套 live region 或中英文混播。
 
 ### 状态边界、分页与异步交互
 - TanStack Query 负责服务端数据查询与缓存，Zustand 负责认证会话、主题偏好与抽屉意图；全局请求层收到非认证接口 `401` 时统一清空认证状态与 Query 缓存并退回登录页。
 - 列表翻页使用 `useInfiniteQuery` 按 `offset` 递增拉取并与后端 `MaxListLimit` 对齐。翻页请求失败（`isFetchNextPageError`）时保留已加载列表并在底部提供内联重试按钮（重试中禁用并展示加载态），仅在首屏无数据且报错时渲染整页错误态。
-- 提交或删除进行中（`isPending`）时，抽屉与确认弹窗须拦截关闭操作（遮罩点击 / `Esc`），防止异步失败错误被写入已关闭容器而丢失反馈。
+- 提交或删除进行中（`isPending`）时，抽屉与确认弹窗须拦截关闭操作（遮罩点击 / `Esc` / 返回键 / 下滑手势）：基于 `@base-ui/react/drawer` 的抽屉调用 `eventDetails.cancel()`，同步开启 `disablePointerDismissal` 并禁用顶部关闭按钮，防止异步失败错误被写入已关闭容器而丢失反馈。
 - 高频直记按钮除禁用态外须配备 `useRef` 同步防重入锁；一次性撤销回调（如 Toast 撤销按钮）须配备单次执行守卫，防止连点重复请求导致误报 404。
 - 抽屉关闭动画期间保持当前意图稳定，由下次打开动作写入新意图，避免标题与表单区在滑出瞬间闪烁；表单初始化 `useEffect` 仅依赖 `[open, entityId]`（其余默认值通过 `useRef` 读取），避免后台 Query 刷新冲掉未保存编辑，且校验与提交仅覆盖当前激活状态下可见的字段。
 

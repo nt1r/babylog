@@ -1,9 +1,11 @@
 import { CalendarCheck2, CheckCheck } from 'lucide-react';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
+import { DateTimeInputRow } from '@/components/date-time-input-row';
 import { EntityDrawer } from '@/components/entity-drawer';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
@@ -125,6 +127,7 @@ export function VaccineBatchDrawer({
   return (
     <EntityDrawer
       open={open}
+      pending={batchMutation.isPending}
       onOpenChange={handleOpenChange}
       title={isSchedule ? `${active?.stageLabel ?? ''} · 登记预约` : `${active?.stageLabel ?? ''} · 标记已接种`}
       icon={
@@ -171,33 +174,35 @@ export function VaccineBatchDrawer({
           ) : null}
 
           <FieldGroup className="space-y-3.5">
-            <div className={isSchedule ? 'grid grid-cols-1 gap-3 sm:grid-cols-2' : ''}>
+            {isSchedule ? (
+              <DateTimeInputRow
+                dateId="batch-vac-date"
+                timeId="batch-vac-time"
+                dateLabel="预约日期"
+                timeLabel="预约时间（可选）"
+                dateAriaLabel="预约日期"
+                timeAriaLabel="预约时间（可选）"
+                timePlaceholder="可选"
+                timeClearable
+                dateValue={date}
+                timeValue={time}
+                onDateChange={setDate}
+                onTimeChange={setTime}
+              />
+            ) : (
               <Field>
-                <FieldLabel htmlFor="batch-vac-date">{isSchedule ? '预约日期' : '实际接种日期'}</FieldLabel>
-                <Input
+                <FieldLabel htmlFor="batch-vac-date">实际接种日期</FieldLabel>
+                <DatePicker
                   id="batch-vac-date"
-                  type="date"
-                  min={isSchedule ? undefined : birthDate}
-                  max={isSchedule ? undefined : today}
+                  min={birthDate}
+                  max={today}
                   value={date}
-                  className="tabular-nums"
-                  onChange={(e) => setDate(e.target.value)}
+                  ariaLabel="实际接种日期"
+                  drawerTitle="实际接种日期"
+                  onChange={setDate}
                 />
               </Field>
-
-              {isSchedule ? (
-                <Field>
-                  <FieldLabel htmlFor="batch-vac-time">预约时间（可选）</FieldLabel>
-                  <Input
-                    id="batch-vac-time"
-                    type="time"
-                    value={time}
-                    className="tabular-nums"
-                    onChange={(e) => setTime(e.target.value)}
-                  />
-                </Field>
-              ) : null}
-            </div>
+            )}
 
             <ClinicInputField
               id="batch-vac-clinic"

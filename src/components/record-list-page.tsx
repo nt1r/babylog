@@ -5,6 +5,7 @@ import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog';
 import { ListPageCard } from '@/components/list-page-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { QuickChip } from '@/components/ui/choice-controls';
 import { Empty, EmptyActions, EmptyDescription, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -52,20 +53,9 @@ function RangeFilterPills({
   return (
     <fieldset className="flex flex-wrap items-center gap-1 border-0 p-0" aria-label="时间范围筛选">
       {RANGE_OPTIONS.map((range) => (
-        <button
-          key={range}
-          type="button"
-          aria-pressed={value === range}
-          onClick={() => onChange(range)}
-          className={cn(
-            'cursor-pointer rounded-full border px-3 py-1 text-xs transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
-            value === range
-              ? 'border-primary bg-accent font-medium text-accent-foreground'
-              : 'border-border/80 bg-background text-muted-foreground hover:bg-muted/50',
-          )}
-        >
+        <QuickChip key={range} variant="outline" active={value === range} onClick={() => onChange(range)}>
           {RANGE_LABELS[range]}
-        </button>
+        </QuickChip>
       ))}
     </fieldset>
   );

@@ -20,7 +20,6 @@ export type SolidAcceptance = 'like' | 'neutral' | 'dislike';
 
 export interface FeedingRecord {
   id: number;
-  baby_id: number;
   subtype: FeedingSubtype;
   feeding_mode: FeedingMode | null;
   breast_side: BreastSide | null;
@@ -31,8 +30,6 @@ export interface FeedingRecord {
   acceptance: SolidAcceptance | null;
   recorded_at: string;
   note: string;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface FeedingInput {
@@ -60,14 +57,11 @@ export type SleepSubtype = 'nap' | 'night';
 
 export interface SleepRecord {
   id: number;
-  baby_id: number;
   subtype: SleepSubtype;
   started_at: string;
   ended_at: string;
   duration_min: number;
   note: string;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface SleepInput {
@@ -90,7 +84,6 @@ export type StoolColor = 'yellow' | 'green' | 'brown' | 'abnormal';
 
 export interface CareRecord {
   id: number;
-  baby_id: number;
   subtype: CareSubtype;
   diaper_kind: DiaperKind | null;
   stool_consistency: StoolConsistency | null;
@@ -98,8 +91,6 @@ export interface CareRecord {
   care_title: string | null;
   recorded_at: string;
   note: string;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface CareInput {
@@ -124,7 +115,6 @@ export type HealthSubtype = 'temperature' | 'medicine' | 'growth' | 'teeth';
 
 export interface HealthRecord {
   id: number;
-  baby_id: number;
   subtype: HealthSubtype;
   temperature_c: number | null;
   medicine_name: string | null;
@@ -135,8 +125,6 @@ export interface HealthRecord {
   tooth_note: string | null;
   recorded_at: string;
   note: string;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface HealthInput {

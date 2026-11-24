@@ -12,10 +12,71 @@ export function getBrowserTimeZone(): string {
   return 'Asia/Shanghai';
 }
 
-/** 拆解 Date 为 HTML date/time 输入框所需的 YYYY-MM-DD 与 HH:mm。 */
+/** 严格解析本地日期键 YYYY-MM-DD 为本地零点 Date，非法格式或越界日期（如 2月31日）返回 undefined。 */
+export function parseLocalDateKey(dateKey: string): Date | undefined {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return undefined;
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const parsed = new Date(year, month - 1, day);
+  if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) {
+    return undefined;
+  }
+  return parsed;
+}
+
+/** 将 Date 格式化为本地 YYYY-MM-DD 字符串。 */
+export function formatLocalDateKey(date: Date): string {
+  return format(date, 'yyyy-MM-dd');
+}
+
+/** 严格解析本地时间键 HH:mm，非法格式或越界小时/分钟返回 undefined。 */
+export function parseLocalTimeKey(timeKey: string): { hour: number; minute: number } | undefined {
+  if (!/^\d{2}:\d{2}$/.test(timeKey)) return undefined;
+  const [hour, minute] = timeKey.split(':').map(Number);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return undefined;
+  return { hour, minute };
+}
+
+/** 将小时与分钟格式化为标准 HH:mm 字符串。 */
+export function formatLocalTimeKey(hour: number, minute: number): string {
+  const safeHour = Math.max(0, Math.min(23, Math.trunc(hour)));
+  const safeMinute = Math.max(0, Math.min(59, Math.trunc(minute)));
+  return `${String(safeHour).padStart(2, '0')}:${String(safeMinute).padStart(2, '0')}`;
+}
+
+/** 判断 YYYY-MM-DD 日期键是否落在闭区间 [min, max] 内。 */
+export function isDateKeyWithinBounds(dateKey: string, min?: string, max?: string): boolean {
+  if (!parseLocalDateKey(dateKey)) return false;
+  if (min && dateKey < min) return false;
+  if (max && dateKey > max) return false;
+  return true;
+}
+
+/** 计算日历弹层的默认定位月份：优先选中日，否则按 [min, max] 收敛今日日期，避免翻到不可选月份。 */
+export function resolveInitialCalendarMonth(
+  selectedDate: Date | undefined,
+  min?: string,
+  max?: string,
+  now: Date = new Date(),
+): Date {
+  if (selectedDate) {
+    return new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+  }
+  const todayKey = formatLocalDateKey(now);
+  if (min && todayKey < min) {
+    const minDate = parseLocalDateKey(min);
+    if (minDate) return new Date(minDate.getFullYear(), minDate.getMonth(), 1);
+  }
+  if (max && todayKey > max) {
+    const maxDate = parseLocalDateKey(max);
+    if (maxDate) return new Date(maxDate.getFullYear(), maxDate.getMonth(), 1);
+  }
+  return new Date(now.getFullYear(), now.getMonth(), 1);
+}
+
+/** 拆解 Date 为日期与时间选择器所需的 YYYY-MM-DD 与 HH:mm。 */
 export function splitLocalDateTime(date: Date): { date: string; time: string } {
   return {
-    date: format(date, 'yyyy-MM-dd'),
+    date: formatLocalDateKey(date),
     time: format(date, 'HH:mm'),
   };
 }

@@ -3,6 +3,7 @@ import { AlertCircle, PlusIcon, RotateCw, Syringe } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { ListPageCard } from '@/components/list-page-card';
 import { Button } from '@/components/ui/button';
+import { QuickChip } from '@/components/ui/choice-controls';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/components/ui/toast';
 import { type BatchDrawerIntent, VaccineBatchDrawer } from '@/components/vaccines/vaccine-batch-drawer';
@@ -11,7 +12,6 @@ import { VaccineDetailDrawer } from '@/components/vaccines/vaccine-detail-drawer
 import { type BirthConfirmItem, VaccineOverview } from '@/components/vaccines/vaccine-overview';
 import { VaccineTimeline } from '@/components/vaccines/vaccine-timeline';
 import { useBabyProfileQuery } from '@/lib/baby';
-import { cn } from '@/lib/utils';
 import {
   filterVaccineDoses,
   useUpdateVaccineDoseMutation,
@@ -192,50 +192,33 @@ function VaccinesPage() {
             }
           >
             <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex flex-wrap items-center gap-1.5">
-                {STATUS_FILTER_OPTIONS.map((opt) => {
-                  const active = statusFilter === opt.value;
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() => setStatusFilter(opt.value)}
-                      className={cn(
-                        'cursor-pointer rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-                        active
-                          ? 'border-primary bg-accent text-accent-foreground'
-                          : 'border-border/80 bg-background text-muted-foreground hover:bg-muted/50',
-                      )}
-                    >
-                      {opt.label}
-                    </button>
-                  );
-                })}
-              </div>
+              <fieldset aria-label="疫苗状态筛选" className="flex flex-wrap items-center gap-1.5 border-0 p-0">
+                {STATUS_FILTER_OPTIONS.map((opt) => (
+                  <QuickChip
+                    key={opt.value}
+                    variant="outline"
+                    active={statusFilter === opt.value}
+                    onClick={() => setStatusFilter(opt.value)}
+                  >
+                    {opt.label}
+                  </QuickChip>
+                ))}
+              </fieldset>
 
               <div className="flex flex-wrap items-center justify-between gap-2 sm:justify-end">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {CATEGORY_FILTER_OPTIONS.map((opt) => {
-                    const active = categoryFilter === opt.value;
-                    return (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        aria-pressed={active}
-                        onClick={() => setCategoryFilter(opt.value)}
-                        className={cn(
-                          'cursor-pointer rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
-                          active
-                            ? 'border-health bg-health-soft text-health-soft-foreground'
-                            : 'border-border/80 bg-background text-muted-foreground hover:bg-muted/50',
-                        )}
-                      >
-                        {opt.label}
-                      </button>
-                    );
-                  })}
-                </div>
+                <fieldset aria-label="疫苗类别筛选" className="flex flex-wrap items-center gap-1.5 border-0 p-0">
+                  {CATEGORY_FILTER_OPTIONS.map((opt) => (
+                    <QuickChip
+                      key={opt.value}
+                      variant="outline"
+                      tone="health"
+                      active={categoryFilter === opt.value}
+                      onClick={() => setCategoryFilter(opt.value)}
+                    >
+                      {opt.label}
+                    </QuickChip>
+                  ))}
+                </fieldset>
 
                 <Button
                   size="sm"

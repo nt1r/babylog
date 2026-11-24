@@ -25,10 +25,10 @@ The system SHALL return the current baby profile on `GET /api/baby` or `{ "baby"
 - **THEN** the server responds with HTTP 200 and returns the stored baby profile including `id`, `nickname`, `birth_date`, `gender`, optional `birth_weight_kg`, optional `birth_height_cm`, `created_at`, and `updated_at`
 
 ### Requirement: Single baby profile creation
-The system SHALL allow creating the baby profile on `POST /api/baby` with required `nickname`, `birth_date`, and `gender` (plus optional `birth_weight_kg` and `birth_height_cm`), and SHALL reject duplicate creation when a profile already exists.
+The system SHALL allow creating the baby profile on `POST /api/baby` (with optional `tz=<IANA>` query parameter to evaluate today's local date) with required `nickname`, `birth_date`, and `gender` (plus optional `birth_weight_kg` and `birth_height_cm`), and SHALL reject duplicate creation when a profile already exists.
 
 #### Scenario: Create baby profile successfully
-- **WHEN** an authenticated administrator sends a valid `application/json` payload to `POST /api/baby` with non-empty `nickname` (1 to 32 characters after trimming), `birth_date` in `YYYY-MM-DD` format not in the future, and `gender` in `male | female | unknown`
+- **WHEN** an authenticated administrator sends a valid `application/json` payload to `POST /api/baby` (optionally with `?tz=<IANA>`) with non-empty `nickname` (1 to 32 characters after trimming), `birth_date` in `YYYY-MM-DD` format not in the future in the requested timezone, and `gender` in `male | female | unknown`
 - **THEN** the server persists the profile in SQLite, responds with HTTP 201, and returns the created baby profile
 
 #### Scenario: Reject duplicate baby profile creation
@@ -40,7 +40,7 @@ The system SHALL allow creating the baby profile on `POST /api/baby` with requir
 - **THEN** the server responds with HTTP 400 and a Chinese error message without persisting any data
 
 ### Requirement: Baby profile update
-The system SHALL allow updating the existing baby profile on `PUT /api/baby` using the same field validation rules as creation.
+The system SHALL allow updating the existing baby profile on `PUT /api/baby` (with optional `tz=<IANA>` query parameter) using the same field validation rules as creation.
 
 #### Scenario: Update existing baby profile
 - **WHEN** an authenticated administrator sends valid updated fields to `PUT /api/baby`

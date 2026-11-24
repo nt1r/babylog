@@ -108,23 +108,24 @@
     min-width: 320px;
   }
 
-  /* 修复 iOS Safari 原生日期/时间控件忽略容器宽度导致两列并排时重叠溢出的问题 */
-  input[type="date"],
-  input[type="time"] {
-    display: flex;
-    align-items: center;
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-    overflow: hidden;
-    -webkit-appearance: none;
-    appearance: none;
+  /* 消除移动端点击闪烁并防止快速连点步进/翻月按钮触发双击缩放 */
+  button,
+  a,
+  [role="button"] {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
 
-  input[type="date"]::-webkit-date-and-time-value,
-  input[type="time"]::-webkit-date-and-time-value {
+  /* 隐藏各浏览器原生 number 微调箭头，避免挤压窄输入框并保持跨端外观一致 */
+  input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
     margin: 0;
-    text-align: left;
   }
 
   ::selection {

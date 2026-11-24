@@ -1,6 +1,7 @@
 import { HEALTH_BOUNDS, type HealthFormState } from '@/components/quick-record/codecs/health';
-import { NumberStepperCard, QuickChip, SegmentedControl } from '@/components/quick-record/record-controls';
+import { NumberStepperCard } from '@/components/quick-record/record-controls';
 import { Badge } from '@/components/ui/badge';
+import { QuickChip, SegmentedControl } from '@/components/ui/choice-controls';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { HEALTH_SUBTYPE_OPTIONS } from '@/lib/categories';

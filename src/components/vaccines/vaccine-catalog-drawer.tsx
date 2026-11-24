@@ -5,6 +5,7 @@ import { EntityDrawer } from '@/components/entity-drawer';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ChoiceCardButton } from '@/components/ui/choice-controls';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -17,7 +18,6 @@ import {
   nextDoseRowKey,
   parseEditableDoseRows,
 } from '@/components/vaccines/dose-schedule-editor';
-import { cn } from '@/lib/utils';
 import {
   useAddVaccineTemplateMutation,
   useCreateCustomVaccineMutation,
@@ -167,10 +167,11 @@ export function VaccineCatalogDrawer({ open, onOpenChange }: VaccineCatalogDrawe
     <>
       <EntityDrawer
         open={open}
+        pending={busy}
         onOpenChange={handleOpenChange}
         title="添加疫苗"
         icon={<Syringe className="size-4.5 text-health" strokeWidth={1.8} />}
-        className="sm:max-w-lg"
+        className="md:max-w-lg"
       >
         <Tabs value={tab} onValueChange={(v) => setTab(v === 'custom' ? 'custom' : 'templates')}>
           <TabsList className="w-full">
@@ -183,16 +184,13 @@ export function VaccineCatalogDrawer({ open, onOpenChange }: VaccineCatalogDrawe
           </TabsList>
 
           <TabsContent value="templates" className="mt-3 space-y-3">
-            <div
-              role="alert"
-              className="flex items-start gap-2 rounded-xl border border-warning/25 bg-warning-soft px-3 py-2 text-xs leading-relaxed text-warning-soft-foreground"
-            >
-              <ShieldAlert className="mt-0.5 size-4 shrink-0" />
+            <Alert variant="warning" size="compact" role="note">
+              <ShieldAlert aria-hidden="true" />
               <span>
                 {catalogQuery.data?.disclaimer ??
                   '自费疫苗因品牌与起始月龄不同，剂次间隔差异较大；加入后请按门诊排期及说明书核对。'}
               </span>
-            </div>
+            </Alert>
 
             {catalogQuery.isLoading ? (
               <div className="space-y-3">
@@ -365,20 +363,13 @@ export function VaccineCatalogDrawer({ open, onOpenChange }: VaccineCatalogDrawe
                         { value: 'nip', label: '免费（地方/免疫规划）' },
                       ] as const
                     ).map((item) => (
-                      <button
+                      <ChoiceCardButton
                         key={item.value}
-                        type="button"
-                        aria-pressed={category === item.value}
+                        active={category === item.value}
                         onClick={() => setCategory(item.value)}
-                        className={cn(
-                          'flex h-10 cursor-pointer items-center justify-center rounded-xl border px-3 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                          category === item.value
-                            ? 'border-primary bg-accent text-accent-foreground'
-                            : 'border-border/80 bg-background text-muted-foreground hover:bg-muted/50',
-                        )}
                       >
                         {item.label}
-                      </button>
+                      </ChoiceCardButton>
                     ))}
                   </div>
                 </div>

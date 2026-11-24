@@ -78,10 +78,10 @@ The system SHALL allow updating a single dose via `PUT /api/vaccines/:id` across
 - **THEN** the server responds with HTTP 400 and a Chinese error message
 
 ### Requirement: Batch appointment booking and historical completion
-The system SHALL provide `POST /api/vaccines/batch` to atomically book multiple doses for the same visit or mark multiple doses as completed in a single transaction (supporting birth hospital quick-confirmation and historical stage backfill).
+The system SHALL provide `POST /api/vaccines/batch` to atomically book multiple doses for the same visit or mark multiple doses as completed on the same date in a single transaction (supporting same-stage appointment booking and historical stage backfill; per-dose birth-hospital confirmation with distinct HepB/BCG dates uses per-dose `PUT /api/vaccines/:id`).
 
-#### Scenario: Batch-confirm birth hospital vaccines
-- **WHEN** an authenticated administrator sends `POST /api/vaccines/batch` with `action: "complete"`, the IDs of HepB dose 1 and BCG, and `vaccinated_at` set to the baby's birth date
+#### Scenario: Batch-mark multiple same-stage doses as completed
+- **WHEN** an authenticated administrator sends `POST /api/vaccines/batch` with `action: "complete"`, a list of dose IDs, and a valid `vaccinated_at` between the baby's birth date and today's local date
 - **THEN** the server marks all specified doses as `completed` atomically in a single transaction and responds with HTTP 200
 
 #### Scenario: Roll back batch update when any dose ID is invalid

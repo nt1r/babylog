@@ -1,3 +1,4 @@
+import { QuickChip } from '@/components/ui/choice-controls';
 import { Field, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 
@@ -24,14 +25,9 @@ export function ClinicInputField({ id, label, value, recentClinics, onChange }: 
       {recentClinics.length > 0 ? (
         <div className="flex flex-wrap gap-1.5 pt-1">
           {recentClinics.map((clinic) => (
-            <button
-              key={clinic}
-              type="button"
-              onClick={() => onChange(clinic)}
-              className="cursor-pointer rounded-full border border-border/80 bg-secondary/70 px-2.5 py-0.5 text-xs text-secondary-foreground transition-colors hover:border-primary/50"
-            >
+            <QuickChip key={clinic} variant="outline" active={value === clinic} onClick={() => onChange(clinic)}>
               {clinic}
-            </button>
+            </QuickChip>
           ))}
         </div>
       ) : null}

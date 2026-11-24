@@ -1,11 +1,7 @@
 import { FEEDING_BOUNDS, type FeedingFormState } from '@/components/quick-record/codecs/feeding';
 import { MilkAmountControl } from '@/components/quick-record/milk-amount-control';
-import {
-  ChoiceCardButton,
-  NumberStepperCard,
-  QuickChip,
-  SegmentedControl,
-} from '@/components/quick-record/record-controls';
+import { NumberStepperCard } from '@/components/quick-record/record-controls';
+import { ChoiceCardButton, QuickChip, SegmentedControl } from '@/components/ui/choice-controls';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { FEEDING_SUBTYPE_OPTIONS } from '@/lib/categories';

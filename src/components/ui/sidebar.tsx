@@ -4,8 +4,8 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { MenuIcon, PanelLeftIcon } from 'lucide-react';
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
+import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { Separator } from '@/components/ui/separator';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { cn } from '@/lib/utils';
@@ -123,15 +123,15 @@ function Sidebar({ className, children, ...props }: React.ComponentProps<'aside'
 
   if (isMobile) {
     return (
-      <Sheet open={openMobile} onOpenChange={setOpenMobile}>
-        <SheetContent side="left" showCloseButton={false} className="w-[17rem] bg-sidebar p-0 text-sidebar-foreground">
-          <SheetHeader className="sr-only">
-            <SheetTitle>导航菜单</SheetTitle>
-            <SheetDescription>切换 BabyLog 功能模块</SheetDescription>
-          </SheetHeader>
+      <Drawer open={openMobile} onOpenChange={setOpenMobile} swipeDirection="left">
+        <DrawerContent className="w-[17rem] max-w-[85vw] bg-sidebar p-0 text-sidebar-foreground [--drawer-bleed-background:var(--color-sidebar)]">
+          <DrawerHeader className="sr-only">
+            <DrawerTitle>导航菜单</DrawerTitle>
+            <DrawerDescription>切换 BabyLog 功能模块</DrawerDescription>
+          </DrawerHeader>
           <div className="flex h-full w-full flex-col">{children}</div>
-        </SheetContent>
-      </Sheet>
+        </DrawerContent>
+      </Drawer>
     );
   }
 
