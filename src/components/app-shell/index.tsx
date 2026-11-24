@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { AdminHeader } from '@/components/app-shell/admin-header';
 import { AppSidebar } from '@/components/app-shell/app-sidebar';
 import { MobileTabBar } from '@/components/app-shell/mobile-tabbar';
+import { GrowthRecordDrawer } from '@/components/growth/growth-record-drawer';
 import { QuickRecordDrawer } from '@/components/quick-record-drawer';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 
@@ -29,6 +30,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <MobileTabBar />
       <QuickRecordDrawer />
+      <GrowthRecordDrawer />
     </SidebarProvider>
   );
 }

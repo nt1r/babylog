@@ -605,3 +605,83 @@ func TestGetSmartDefaultsHeuristics(t *testing.T) {
 		t.Fatalf("expected 5 deduped recent solid foods starting with 香蕉泥, got %v", got.Feeding.RecentSolidFoods)
 	}
 }
+
+func TestListHealthMultiSubtypeFilterAndValidation(t *testing.T) {
+	ctx := context.Background()
+	shanghai, err := timeutil.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatalf("load shanghai: %v", err)
+	}
+	now := time.Date(2026, 11, 23, 18, 0, 0, 0, shanghai)
+	store, babyID := openTestStores(t, now)
+
+	// 同日写入全部 4 种健康子类型，验证逗号多子类型筛选及小计严格隔离。
+	inputs := []records.HealthInput{
+		{Subtype: records.HealthSubtypeTemperature, TemperatureC: floatPtr(37.6), RecordedAt: "2026-11-23T08:00:00+08:00"},
+		{Subtype: records.HealthSubtypeMedicine, MedicineName: strPtr("维生素 D3"), RecordedAt: "2026-11-23T09:00:00+08:00"},
+		{Subtype: records.HealthSubtypeGrowth, WeightKg: floatPtr(7.2), HeightCm: floatPtr(66.5), RecordedAt: "2026-11-23T10:00:00+08:00"},
+		{Subtype: records.HealthSubtypeTeeth, ToothNote: strPtr("下中切牙（第 1 颗）"), RecordedAt: "2026-11-23T11:00:00+08:00"},
+	}
+	for _, in := range inputs {
+		if _, err := store.CreateHealth(ctx, babyID, in); err != nil {
+			t.Fatalf("create health %s: %v", in.Subtype, err)
+		}
+	}
+
+	// 1. 健康记录页组合：temperature,medicine
+	clinical, err := store.ListHealth(ctx, babyID, records.ListFilter{
+		Subtype: "temperature,medicine",
+		Range:   "30d",
+		Loc:     shanghai,
+	})
+	if err != nil {
+		t.Fatalf("ListHealth clinical: %v", err)
+	}
+	if clinical.Total != 2 || len(clinical.Items) != 2 || clinical.HasMore {
+		t.Fatalf("expected 2 clinical records, got total=%d len=%d hasMore=%v", clinical.Total, len(clinical.Items), clinical.HasMore)
+	}
+	cSum := clinical.DailySummaries["2026-11-23"]
+	if cSum.TotalCount != 2 || cSum.MedicineCount != 1 || cSum.GrowthCount != 0 || cSum.TeethCount != 0 || cSum.LatestTempC == nil || *cSum.LatestTempC != 37.6 {
+		t.Fatalf("unexpected clinical daily summary: %+v", cSum)
+	}
+
+	// 2. 生长发育页组合：growth,teeth
+	growthRes, err := store.ListHealth(ctx, babyID, records.ListFilter{
+		Subtype: "growth,teeth",
+		Range:   "all",
+		Loc:     shanghai,
+	})
+	if err != nil {
+		t.Fatalf("ListHealth growth,teeth: %v", err)
+	}
+	if growthRes.Total != 2 || len(growthRes.Items) != 2 {
+		t.Fatalf("expected 2 growth/teeth records, got total=%d len=%d", growthRes.Total, len(growthRes.Items))
+	}
+	gSum := growthRes.DailySummaries["2026-11-23"]
+	if gSum.TotalCount != 2 || gSum.GrowthCount != 1 || gSum.TeethCount != 1 || gSum.MedicineCount != 0 || gSum.LatestTempC != nil {
+		t.Fatalf("unexpected growth daily summary: %+v", gSum)
+	}
+
+	// 3. 含空格与重复项的合法筛选自动去重，并保持单子类型与 all 兼容
+	dedupRes, err := store.ListHealth(ctx, babyID, records.ListFilter{Subtype: "growth, growth", Range: "all", Loc: shanghai})
+	if err != nil || dedupRes.Total != 1 || dedupRes.Items[0].Subtype != records.HealthSubtypeGrowth {
+		t.Fatalf("unexpected deduped filter result: err=%v res=%+v", err, dedupRes)
+	}
+	singleRes, err := store.ListHealth(ctx, babyID, records.ListFilter{Subtype: records.HealthSubtypeTemperature, Range: "all", Loc: shanghai})
+	if err != nil || singleRes.Total != 1 || singleRes.Items[0].Subtype != records.HealthSubtypeTemperature {
+		t.Fatalf("unexpected single subtype filter result: err=%v res=%+v", err, singleRes)
+	}
+	allRes, err := store.ListHealth(ctx, babyID, records.ListFilter{Subtype: "all", Range: "all", Loc: shanghai})
+	if err != nil || allRes.Total != 4 {
+		t.Fatalf("expected 4 records for all, got err=%v total=%d", err, allRes.Total)
+	}
+
+	// 4. 非法子类型或空项返回 ValidationError
+	for _, bad := range []string{"temperature,unknown", "growth,", ",teeth", "all,growth"} {
+		_, err := store.ListHealth(ctx, babyID, records.ListFilter{Subtype: bad, Range: "all", Loc: shanghai})
+		var valErr *records.ValidationError
+		if !errors.As(err, &valErr) {
+			t.Errorf("subtype=%q expected ValidationError, got %v", bad, err)
+		}
+	}
+}

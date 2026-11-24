@@ -209,6 +209,7 @@ interface RecordListPageProps<C extends RecordCategory> {
   readonly badgeClassName: string;
   readonly createButtonLabel: string;
   readonly defaultRange?: RecordRange;
+  readonly allSubtypeFilter?: string;
   readonly subtypeTabs: readonly SubtypeTabOption[];
   readonly loadErrorFallback: string;
   readonly emptyTitle: string;
@@ -232,6 +233,7 @@ export function RecordListPage<C extends RecordCategory>({
   badgeClassName,
   createButtonLabel,
   defaultRange = '7d',
+  allSubtypeFilter,
   subtypeTabs,
   loadErrorFallback,
   emptyTitle,
@@ -251,7 +253,8 @@ export function RecordListPage<C extends RecordCategory>({
   const openEdit = useQuickRecordStore((state) => state.openEdit);
   const openDuplicate = useQuickRecordStore((state) => state.openDuplicate);
 
-  const listQuery = useRecordListQuery(category, { subtype: filter, range });
+  const querySubtype = filter === 'all' ? (allSubtypeFilter ?? 'all') : filter;
+  const listQuery = useRecordListQuery(category, { subtype: querySubtype, range });
   const deleteMutation = useDeleteRecordMutation();
 
   const { items, total, dailySummaries } = flattenInfiniteList(listQuery.data);

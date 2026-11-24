@@ -462,7 +462,7 @@ export function VaccineDetailDrawer({
                     </div>
                   </Field>
 
-                  {/* 接种后与既有「健康与生长」体温记录快捷联动 */}
+                  {/* 接种后与既有「健康记录」体温快捷联动 */}
                   <div className="flex items-center justify-between gap-2 rounded-xl border border-health/30 bg-health-soft/35 px-3 py-2.5">
                     <div className="flex items-center gap-2 text-xs text-health-soft-foreground">
                       <HeartPulse className="size-4 shrink-0" />
@@ -475,7 +475,7 @@ export function VaccineDetailDrawer({
                       className="h-7 shrink-0 text-xs"
                       onClick={() => {
                         onOpenChange(false);
-                        openHealthQuickCreate('health');
+                        openHealthQuickCreate('health', 'temperature');
                       }}
                     >
                       去记体温

@@ -85,7 +85,7 @@ func TestGetSummaryEmptyAndPopulatedJSONContract(t *testing.T) {
 	recordStore, svc, babyID := setupDashboardFixture(t, now)
 
 	// 1. 空库场景（loc=nil 时应回退到默认时区）
-	emptyResp, err := svc.GetSummary(ctx, babyID, nil)
+	emptyResp, err := svc.GetSummary(ctx, babyID, nil, nil)
 	if err != nil {
 		t.Fatalf("GetSummary empty: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestGetSummaryEmptyAndPopulatedJSONContract(t *testing.T) {
 		t.Fatalf("create bath: %v", err)
 	}
 
-	got, err := svc.GetSummary(ctx, babyID, shanghai)
+	got, err := svc.GetSummary(ctx, babyID, shanghai, nil)
 	if err != nil {
 		t.Fatalf("GetSummary: %v", err)
 	}
@@ -311,5 +311,97 @@ func TestGetTrendsWindowBoundsCrossMidnightAndSlots(t *testing.T) {
 	}
 	if tClamped.Days != 90 || len(tClamped.Daily) != 90 {
 		t.Fatalf("expected days clamped to 90, got days=%d len=%d", tClamped.Days, len(tClamped.Daily))
+	}
+}
+
+func TestGetSummaryTodayMedicineAndGrowthHighlights(t *testing.T) {
+	ctx := context.Background()
+	shanghai, err := timeutil.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatalf("load shanghai: %v", err)
+	}
+	now := time.Date(2026, 11, 23, 16, 0, 0, 0, shanghai)
+	recordStore, svc, babyID := setupDashboardFixture(t, now)
+
+	baseline := &BirthBaseline{
+		BirthDate: "2026-08-01",
+		WeightKg:  floatPtr(3.3),
+		HeightCm:  floatPtr(50.0),
+	}
+
+	// 1. 无生长记录、无今日用药（仅有昨日用药）：验证出生体格兜底与昨日用药不计入今日
+	if _, err := recordStore.CreateHealth(ctx, babyID, records.HealthInput{
+		Subtype:      records.HealthSubtypeMedicine,
+		MedicineName: strPtr("昨日维D"),
+		RecordedAt:   "2026-11-22T23:30:00+08:00",
+	}); err != nil {
+		t.Fatalf("create yesterday med: %v", err)
+	}
+	s1, err := svc.GetSummary(ctx, babyID, shanghai, baseline)
+	if err != nil {
+		t.Fatalf("GetSummary fallback: %v", err)
+	}
+	if s1.Health.TodayMedicineCount != 0 || s1.Health.LatestMedicineName != nil || s1.Health.LatestMedicineAt != nil {
+		t.Fatalf("expected zero today medicine, got %+v", s1.Health)
+	}
+	if s1.Growth.LatestWeightKg == nil || *s1.Growth.LatestWeightKg != 3.3 || !s1.Growth.WeightIsBirth ||
+		s1.Growth.WeightRecordedAt == nil || *s1.Growth.WeightRecordedAt != "2026-08-01" {
+		t.Fatalf("expected birth weight fallback, got %+v", s1.Growth)
+	}
+	if s1.Growth.LatestHeightCm == nil || *s1.Growth.LatestHeightCm != 50.0 || !s1.Growth.HeightIsBirth ||
+		s1.Growth.HeightRecordedAt == nil || *s1.Growth.HeightRecordedAt != "2026-08-01" {
+		t.Fatalf("expected birth height fallback, got %+v", s1.Growth)
+	}
+	if s1.Growth.LatestHeadCm != nil || s1.Growth.TeethCount != 0 || s1.Growth.LatestToothNote != nil {
+		t.Fatalf("expected empty head/teeth, got %+v", s1.Growth)
+	}
+
+	// 2. 写入今日两条用药、跨记录部分体格测量（旧身高 + 新体重，无头围）与两条长牙记录
+	for _, in := range []records.HealthInput{
+		{Subtype: records.HealthSubtypeMedicine, MedicineName: strPtr("维生素 D3"), RecordedAt: "2026-11-23T08:30:00+08:00"},
+		{Subtype: records.HealthSubtypeMedicine, MedicineName: strPtr("布洛芬"), RecordedAt: "2026-11-23T14:00:00+08:00"},
+		{Subtype: records.HealthSubtypeGrowth, HeightCm: floatPtr(62.5), RecordedAt: "2026-11-10T12:00:00+08:00"},
+		{Subtype: records.HealthSubtypeGrowth, WeightKg: floatPtr(7.2), RecordedAt: "2026-11-20T12:00:00+08:00"},
+		{Subtype: records.HealthSubtypeTeeth, ToothNote: strPtr("下中切牙（第 1 颗）"), RecordedAt: "2026-11-15T12:00:00+08:00"},
+		{Subtype: records.HealthSubtypeTeeth, ToothNote: strPtr("下中切牙（第 2 颗）"), RecordedAt: "2026-11-22T12:00:00+08:00"},
+	} {
+		if _, err := recordStore.CreateHealth(ctx, babyID, in); err != nil {
+			t.Fatalf("create health %s: %v", in.Subtype, err)
+		}
+	}
+
+	s2, err := svc.GetSummary(ctx, babyID, shanghai, baseline)
+	if err != nil {
+		t.Fatalf("GetSummary partial growth: %v", err)
+	}
+	if s2.Health.TodayMedicineCount != 2 || s2.Health.LatestMedicineName == nil || *s2.Health.LatestMedicineName != "布洛芬" ||
+		s2.Health.LatestMedicineAt == nil || *s2.Health.LatestMedicineAt != "2026-11-23T06:00:00Z" {
+		t.Fatalf("unexpected today medicine summary: %+v", s2.Health)
+	}
+	if s2.Growth.LatestWeightKg == nil || *s2.Growth.LatestWeightKg != 7.2 || s2.Growth.WeightIsBirth ||
+		s2.Growth.LatestHeightCm == nil || *s2.Growth.LatestHeightCm != 62.5 || s2.Growth.HeightIsBirth ||
+		s2.Growth.LatestHeadCm != nil {
+		t.Fatalf("unexpected independent partial growth summary: %+v", s2.Growth)
+	}
+	if s2.Growth.TeethCount != 2 || s2.Growth.LatestToothNote == nil || *s2.Growth.LatestToothNote != "下中切牙（第 2 颗）" {
+		t.Fatalf("unexpected teeth summary: %+v", s2.Growth)
+	}
+
+	// 3. 补齐头围且不传出生基线，三项均返回手动最新值且非出生兜底
+	if _, err := recordStore.CreateHealth(ctx, babyID, records.HealthInput{
+		Subtype:    records.HealthSubtypeGrowth,
+		HeadCm:     floatPtr(42.5),
+		RecordedAt: "2026-11-23T12:00:00+08:00",
+	}); err != nil {
+		t.Fatalf("create head growth: %v", err)
+	}
+	s3, err := svc.GetSummary(ctx, babyID, shanghai, nil)
+	if err != nil {
+		t.Fatalf("GetSummary full growth: %v", err)
+	}
+	if s3.Growth.LatestWeightKg == nil || *s3.Growth.LatestWeightKg != 7.2 || s3.Growth.WeightIsBirth ||
+		s3.Growth.LatestHeightCm == nil || *s3.Growth.LatestHeightCm != 62.5 || s3.Growth.HeightIsBirth ||
+		s3.Growth.LatestHeadCm == nil || *s3.Growth.LatestHeadCm != 42.5 {
+		t.Fatalf("unexpected full growth summary: %+v", s3.Growth)
 	}
 }

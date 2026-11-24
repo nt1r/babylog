@@ -15,8 +15,14 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
+import { DashboardHero } from '@/components/dashboard/dashboard-hero';
+import {
+  DashboardGrowthCard,
+  DashboardVaccineBanner,
+  DashboardVaccineCard,
+  PostVaccineTempCueBar,
+} from '@/components/dashboard/growth-immunity-section';
 import { FEEDING_BOUNDS } from '@/components/quick-record/codecs/feeding';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { type ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
@@ -25,11 +31,13 @@ import { Spinner } from '@/components/ui/spinner';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/components/ui/toast';
 import { useBabyProfileQuery } from '@/lib/baby';
-import { RECORD_CATEGORIES, RECORD_CATEGORY_META, type RecordCategory } from '@/lib/categories';
+import { RECORD_CATEGORY_META, type RecordCategory } from '@/lib/categories';
 import {
   buildDashboardKpiCards,
   type DashboardTrends,
   type DashboardTrendTab,
+  findRecentCompletedVaccineForTempCue,
+  selectDashboardVaccineAlert,
   selectTrendView,
   useDashboardSummaryQuery,
   useDashboardTrendsQuery,
@@ -40,8 +48,10 @@ import {
   useSaveRecordMutation,
   useSmartDefaultsQuery,
 } from '@/lib/records';
-import { formatBabyAge, formatDurationMin, formatLocalTimeFromISO } from '@/lib/time';
+import { formatDurationMin, formatLocalTimeFromISO } from '@/lib/time';
 import { cn } from '@/lib/utils';
+import { useVaccinesOverviewQuery } from '@/lib/vaccines';
+import { useGrowthRecordStore } from '@/stores/growth-record';
 import { useQuickRecordStore } from '@/stores/quick-record';
 
 export const Route = createFileRoute('/_app/dashboard')({
@@ -51,12 +61,16 @@ export const Route = createFileRoute('/_app/dashboard')({
 type DailyTrendPoint = DashboardTrends['daily'][number];
 type OneTapKind = 'formula' | 'pee' | 'poop' | 'bath';
 
+const VACCINE_DASHBOARD_STALE_MS = 5 * 60_000;
+
 interface OneTapPreset {
   readonly kind: OneTapKind;
   readonly category: RecordCategory;
-  readonly label: string;
+  readonly title: string;
+  readonly hint: string;
   readonly icon: LucideIcon;
-  readonly buttonClass: string;
+  readonly tileClass: string;
+  readonly iconClass: string;
   readonly disabled?: boolean;
   readonly toastTitle: string;
   readonly undoToastTitle: string;
@@ -84,16 +98,6 @@ const slotChartConfig: ChartConfig = {
     color: 'var(--sleep)',
   },
 };
-
-/** 根据当前时间返回温暖的问候语 */
-function getTimeGreeting(date: Date): string {
-  const hour = date.getHours();
-  if (hour < 6) return '夜深了，辛苦啦';
-  if (hour < 11) return '早上好';
-  if (hour < 14) return '中午好';
-  if (hour < 18) return '下午好';
-  return '晚上好';
-}
 
 interface TrendTooltipProps {
   readonly active?: boolean;
@@ -162,13 +166,14 @@ function DashboardTrendTooltip({ active, label, payload, tab, isDirectBreastMode
 
 function DashboardPage() {
   const openCreate = useQuickRecordStore((state) => state.openCreate);
+  const openGrowthCreate = useGrowthRecordStore((state) => state.openCreate);
   const saveMutation = useSaveRecordMutation();
   const deleteMutation = useDeleteRecordMutation();
   const [trendTab, setTrendTab] = useState<DashboardTrendTab>('feeding');
   const [quickBusyKey, setQuickBusyKey] = useState<OneTapKind | null>(null);
   // 同步防重入锁：在 React 状态更新触发按钮禁用前的同一帧内拦截高频连点，防止发出重复写入请求。
   const oneTapLockRef = useRef(false);
-  // 每分钟刷新一次本地时钟，确保「距上次喂奶/换尿布 X 分钟前」在数据无变更时也能实时跳动。
+  // 每分钟刷新一次本地时钟，确保「距上次喂奶/换尿布 X 分钟前」与昼夜插画在数据无变更时也能实时更新。
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
@@ -180,27 +185,31 @@ function DashboardPage() {
   const summaryQuery = useDashboardSummaryQuery();
   const trendsQuery = useDashboardTrendsQuery(7);
   const defaultsQuery = useSmartDefaultsQuery();
+  // 与 60 秒轮询解耦：设置 5 分钟缓存，首次访问自动触发国家免疫规划懒初始化，疫苗变更后由 mutation 精确失效。
+  const vaccinesQuery = useVaccinesOverviewQuery(true, VACCINE_DASHBOARD_STALE_MS);
 
   const baby = babyQuery.data;
   const summary = summaryQuery.data;
   const trends = trendsQuery.data;
+  const vaccines = vaccinesQuery.data;
   const defaultsReady = !defaultsQuery.isLoading;
   const lastMilkML = defaultsQuery.data?.feeding.last_milk_ml ?? FEEDING_BOUNDS.milkDefault;
 
-  const todayLabel = format(now, 'M月d日 EEEE', { locale: zhCN });
-  const greeting = getTimeGreeting(now);
-  const ageInfo = baby ? formatBabyAge(baby.birth_date, now) : null;
-
+  const todayLabel = format(now, 'M月d日 · EEEE', { locale: zhCN });
   const trendView = selectTrendView(trends, trendTab);
   const kpiCards = buildDashboardKpiCards(summary, now);
+  const vaccineAlert = selectDashboardVaccineAlert(vaccines);
+  const postVaccineCue = findRecentCompletedVaccineForTempCue(vaccines);
 
   const oneTapPresets: readonly OneTapPreset[] = [
     {
       kind: 'formula',
       category: 'feeding',
-      label: defaultsReady ? `再来一顿 ${lastMilkML} ml` : '加载惯用奶量…',
+      title: '再来一顿',
+      hint: defaultsReady ? `${lastMilkML} ml 配方奶` : '加载惯用奶量…',
       icon: Milk,
-      buttonClass: 'border-feeding/60 bg-feeding-soft/60 text-feeding-soft-foreground hover:bg-feeding-soft',
+      tileClass: 'border-feeding/35 bg-card hover:border-feeding/70 hover:bg-feeding-soft/25',
+      iconClass: 'bg-feeding-soft text-feeding-soft-foreground',
       disabled: !defaultsReady,
       toastTitle: `已记录 · ${lastMilkML} ml 配方奶`,
       undoToastTitle: '已撤销刚才的喂养记录',
@@ -212,9 +221,11 @@ function DashboardPage() {
     {
       kind: 'pee',
       category: 'care',
-      label: '嘘嘘',
+      title: '嘘嘘',
+      hint: '尿布记录',
       icon: Droplets,
-      buttonClass: 'border-care/60 bg-care-soft/60 text-care-soft-foreground hover:bg-care-soft',
+      tileClass: 'border-care/35 bg-card hover:border-care/70 hover:bg-care-soft/25',
+      iconClass: 'bg-care-soft text-care-soft-foreground',
       toastTitle: '已记录 · 嘘嘘',
       undoToastTitle: '已撤销刚才的护理记录',
       buildRequest: (recordedAt) => ({
@@ -225,9 +236,11 @@ function DashboardPage() {
     {
       kind: 'poop',
       category: 'care',
-      label: '便便正常',
+      title: '便便正常',
+      hint: '软便 · 黄色',
       icon: Baby,
-      buttonClass: 'border-care/60 bg-care-soft/60 text-care-soft-foreground hover:bg-care-soft',
+      tileClass: 'border-care/35 bg-card hover:border-care/70 hover:bg-care-soft/25',
+      iconClass: 'bg-care-soft text-care-soft-foreground',
       toastTitle: '已记录 · 便便正常',
       undoToastTitle: '已撤销刚才的护理记录',
       buildRequest: (recordedAt) => ({
@@ -245,9 +258,11 @@ function DashboardPage() {
     {
       kind: 'bath',
       category: 'care',
-      label: '洗澡',
+      title: '洗澡',
+      hint: '日常护理',
       icon: Bath,
-      buttonClass: 'border-border bg-secondary/70 text-secondary-foreground hover:bg-secondary',
+      tileClass: 'border-border/80 bg-card hover:border-primary/45 hover:bg-accent/35',
+      iconClass: 'bg-secondary text-secondary-foreground',
       toastTitle: '已记录 · 洗澡',
       undoToastTitle: '已撤销刚才的洗澡记录',
       buildRequest: (recordedAt) => ({
@@ -297,109 +312,139 @@ function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-5 md:gap-6">
-      {/* 精简问候区 */}
-      <div className="flex flex-wrap items-center gap-2.5">
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-[28px]">{greeting}</h1>
-        <Badge variant="secondary" className="font-normal">
-          {todayLabel}
-        </Badge>
-        {baby && ageInfo ? (
-          <Badge variant="outline" className="font-normal text-primary">
-            {baby.nickname} · {ageInfo.daysLabel}（{ageInfo.ageLabel}）
-          </Badge>
-        ) : null}
-      </div>
+      {/* 绘本风时光问候与宝宝名片 Hero */}
+      <DashboardHero now={now} todayLabel={todayLabel} baby={baby} />
 
-      {/* 首屏置顶：高频一键直记条 */}
-      <section aria-label="一键直记" className="flex flex-wrap items-center gap-2">
-        <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
-          <Zap className="size-3.5 text-primary" />
-          一键直记
-        </span>
-        {oneTapPresets.map((preset) => {
-          const Icon = preset.icon;
-          const busy = quickBusyKey === preset.kind;
-          return (
-            <button
-              key={preset.kind}
-              type="button"
-              disabled={quickBusyKey !== null || Boolean(preset.disabled)}
-              onClick={() => void handleOneTap(preset)}
-              className={cn(
-                'inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-full border px-3.5 text-[13px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60',
-                preset.buttonClass,
-              )}
-            >
-              {busy ? (
-                <Spinner className="size-3.5" aria-hidden="true" role="presentation" />
-              ) : (
-                <Icon className="size-3.5" />
-              )}
-              <span className="tabular-nums">{preset.label}</span>
-            </button>
-          );
-        })}
-      </section>
+      {/* 条件浮现：需关注疫苗常驻提醒条 */}
+      {vaccineAlert ? <DashboardVaccineBanner alert={vaccineAlert} /> : null}
 
-      {/* 4 列核心指标概览 */}
-      {summaryQuery.isError ? (
-        <Card className="border-destructive/40 bg-destructive-soft/30">
-          <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
-            <div className="flex items-center gap-2.5 text-sm text-destructive-soft-foreground">
-              <AlertCircle className="size-4 shrink-0" />
-              <span>{summaryQuery.error instanceof Error ? summaryQuery.error.message : '今日数据加载失败'}</span>
-            </div>
-            <Button variant="outline" size="sm" onClick={() => void summaryQuery.refetch()}>
-              <RotateCw className="size-3.5" />
-              重新加载
-            </Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 gap-4 @xl/main:grid-cols-2 @4xl/main:grid-cols-4">
-          {kpiCards.map((card) => {
-            const Icon = card.icon;
+      {/* 高频一键直记：移动端 2×2 触控宫格 / 桌面端 4 列等宽卡片 */}
+      <section aria-label="一键直记" className="space-y-2.5">
+        <div className="flex items-center justify-between gap-2 px-0.5">
+          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+            <Zap className="size-3.5 text-primary" />
+            一键直记
+          </span>
+          <span className="text-xs text-muted-foreground">轻点即记 · 支持撤销</span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2.5 @3xl/main:grid-cols-4 @3xl/main:gap-3">
+          {oneTapPresets.map((preset) => {
+            const Icon = preset.icon;
+            const busy = quickBusyKey === preset.kind;
             return (
-              <Link key={card.id} to={card.to} className="group block outline-none">
-                <Card className="h-full gap-3 transition-all group-hover:border-primary/40 group-hover:shadow-xs group-focus-visible:ring-2 group-focus-visible:ring-ring">
-                  <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-                    <CardDescription className="font-medium text-muted-foreground">{card.label}</CardDescription>
-                    <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-xl', card.iconClass)}>
-                      <Icon className="size-4.5" strokeWidth={1.8} />
-                    </span>
-                  </CardHeader>
-                  <CardContent className="space-y-1.5">
-                    {summaryQuery.isLoading ? (
-                      <Skeleton className="h-8 w-24 rounded-lg" />
-                    ) : (
-                      <p
-                        className={cn(
-                          'text-2xl font-semibold tracking-tight tabular-nums',
-                          card.alertTone === 'destructive' && 'text-destructive',
-                          card.alertTone === 'warning' && 'text-warning',
-                        )}
-                      >
-                        {card.value}
-                      </p>
-                    )}
-                    <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                      <span className="truncate tabular-nums">{card.sub}</span>
-                      <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground/70 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-primary" />
-                    </div>
-                  </CardContent>
-                </Card>
-              </Link>
+              <button
+                key={preset.kind}
+                type="button"
+                disabled={quickBusyKey !== null || Boolean(preset.disabled)}
+                onClick={() => void handleOneTap(preset)}
+                className={cn(
+                  'group flex min-h-14 cursor-pointer items-center gap-2.5 rounded-2xl border px-3 py-2.5 text-left shadow-2xs transition-all outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60 sm:gap-3 sm:px-3.5',
+                  preset.tileClass,
+                )}
+              >
+                <span
+                  className={cn(
+                    'flex size-9 shrink-0 items-center justify-center rounded-xl transition-transform group-hover:scale-105',
+                    preset.iconClass,
+                  )}
+                >
+                  {busy ? (
+                    <Spinner className="size-4" aria-hidden="true" role="presentation" />
+                  ) : (
+                    <Icon className="size-4.5" strokeWidth={1.8} />
+                  )}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-semibold text-foreground sm:text-sm">
+                    {preset.title}
+                  </span>
+                  <span className="block truncate text-xs text-muted-foreground tabular-nums">{preset.hint}</span>
+                </span>
+              </button>
             );
           })}
         </div>
-      )}
+      </section>
+
+      {/* 今日照护概览：移动端 2×2 紧凑宫格 / 桌面端 4 列（喂养 / 睡眠 / 护理 / 健康观察） */}
+      <section aria-label="今日照护概览" className="space-y-2.5">
+        <div className="flex items-center justify-between gap-2 px-0.5">
+          <span className="text-xs font-semibold text-muted-foreground">今日概览</span>
+          <span className="text-xs text-muted-foreground">点击查看明细</span>
+        </div>
+
+        {summaryQuery.isError ? (
+          <Card className="border-destructive/40 bg-destructive-soft/30">
+            <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+              <div className="flex items-center gap-2.5 text-sm text-destructive-soft-foreground">
+                <AlertCircle className="size-4 shrink-0" />
+                <span>{summaryQuery.error instanceof Error ? summaryQuery.error.message : '今日数据加载失败'}</span>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => void summaryQuery.refetch()}>
+                <RotateCw className="size-3.5" />
+                重新加载
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 @4xl/main:grid-cols-4 @4xl/main:gap-4">
+            {kpiCards.map((card) => {
+              const Icon = card.icon;
+              return (
+                <Link key={card.id} to={card.to} className="group block outline-none">
+                  <Card className="h-full gap-2.5 [--card-spacing:--spacing(3.5)] transition-all group-hover:border-primary/40 group-hover:shadow-xs group-focus-visible:ring-2 group-focus-visible:ring-ring sm:gap-3 sm:[--card-spacing:--spacing(5)]">
+                    <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
+                      <CardDescription className="truncate text-[13px] font-medium text-muted-foreground sm:text-sm">
+                        {card.label}
+                      </CardDescription>
+                      <span
+                        className={cn(
+                          'flex size-8 shrink-0 items-center justify-center rounded-xl sm:size-9',
+                          card.iconClass,
+                        )}
+                      >
+                        <Icon className="size-4 sm:size-4.5" strokeWidth={1.8} />
+                      </span>
+                    </CardHeader>
+                    <CardContent className="space-y-1 sm:space-y-1.5">
+                      {summaryQuery.isLoading ? (
+                        <Skeleton className="h-7 w-20 rounded-lg sm:h-8 sm:w-24" />
+                      ) : (
+                        <p
+                          className={cn(
+                            'truncate text-xl font-semibold tracking-tight tabular-nums sm:text-2xl',
+                            card.alertTone === 'destructive' && 'text-destructive',
+                            card.alertTone === 'warning' && 'text-warning',
+                          )}
+                        >
+                          {card.value}
+                        </p>
+                      )}
+                      <div className="flex items-center justify-between gap-1.5 text-xs text-muted-foreground">
+                        <span className="truncate tabular-nums">{card.sub}</span>
+                        <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground/70 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-primary" />
+                      </div>
+                    </CardContent>
+                  </Card>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* 接种后 48 小时轻量测温联动条：独立于 summaryQuery 错误状态，确保疫苗状态不受今日汇总失败牵连 */}
+      {postVaccineCue ? (
+        <PostVaccineTempCueBar cue={postVaccineCue} onLogTemperature={() => openCreate('health', 'temperature')} />
+      ) : null}
 
       {/* 2:1 喂养/睡眠趋势与时段分布图 */}
       <div className="grid grid-cols-1 items-stretch gap-4 @4xl/main:grid-cols-3">
         <Card className="@4xl/main:col-span-2">
           <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="space-y-1">
-              <CardTitle>近 7 日成长趋势</CardTitle>
+              <CardTitle>近 7 日照护趋势</CardTitle>
               <CardDescription>{trendView.description}</CardDescription>
             </div>
             <Tabs value={trendTab} onValueChange={(value) => setTrendTab(value === 'sleep' ? 'sleep' : 'feeding')}>
@@ -504,28 +549,22 @@ function DashboardPage() {
         </Card>
       </div>
 
-      {/* 紧凑四分类快捷录入入口 */}
-      <div className="grid grid-cols-2 gap-3 @4xl/main:grid-cols-4">
-        {RECORD_CATEGORIES.map((category) => {
-          const meta = RECORD_CATEGORY_META[category];
-          const Icon = meta.icon;
-          return (
-            <button
-              key={meta.id}
-              type="button"
-              onClick={() => openCreate(meta.id)}
-              className={cn(
-                'flex cursor-pointer items-center gap-3 rounded-2xl border border-border/80 px-3.5 py-3 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                meta.quickCardClass,
-              )}
-            >
-              <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-xl', meta.softClass)}>
-                <Icon className="size-4.5" />
-              </span>
-              <span className="text-sm font-medium text-foreground">{meta.createLabel}</span>
-            </button>
-          );
-        })}
+      {/* 2 列「成长与免疫」双卡：疫苗接种计划 + 最新生长发育 */}
+      <div className="grid grid-cols-1 items-stretch gap-4 @4xl/main:grid-cols-2">
+        <DashboardVaccineCard
+          overview={vaccines}
+          isLoading={vaccinesQuery.isLoading}
+          isError={vaccinesQuery.isError}
+          onRetry={() => void vaccinesQuery.refetch()}
+        />
+        <DashboardGrowthCard
+          growth={summary?.growth}
+          referenceDateStr={summary?.date}
+          isLoading={summaryQuery.isLoading}
+          isError={summaryQuery.isError}
+          onRetry={() => void summaryQuery.refetch()}
+          onOpenCreate={openGrowthCreate}
+        />
       </div>
     </div>
   );

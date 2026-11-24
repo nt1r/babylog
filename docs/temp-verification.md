@@ -113,8 +113,19 @@ TMP_DIR="$TMP_DIR" node "$TMP_DIR/serve.mjs"
 ```
 
 核验要点（截图同样存放在 `$TMP_DIR`，检查完毕随 `trap` 或 `rm -rf` 一并清理）：
-- 分别访问 `/__preview`（浅色）与 `/__preview?theme=dark`（深色），覆盖桌面宽屏与移动端窄屏；
-- 重点核对：卡片/区块留白是否过大、同层级字号是否统一、相邻语义色（如成功/信息/提醒）区分度及暗色可读性。
+- 无需额外安装 Playwright：若本机已有 Chrome/Chromium，可直接用无头模式批量截图到 `$TMP_DIR` 并通过读图工具审视亮/暗双色与移动/桌面视口：
+
+```bash
+CHROME=$(command -v google-chrome || command -v chromium || echo "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+if [ -x "$CHROME" ]; then
+  "$CHROME" --headless=new --disable-gpu --virtual-time-budget=2000 --window-size=390,844 --screenshot="$TMP_DIR/mobile-light.png" "${PREVIEW_URL}"
+  "$CHROME" --headless=new --disable-gpu --virtual-time-budget=2000 --window-size=390,844 --screenshot="$TMP_DIR/mobile-dark.png" "${PREVIEW_URL}?theme=dark"
+  "$CHROME" --headless=new --disable-gpu --virtual-time-budget=2000 --window-size=1280,900 --screenshot="$TMP_DIR/desktop-light.png" "${PREVIEW_URL}"
+  "$CHROME" --headless=new --disable-gpu --virtual-time-budget=2000 --window-size=1280,900 --screenshot="$TMP_DIR/desktop-dark.png" "${PREVIEW_URL}?theme=dark"
+fi
+```
+
+- 重点核对：390px 窄屏是否出现关键提醒截断或磁贴数值异常折行、卡片/区块留白是否过大、同层级字号是否统一、相邻语义色（如成功/信息/提醒）区分度及暗色可读性。（注：macOS 下 Chrome 无头窗口存在约 500px 最小宽度限制，如需精准复现 390px 窄屏，可在预览页外层包一层 `w-[390px]` 容器并配合 `--window-size=520,1100` 截屏。）
 
 ## 约束提醒
 

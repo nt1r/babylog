@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/http';
 import { parseOptionalStrictNumber } from '@/lib/number';
-import { VACCINES_QUERY_KEY } from '@/lib/query-client';
+import { DASHBOARD_QUERY_KEY, VACCINES_QUERY_KEY } from '@/lib/query-client';
 import { getBrowserTimeZone } from '@/lib/time';
 
 export type BabyGender = 'male' | 'female' | 'unknown';
@@ -17,7 +17,7 @@ export interface BabyProfile {
   updated_at: string;
 }
 
-export interface BabyUpsertInput {
+interface BabyUpsertInput {
   nickname: string;
   birth_date: string;
   gender: BabyGender;
@@ -29,7 +29,7 @@ interface BabyResponse {
   baby: BabyProfile | null;
 }
 
-export const BABY_QUERY_KEY = ['baby-profile'] as const;
+const BABY_QUERY_KEY = ['baby-profile'] as const;
 
 export const BABY_GENDER_LABELS: Record<BabyGender, string> = {
   male: '男宝',
@@ -90,12 +90,12 @@ export function validateBabyProfileForm(input: {
   };
 }
 
-export async function fetchBabyProfile(signal?: AbortSignal): Promise<BabyProfile | null> {
+async function fetchBabyProfile(signal?: AbortSignal): Promise<BabyProfile | null> {
   const res = await apiRequest<BabyResponse>('/api/baby', { signal });
   return res.baby ?? null;
 }
 
-export async function createBabyProfile(input: BabyUpsertInput): Promise<BabyProfile> {
+async function createBabyProfile(input: BabyUpsertInput): Promise<BabyProfile> {
   const tz = encodeURIComponent(getBrowserTimeZone());
   const res = await apiRequest<{ baby: BabyProfile }>(`/api/baby?tz=${tz}`, {
     method: 'POST',
@@ -104,7 +104,7 @@ export async function createBabyProfile(input: BabyUpsertInput): Promise<BabyPro
   return res.baby;
 }
 
-export async function updateBabyProfile(input: BabyUpsertInput): Promise<BabyProfile> {
+async function updateBabyProfile(input: BabyUpsertInput): Promise<BabyProfile> {
   const tz = encodeURIComponent(getBrowserTimeZone());
   const res = await apiRequest<{ baby: BabyProfile }>(`/api/baby?tz=${tz}`, {
     method: 'PUT',
@@ -137,8 +137,9 @@ export function useUpdateBabyMutation() {
     mutationFn: updateBabyProfile,
     onSuccess: (baby) => {
       queryClient.setQueryData(BABY_QUERY_KEY, baby);
-      // 修改出生日期会联动重算未手动覆盖的疫苗预计接种日期，同步失效疫苗计划缓存。
+      // 修改出生日期或出生体重/身高会联动影响疫苗预计接种日与生长概览兜底，同步失效两类缓存。
       void queryClient.invalidateQueries({ queryKey: VACCINES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: DASHBOARD_QUERY_KEY });
     },
   });
 }

@@ -37,10 +37,35 @@ type FeedingSummary struct {
 // 使用 Go 类型别名（`=`）直接等价复用 [records.SleepDailySummary]，零拷贝且无需显式类型转换。
 type SleepSummary = records.SleepDailySummary
 
-// HealthSummary 汇总最近一次体温记录。
+// HealthSummary 汇总健康观察所需的最近体温与今日用药信息。
 type HealthSummary struct {
-	LatestTempC  *float64 `json:"latest_temp_c"`
-	LatestTempAt *string  `json:"latest_temp_at"`
+	LatestTempC        *float64 `json:"latest_temp_c"`
+	LatestTempAt       *string  `json:"latest_temp_at"`
+	TodayMedicineCount int      `json:"today_medicine_count"`
+	LatestMedicineName *string  `json:"latest_medicine_name"`
+	LatestMedicineAt   *string  `json:"latest_medicine_at"`
+}
+
+// GrowthSummary 汇总独立解析的最新体格测量值（含宝宝档案出生体格兜底标记）与累计出牙统计。
+type GrowthSummary struct {
+	LatestWeightKg   *float64 `json:"latest_weight_kg"`
+	WeightRecordedAt *string  `json:"weight_recorded_at"`
+	WeightIsBirth    bool     `json:"weight_is_birth"`
+	LatestHeightCm   *float64 `json:"latest_height_cm"`
+	HeightRecordedAt *string  `json:"height_recorded_at"`
+	HeightIsBirth    bool     `json:"height_is_birth"`
+	LatestHeadCm     *float64 `json:"latest_head_cm"`
+	HeadRecordedAt   *string  `json:"head_recorded_at"`
+	TeethCount       int      `json:"teeth_count"`
+	LatestToothNote  *string  `json:"latest_tooth_note"`
+	LatestToothAt    *string  `json:"latest_tooth_at"`
+}
+
+// BirthBaseline 承载来自宝宝档案的出生日期与可选出生体格值，供生长概览在尚无手动测量时兜底。
+type BirthBaseline struct {
+	BirthDate string
+	WeightKg  *float64
+	HeightCm  *float64
 }
 
 // CareSummary 汇总今日护理 KPI 与上次换尿布时刻。
@@ -57,6 +82,7 @@ type SummaryResponse struct {
 	Feeding  FeedingSummary `json:"feeding"`
 	Sleep    SleepSummary   `json:"sleep"`
 	Health   HealthSummary  `json:"health"`
+	Growth   GrowthSummary  `json:"growth"`
 	Care     CareSummary    `json:"care"`
 }
 
@@ -124,8 +150,9 @@ func daySlotLabel(t time.Time, loc *time.Location) string {
 	}
 }
 
-// GetSummary 按指定本地时区聚合今日 4 项 KPI 与距上次照护时间戳。
-func (s *Service) GetSummary(ctx context.Context, babyID int64, loc *time.Location) (*SummaryResponse, error) {
+// GetSummary 按指定本地时区聚合今日 4 项 KPI、距上次照护时间戳及独立解析的生长发育概览。
+// 可选 baseline 来自宝宝档案（出生日期及出生体重/身高），在尚无手动测量记录时兜底填充。
+func (s *Service) GetSummary(ctx context.Context, babyID int64, loc *time.Location, baseline *BirthBaseline) (*SummaryResponse, error) {
 	if loc == nil {
 		loc, _ = timeutil.LoadLocation("")
 	}
@@ -133,13 +160,46 @@ func (s *Service) GetSummary(ctx context.Context, babyID int64, loc *time.Locati
 	dayStart, dayEnd := timeutil.LocalDayBounds(now, loc)
 	todayKey := dayStart.Format(timeutil.DateLayout)
 
-	snap, err := s.store.ReadWindow(ctx, babyID, dayStart, dayEnd, records.WindowOptions{IncludeHealth: false})
+	// 读取今日窗口时纳入健康记录，用于一次查询完成今日用药次数与最近用药提取。
+	snap, err := s.store.ReadWindow(ctx, babyID, dayStart, dayEnd, records.WindowOptions{IncludeHealth: true})
 	if err != nil {
 		return nil, err
 	}
 	highlights, err := s.store.ReadLatestHighlights(ctx, babyID)
 	if err != nil {
 		return nil, err
+	}
+
+	growth := GrowthSummary{
+		LatestWeightKg:   highlights.Growth.LatestWeightKg,
+		WeightRecordedAt: highlights.Growth.WeightRecordedAt,
+		LatestHeightCm:   highlights.Growth.LatestHeightCm,
+		HeightRecordedAt: highlights.Growth.HeightRecordedAt,
+		LatestHeadCm:     highlights.Growth.LatestHeadCm,
+		HeadRecordedAt:   highlights.Growth.HeadRecordedAt,
+		TeethCount:       highlights.Growth.TeethCount,
+		LatestToothNote:  highlights.Growth.LatestToothNote,
+		LatestToothAt:    highlights.Growth.LatestToothAt,
+	}
+	if baseline != nil {
+		if growth.LatestWeightKg == nil && baseline.WeightKg != nil {
+			v := *baseline.WeightKg
+			growth.LatestWeightKg = &v
+			growth.WeightIsBirth = true
+			if baseline.BirthDate != "" {
+				bd := baseline.BirthDate
+				growth.WeightRecordedAt = &bd
+			}
+		}
+		if growth.LatestHeightCm == nil && baseline.HeightCm != nil {
+			v := *baseline.HeightCm
+			growth.LatestHeightCm = &v
+			growth.HeightIsBirth = true
+			if baseline.BirthDate != "" {
+				bd := baseline.BirthDate
+				growth.HeightRecordedAt = &bd
+			}
+		}
 	}
 
 	resp := &SummaryResponse{
@@ -152,6 +212,7 @@ func (s *Service) GetSummary(ctx context.Context, babyID int64, loc *time.Locati
 			LatestTempC:  highlights.LatestTempC,
 			LatestTempAt: highlights.LatestTempAt,
 		},
+		Growth: growth,
 		Care: CareSummary{
 			LastDiaperAt: highlights.LastDiaperAt,
 		},
@@ -176,6 +237,28 @@ func (s *Service) GetSummary(ctx context.Context, babyID int64, loc *time.Locati
 	// 3. 今日护理汇总（复用 records 共享累加器）
 	for _, r := range snap.Cares {
 		records.AccumulateCareSummary(&resp.Care.CareDailySummary, r)
+	}
+
+	// 4. 今日用药汇总：按记录时刻与 ID 确定性选取当日最新一条用药记录。
+	var latestMedID int64
+	var latestMedAt string
+	for _, r := range snap.Healths {
+		if r.Subtype != records.HealthSubtypeMedicine {
+			continue
+		}
+		resp.Health.TodayMedicineCount++
+		if latestMedID == 0 || r.RecordedAt > latestMedAt || (r.RecordedAt == latestMedAt && r.ID > latestMedID) {
+			latestMedID = r.ID
+			latestMedAt = r.RecordedAt
+			ts := r.RecordedAt
+			resp.Health.LatestMedicineAt = &ts
+			if r.MedicineName != nil {
+				name := *r.MedicineName
+				resp.Health.LatestMedicineName = &name
+			} else {
+				resp.Health.LatestMedicineName = nil
+			}
+		}
 	}
 
 	return resp, nil

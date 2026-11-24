@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -60,8 +61,42 @@ func normalizeFilter(f ListFilter) ListFilter {
 	return f
 }
 
-func isAllowedSubtypeFilter(subtype string, allowed []string) bool {
-	return subtype == "" || subtype == "all" || slices.Contains(allowed, subtype)
+// parseSubtypeFilters 解析列表查询的子类型筛选参数。
+// 空串或 "all" 返回 nil 表示不限制子类型；allowMulti=true 时支持逗号分隔的多子类型（自动去重），
+// 任意空白项（如 "growth,"）或未知子类型均返回 [*ValidationError]。
+func parseSubtypeFilters(raw string, allowed []string, allowMulti bool, invalidMsg string) ([]string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || trimmed == "all" {
+		return nil, nil
+	}
+	if !allowMulti {
+		if !slices.Contains(allowed, trimmed) {
+			return nil, &ValidationError{Message: invalidMsg}
+		}
+		return []string{trimmed}, nil
+	}
+	parts := strings.Split(trimmed, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		token := strings.TrimSpace(p)
+		if token == "" || !slices.Contains(allowed, token) {
+			return nil, &ValidationError{Message: invalidMsg}
+		}
+		if !slices.Contains(result, token) {
+			result = append(result, token)
+		}
+	}
+	return result, nil
+}
+
+func applySubtypeFilter(q *gorm.DB, subtypes []string) *gorm.DB {
+	if len(subtypes) == 1 {
+		return q.Where("subtype = ?", subtypes[0])
+	}
+	if len(subtypes) > 1 {
+		return q.Where("subtype IN ?", subtypes)
+	}
+	return q
 }
 
 // rangeBoundsUTC 根据 range 参数计算本地自然日范围对应的 UTC 起止边界 [startUTC, endUTC)。
@@ -186,25 +221,24 @@ func updateRecord[T any](s *Store, ctx context.Context, babyID, id int64, cols [
 	return &rec, nil
 }
 
-func (s *Store) prepareListFilter(f ListFilter, allowedSubtypes []string, invalidMsg string) (ListFilter, string, string, bool, error) {
+func (s *Store) prepareListFilter(f ListFilter, allowedSubtypes []string, allowMulti bool, invalidMsg string) (ListFilter, []string, string, string, bool, error) {
 	f = normalizeFilter(f)
-	if !isAllowedSubtypeFilter(f.Subtype, allowedSubtypes) {
-		return f, "", "", false, &ValidationError{Message: invalidMsg}
+	subtypes, err := parseSubtypeFilters(f.Subtype, allowedSubtypes, allowMulti, invalidMsg)
+	if err != nil {
+		return f, nil, "", "", false, err
 	}
 	startUTC, endUTC, hasRange, err := s.rangeBoundsUTC(f.Range, f.Loc)
 	if err != nil {
-		return f, "", "", false, err
+		return f, nil, "", "", false, err
 	}
-	return f, startUTC, endUTC, hasRange, nil
+	return f, subtypes, startUTC, endUTC, hasRange, nil
 }
 
 // queryPage 统一执行筛选计数与分页切片查询，返回当前页记录列表与满足条件的总条数。
-func queryPage[T any](s *Store, ctx context.Context, babyID int64, f ListFilter, startUTC, endUTC string, hasRange, overlap bool, orderBy string) ([]T, int64, error) {
+func queryPage[T any](s *Store, ctx context.Context, babyID int64, f ListFilter, subtypes []string, startUTC, endUTC string, hasRange, overlap bool, orderBy string) ([]T, int64, error) {
 	var model T
 	base := s.db.WithContext(ctx).Model(&model).Where("baby_id = ?", babyID)
-	if f.Subtype != "" && f.Subtype != "all" {
-		base = base.Where("subtype = ?", f.Subtype)
-	}
+	base = applySubtypeFilter(base, subtypes)
 	if hasRange {
 		if overlap {
 			base = base.Where("ended_at > ? AND started_at < ?", startUTC, endUTC)
@@ -232,6 +266,7 @@ func queryPage[T any](s *Store, ctx context.Context, babyID int64, f ListFilter,
 // pointListSpec 描述单类时刻型记录（喂养/护理/健康）在通用分页小计流程中的差异化配置与累加回调。
 type pointListSpec[T any, S any] struct {
 	allowedSubtypes []string
+	allowMulti      bool
 	invalidMsg      string
 	summaryOrderBy  string
 	recordedAt      func(T) string
@@ -242,13 +277,13 @@ type pointListSpec[T any, S any] struct {
 // 先查当前分页，再按涉及的本地自然日合并区间反查全天记录聚合小计，
 // 保证每日小计不受分页边界截断影响，同时避免稀疏跨月场景全表扫描。
 func listPointRecords[T any, S any](s *Store, ctx context.Context, babyID int64, f ListFilter, spec pointListSpec[T, S]) (*ListResult[T, S], error) {
-	f, startUTC, endUTC, hasRange, err := s.prepareListFilter(f, spec.allowedSubtypes, spec.invalidMsg)
+	f, subtypes, startUTC, endUTC, hasRange, err := s.prepareListFilter(f, spec.allowedSubtypes, spec.allowMulti, spec.invalidMsg)
 	if err != nil {
 		return nil, err
 	}
 
 	// 1. 拉取当前分页记录。
-	items, total, err := queryPage[T](s, ctx, babyID, f, startUTC, endUTC, hasRange, false, "recorded_at DESC, id DESC")
+	items, total, err := queryPage[T](s, ctx, babyID, f, subtypes, startUTC, endUTC, hasRange, false, "recorded_at DESC, id DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -270,9 +305,7 @@ func listPointRecords[T any, S any](s *Store, ctx context.Context, babyID int64,
 		if spec.summaryOrderBy != "" {
 			q = q.Order(spec.summaryOrderBy)
 		}
-		if f.Subtype != "" && f.Subtype != "all" {
-			q = q.Where("subtype = ?", f.Subtype)
-		}
+		q = applySubtypeFilter(q, subtypes)
 		var allForDays []T
 		if err := q.Find(&allForDays).Error; err != nil {
 			return nil, err
@@ -423,12 +456,12 @@ func (s *Store) DeleteSleep(ctx context.Context, babyID, id int64) error {
 // ListSleep 返回与目标本地日期范围有交集的睡眠记录，并按自然日边界切分每日小计。
 // 跨夜睡眠会将覆盖到的所有本地自然日均纳入小计键，保证入睡日分组与醒来日统计均准确无漏。
 func (s *Store) ListSleep(ctx context.Context, babyID int64, f ListFilter) (*ListResult[SleepRecord, SleepDailySummary], error) {
-	f, startUTC, endUTC, hasRange, err := s.prepareListFilter(f, sleepSubtypes, "睡眠子类型筛选参数无效")
+	f, subtypes, startUTC, endUTC, hasRange, err := s.prepareListFilter(f, sleepSubtypes, false, "睡眠子类型筛选参数无效")
 	if err != nil {
 		return nil, err
 	}
 
-	items, total, err := queryPage[SleepRecord](s, ctx, babyID, f, startUTC, endUTC, hasRange, true, "started_at DESC, id DESC")
+	items, total, err := queryPage[SleepRecord](s, ctx, babyID, f, subtypes, startUTC, endUTC, hasRange, true, "started_at DESC, id DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -453,9 +486,7 @@ func (s *Store) ListSleep(ctx context.Context, babyID int64, f ListFilter) (*Lis
 	if ranges := mergedDateRangesUTC(dateKeys, f.Loc); len(ranges) > 0 {
 		q := s.db.WithContext(ctx).Model(&SleepRecord{}).Where("baby_id = ?", babyID)
 		q = s.applyTimeRanges(q, ranges, true)
-		if f.Subtype != "" && f.Subtype != "all" {
-			q = q.Where("subtype = ?", f.Subtype)
-		}
+		q = applySubtypeFilter(q, subtypes)
 		var allForDays []SleepRecord
 		if err := q.Find(&allForDays).Error; err != nil {
 			return nil, err
@@ -613,9 +644,11 @@ func (s *Store) DeleteHealth(ctx context.Context, babyID, id int64) error {
 }
 
 // ListHealth 返回筛选分页后的健康记录及当前页涉及本地日期的完整每日小计。
+// 支持逗号分隔多子类型筛选（如 "temperature,medicine"、"growth,teeth"），同时向后兼容单子类型与 "all"。
 func (s *Store) ListHealth(ctx context.Context, babyID int64, f ListFilter) (*ListResult[HealthRecord, HealthDailySummary], error) {
 	return listPointRecords(s, ctx, babyID, f, pointListSpec[HealthRecord, HealthDailySummary]{
 		allowedSubtypes: healthSubtypes,
+		allowMulti:      true,
 		invalidMsg:      "健康子类型筛选参数无效",
 		summaryOrderBy:  "recorded_at DESC, id DESC",
 		recordedAt:      func(r HealthRecord) string { return r.RecordedAt },
@@ -662,7 +695,43 @@ func (s *Store) ReadWindow(ctx context.Context, babyID int64, start, end time.Ti
 	return snap, nil
 }
 
-// ReadLatestHighlights 读取指定宝宝跨时间窗口的最近一次喂养、换尿布与体温标记。
+type growthMetricKind uint8
+
+const (
+	growthMetricWeight growthMetricKind = iota + 1
+	growthMetricHeight
+	growthMetricHead
+)
+
+// latestGrowthMetric 按指定体格维度枚举读取最近一条对应列非空的生长测量记录（全静态 SQL 条件，无字符串拼接）。
+func (s *Store) latestGrowthMetric(ctx context.Context, babyID int64, metric growthMetricKind) (*HealthRecord, error) {
+	var cond string
+	switch metric {
+	case growthMetricWeight:
+		cond = "baby_id = ? AND subtype = ? AND weight_kg IS NOT NULL"
+	case growthMetricHeight:
+		cond = "baby_id = ? AND subtype = ? AND height_cm IS NOT NULL"
+	case growthMetricHead:
+		cond = "baby_id = ? AND subtype = ? AND head_cm IS NOT NULL"
+	default:
+		return nil, nil
+	}
+	var rec HealthRecord
+	if err := s.db.WithContext(ctx).
+		Where(cond, babyID, HealthSubtypeGrowth).
+		Order("recorded_at DESC, id DESC").
+		Limit(1).
+		Find(&rec).Error; err != nil {
+		return nil, err
+	}
+	if rec.ID == 0 {
+		return nil, nil
+	}
+	return &rec, nil
+}
+
+// ReadLatestHighlights 读取指定宝宝跨时间窗口的最近照护标记（上次喂养、上次换尿布、最近体温）
+// 以及独立解析的生长发育最新体格测量值与累计出牙统计。
 // 此处使用 Limit(1).Find(&rec) 并通过 rec.ID > 0 判断是否命中（而非 First），
 // 因为 GORM 的 Find 在无记录时返回 nil error 而非 ErrRecordNotFound，更适合多个可选高亮字段依次读取。
 func (s *Store) ReadLatestHighlights(ctx context.Context, babyID int64) (*LatestHighlights, error) {
@@ -707,6 +776,59 @@ func (s *Store) ReadLatestHighlights(ctx context.Context, babyID int64) (*Latest
 	if latestDiaper.ID > 0 {
 		ts := latestDiaper.RecordedAt
 		hl.LastDiaperAt = &ts
+	}
+
+	// 体重/身高/头围各自独立取最近一次非空记录，避免单次部分测量将其他维度覆盖为空。
+	if rec, err := s.latestGrowthMetric(ctx, babyID, growthMetricWeight); err != nil {
+		return nil, err
+	} else if rec != nil && rec.WeightKg != nil {
+		v, ts := *rec.WeightKg, rec.RecordedAt
+		hl.Growth.LatestWeightKg = &v
+		hl.Growth.WeightRecordedAt = &ts
+	}
+
+	if rec, err := s.latestGrowthMetric(ctx, babyID, growthMetricHeight); err != nil {
+		return nil, err
+	} else if rec != nil && rec.HeightCm != nil {
+		v, ts := *rec.HeightCm, rec.RecordedAt
+		hl.Growth.LatestHeightCm = &v
+		hl.Growth.HeightRecordedAt = &ts
+	}
+
+	if rec, err := s.latestGrowthMetric(ctx, babyID, growthMetricHead); err != nil {
+		return nil, err
+	} else if rec != nil && rec.HeadCm != nil {
+		v, ts := *rec.HeadCm, rec.RecordedAt
+		hl.Growth.LatestHeadCm = &v
+		hl.Growth.HeadRecordedAt = &ts
+	}
+
+	var teethCount int64
+	if err := s.db.WithContext(ctx).
+		Model(&HealthRecord{}).
+		Where("baby_id = ? AND subtype = ?", babyID, HealthSubtypeTeeth).
+		Count(&teethCount).Error; err != nil {
+		return nil, err
+	}
+	hl.Growth.TeethCount = int(teethCount)
+
+	if teethCount > 0 {
+		var latestTooth HealthRecord
+		if err := s.db.WithContext(ctx).
+			Where("baby_id = ? AND subtype = ?", babyID, HealthSubtypeTeeth).
+			Order("recorded_at DESC, id DESC").
+			Limit(1).
+			Find(&latestTooth).Error; err != nil {
+			return nil, err
+		}
+		if latestTooth.ID > 0 {
+			ts := latestTooth.RecordedAt
+			hl.Growth.LatestToothAt = &ts
+			if latestTooth.ToothNote != nil {
+				note := *latestTooth.ToothNote
+				hl.Growth.LatestToothNote = &note
+			}
+		}
 	}
 
 	return hl, nil

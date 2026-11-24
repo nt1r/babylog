@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { DARK_THEME_COLOR, LIGHT_THEME_COLOR, THEME_STORAGE_KEY } from '@/scripts/theme-boot-script';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
-export type ResolvedTheme = 'light' | 'dark';
+type ResolvedTheme = 'light' | 'dark';
 
 function readStoredThemeMode(): ThemeMode {
   if (typeof window === 'undefined') return 'system';
@@ -15,13 +15,13 @@ function readStoredThemeMode(): ThemeMode {
   return 'system';
 }
 
-export function resolveThemeMode(mode: ThemeMode): ResolvedTheme {
+function resolveThemeMode(mode: ThemeMode): ResolvedTheme {
   if (mode === 'light' || mode === 'dark') return mode;
   if (typeof window === 'undefined') return 'light';
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
-export function applyThemeToDom(mode: ThemeMode): ResolvedTheme {
+function applyThemeToDom(mode: ThemeMode): ResolvedTheme {
   const resolved = resolveThemeMode(mode);
   if (typeof document === 'undefined') return resolved;
 
