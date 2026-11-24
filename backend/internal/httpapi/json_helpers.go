@@ -28,10 +28,13 @@ func readJSONBytes(c *gin.Context, maxBytes int64, wrongCTMsg string) ([]byte, i
 		return nil, http.StatusUnsupportedMediaType, wrongCTMsg
 	}
 
+	// 快速路径：若请求头声明的 Content-Length 已超限，直接返回 413，无需读取请求体。
 	if c.Request.ContentLength > maxBytes {
 		return nil, http.StatusRequestEntityTooLarge, "请求内容过大"
 	}
 
+	// 流式兜底：使用 http.MaxBytesReader 限制实际读取字节数（防御 chunked 传输或伪造 Content-Length），
+	// 超限时通过 errors.As 识别 *http.MaxBytesError 并返回 413。
 	limited := http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
 	body, err := io.ReadAll(limited)
 	if err != nil {
@@ -52,12 +55,13 @@ func decodeJSONBody(c *gin.Context, dst any) (int, string) {
 		return status, msg
 	}
 
+	// DisallowUnknownFields 拒绝前端传入契约之外的未知字段，防止字段拼写错误被静默吞掉。
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		return http.StatusBadRequest, "请求数据格式不正确"
 	}
-	// 拒绝 JSON 对象后附带的多余非空白内容。
+	// 再尝试解码一次：合法单对象后只应剩下 io.EOF，以此拒绝 `{...}{...}` 等尾随多余内容。
 	var trailing any
 	if err := dec.Decode(&trailing); err != io.EOF {
 		return http.StatusBadRequest, "请求数据格式不正确"

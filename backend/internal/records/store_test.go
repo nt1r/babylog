@@ -17,6 +17,8 @@ func strPtr(v string) *string     { return &v }
 func intPtr(v int) *int           { return &v }
 func floatPtr(v float64) *float64 { return &v }
 
+// openTestStores 在独立临时目录中初始化 SQLite 与已建档单宝宝环境，并注入固定时钟，
+// 确保所有时间窗口与分页小计测试不受宿主机当前系统日期影响。
 func openTestStores(t *testing.T, now time.Time) (*records.Store, int64) {
 	t.Helper()
 

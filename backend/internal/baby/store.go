@@ -32,7 +32,7 @@ func (s *Store) WithClock(fn func() time.Time) *Store {
 	return s
 }
 
-// GetFirst 返回当前唯一的宝宝档案；尚未建档时返回 (nil, nil)。
+// GetFirst 返回当前唯一的宝宝档案；尚未建档时返回 (nil, nil)，供调用方区分“未建档”与数据库异常。
 func (s *Store) GetFirst(ctx context.Context) (*Profile, error) {
 	var p Profile
 	err := s.db.WithContext(ctx).Order("id ASC").First(&p).Error
@@ -45,7 +45,7 @@ func (s *Store) GetFirst(ctx context.Context) (*Profile, error) {
 	return &p, nil
 }
 
-// Create 在单宝宝模式下创建唯一宝宝档案；若已存在则返回 ErrAlreadyExists。
+// Create 在单宝宝模式下创建唯一宝宝档案；在事务内检查唯一性，若已存在则返回 [ErrAlreadyExists]。
 func (s *Store) Create(ctx context.Context, in UpsertInput, loc *time.Location) (*Profile, error) {
 	now := s.now()
 	clean, err := ValidateAndNormalize(in, now, loc)
@@ -81,7 +81,7 @@ func (s *Store) Create(ctx context.Context, in UpsertInput, loc *time.Location) 
 	return &created, nil
 }
 
-// Update 更新现有唯一宝宝档案；尚未建档时返回 ErrNotFound。
+// Update 在单个事务内更新现有唯一宝宝档案；尚未建档时返回 [ErrNotFound]。
 func (s *Store) Update(ctx context.Context, in UpsertInput, loc *time.Location) (*Profile, error) {
 	now := s.now()
 	clean, err := ValidateAndNormalize(in, now, loc)
@@ -105,6 +105,8 @@ func (s *Store) Update(ctx context.Context, in UpsertInput, loc *time.Location) 
 		updated.BirthHeightCm = clean.BirthHeightCm
 		updated.UpdatedAt = timeutil.FormatUTC(now)
 
+		// GORM 默认的 Updates(&struct) 会跳过 nil 指针与零值字段；
+		// 显式调用 Select 指定全部可更新列，保证用户清空出生体重/身高时能正确将对应列写为 SQL NULL。
 		return tx.Model(&updated).Select(
 			"nickname", "birth_date", "gender", "birth_weight_kg", "birth_height_cm", "updated_at",
 		).Updates(&updated).Error

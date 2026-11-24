@@ -26,6 +26,8 @@ func newAdminCommand() *cobra.Command {
 	return adminCmd
 }
 
+// newAdminInitCommand 构建 `babylog admin init` 子命令。
+// 通过本地密码文件（而非命令行参数）传入密码，避免密码暴露在进程列表或 shell 历史中。
 func newAdminInitCommand() *cobra.Command {
 	var passwordFile string
 	var username string
@@ -48,15 +50,19 @@ func newAdminInitCommand() *cobra.Command {
 		},
 	}
 
+	// 覆写非法 Flag 的报错文本，保持全命令中文提示风格一致。
 	cmd.SetFlagErrorFunc(func(_ *cobra.Command, _ error) error {
 		return errors.New(initAdminUsage)
 	})
+	// StringVar 将命令行参数绑定到局部变量的内存地址（&passwordFile / &username）。
 	cmd.Flags().StringVar(&passwordFile, "password-file", "", "包含管理员密码的本地文件路径")
 	cmd.Flags().StringVar(&username, "username", "admin", "管理员用户名（默认 admin）")
 
 	return cmd
 }
 
+// runAdminInit 校验用户名与本地密码文件，打开 SQLite 并创建唯一管理员账户。
+// 接收 io.Writer 而非直接写 os.Stdout，便于 CLI 单元测试直接捕获并断言输出内容。
 func runAdminInit(ctx context.Context, out io.Writer, passwordFile, username string) error {
 	if err := auth.ValidateUsername(username); err != nil {
 		return err
@@ -81,6 +87,8 @@ func runAdminInit(ctx context.Context, out io.Writer, passwordFile, username str
 
 	store := auth.NewStore(db.Gorm())
 	if err := store.InitializeAdministrator(ctx, username, password); err != nil {
+		// 使用 errors.As 从错误链中识别预期业务错误（如“管理员已存在”），直接透传中文提示；
+		// 其余未预期底层错误统一收敛为脱敏中文消息，避免暴露数据库细节。
 		var adminErr *auth.AdministratorError
 		if errors.As(err, &adminErr) {
 			return adminErr
@@ -105,6 +113,7 @@ func readPasswordFile(path string) (string, error) {
 	if err != nil {
 		return "", errors.New("无法读取密码文件，请检查路径及权限")
 	}
+	// 仅允许普通文件，拒绝目录、命名管道（FIFO）或设备文件以防阻塞。
 	if !info.Mode().IsRegular() {
 		return "", errors.New("密码文件必须为普通文件")
 	}
@@ -114,6 +123,8 @@ func readPasswordFile(path string) (string, error) {
 		return "", errors.New("密码文件过大，密码最多为 1024 个字符")
 	}
 
+	// 除 Stat 预检外再套一层 LimitReader(maxBytes+1)：防止文件在 Stat 与 Read 之间被并发追加变大，
+	// 最多多读 1 字节即可准确判断是否超限，同时避免一次性将超大内容读入内存。
 	contents, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
 	if err != nil {
 		return "", errors.New("无法读取密码文件，请检查路径及权限")

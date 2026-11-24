@@ -8,6 +8,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// newRootCommand 构建顶层 Cobra 根命令并挂载所有子命令。
+// 关闭 Cobra 默认的英文错误打印与用法刷屏（SilenceUsage / SilenceErrors），
+// 改为由 main 统一向 stderr 输出子命令返回的中文错误。
 func newRootCommand() *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:           "babylog",

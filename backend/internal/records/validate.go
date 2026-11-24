@@ -9,8 +9,11 @@ import (
 	"github.com/nt1r/babylog/backend/internal/timeutil"
 )
 
+// strPtr 返回字符串字面量或局部变量的指针（Go 不允许直接对字符串字面量取地址 `&"direct"`）。
 func strPtr(s string) *string { return &s }
 
+// trimOptionalString 清洗可选文本指针：nil 或纯空白统一归一化为 nil（落库为 SQL NULL），
+// 非空时按 UTF-8 字符数（而非字节数）校验长度上限。
 func trimOptionalString(p *string, maxRunes int, label string) (*string, error) {
 	if p == nil {
 		return nil, nil
@@ -33,6 +36,7 @@ func validateNote(raw string) (string, error) {
 	return trimmed, nil
 }
 
+// validateTimestamp 解析 RFC3339 时间戳并拒绝超过允许时钟偏差（[timeutil.MaxFutureSkew]）的未来时间。
 func validateTimestamp(raw string, now time.Time) (time.Time, error) {
 	parsed, err := timeutil.ParseTimestamp(raw)
 	if err != nil {
@@ -45,6 +49,10 @@ func validateTimestamp(raw string, now time.Time) (time.Time, error) {
 }
 
 // ValidateFeeding 校验并标准化喂养记录，返回可直接入库的归一化输入。
+//
+// 关键设计：始终构造全新的 out 结构体，仅填充当前 Subtype 对应的有效字段，
+// 其余子类型字段保持 nil；配合 [Store.UpdateFeeding] 的显式列更新，可在跨子类型切换时自动清空旧字段。
+// 校验失败时返回 [*ValidationError]。
 func ValidateFeeding(in FeedingInput, now time.Time) (FeedingInput, error) {
 	recordedAt, err := validateTimestamp(in.RecordedAt, now)
 	if err != nil {
@@ -132,7 +140,8 @@ func ValidateFeeding(in FeedingInput, now time.Time) (FeedingInput, error) {
 	return out, nil
 }
 
-// ValidateSleep 校验睡眠补录区间并由服务端统一计算 duration_min。
+// ValidateSleep 校验睡眠补录区间并由服务端统一计算 duration_min（防止客户端传入与起止时间矛盾的时长）。
+// 要求：醒来时间晚于入睡时间、均不超过未来时钟偏差，且总时长在 [MinSleepMin, MaxSleepMin]（1 分钟至 24 小时）之间。
 func ValidateSleep(in SleepInput, now time.Time) (SleepInput, int, error) {
 	subtype := strings.TrimSpace(in.Subtype)
 	if subtype != SleepSubtypeNap && subtype != SleepSubtypeNight {
@@ -240,7 +249,9 @@ func ValidateCare(in CareInput, now time.Time) (CareInput, error) {
 	return out, nil
 }
 
-// ValidateHealth 校验并标准化健康与生长记录。
+// ValidateHealth 校验并标准化健康与生长记录；
+// 所有数值字段先拦截 NaN/Inf 再按业务精度四舍五入（体温/身高/头围 1 位小数，体重 2 位小数），
+// 生长子类型（growth）要求体重、身高、头围至少填写一项。
 func ValidateHealth(in HealthInput, now time.Time) (HealthInput, error) {
 	recordedAt, err := validateTimestamp(in.RecordedAt, now)
 	if err != nil {

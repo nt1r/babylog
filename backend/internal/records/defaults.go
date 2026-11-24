@@ -6,8 +6,11 @@ import (
 )
 
 // GetSmartDefaults 根据最近历史记录汇总智能默认值，为空历史提供开箱即用的兜底预设。
-// 仅回溯最近 60 条喂养（约 1 周）与 40 条健康记录，确保默认值紧贴宝宝当前月龄习惯而非早期历史。
+//
+// 仅回溯最近 60 条喂养（约 1 周）、40 条体温/用药与 30 条自定义护理记录，
+// 确保默认值紧贴宝宝当前月龄习惯，不被早期陈旧数据稀释。
 func (s *Store) GetSmartDefaults(ctx context.Context, babyID int64) (*SmartDefaults, error) {
+	// 1. 初始化冷启动兜底默认值。
 	defaults := &SmartDefaults{
 		Feeding: FeedingDefaults{
 			LastMilkML:          DefaultStarterMilk,
@@ -25,6 +28,7 @@ func (s *Store) GetSmartDefaults(ctx context.Context, babyID int64) (*SmartDefau
 		},
 	}
 
+	// 2. 回溯最近 60 条喂养记录（按时间倒序），单次遍历同步提取最近奶量、高频奶量、亲喂建议侧别与最近辅食。
 	var feedings []FeedingRecord
 	if err := s.db.WithContext(ctx).
 		Where("baby_id = ?", babyID).
@@ -38,6 +42,7 @@ func (s *Store) GetSmartDefaults(ctx context.Context, babyID int64) (*SmartDefau
 		defaults.Feeding.LastFeedingSubtype = feedings[0].Subtype
 	}
 
+	// mlStat 记录每个奶量档位的出现次数与最早出现的倒序下标（firstIndex 越小表示越近期，用于同频次破平局）。
 	type mlStat struct {
 		ml         int
 		count      int
@@ -61,6 +66,7 @@ func (s *Store) GetSmartDefaults(ctx context.Context, babyID int64) (*SmartDefau
 				mlCounts[ml] = &mlStat{ml: ml, count: 1, firstIndex: idx}
 			}
 		}
+		// 亲喂侧别推荐：命中最近一次亲喂后，自动建议交替使用另一侧（上次左侧→建议右侧，其余→建议左侧）。
 		if !hasLastBreast && f.Subtype == FeedingSubtypeBreast && f.FeedingMode != nil && *f.FeedingMode == "direct" && f.BreastSide != nil {
 			side := *f.BreastSide
 			defaults.Feeding.LastBreastSide = &side
@@ -81,6 +87,7 @@ func (s *Store) GetSmartDefaults(ctx context.Context, babyID int64) (*SmartDefau
 		}
 	}
 
+	// 3. 选出前 3 个最高频奶量（同频次按最近优先），不足 3 档时用默认档位 [60, 90, 120] 去重补齐。
 	if len(mlCounts) > 0 {
 		stats := make([]*mlStat, 0, len(mlCounts))
 		for _, st := range mlCounts {
@@ -115,6 +122,7 @@ func (s *Store) GetSmartDefaults(ctx context.Context, babyID int64) (*SmartDefau
 		defaults.Feeding.FrequentMilkML = top
 	}
 
+	// 4. 回溯最近 40 条体温与用药记录，提取最近一次体温与去重后的前 5 个常用药品（保留该药品最近一次剂量）。
 	var healths []HealthRecord
 	if err := s.db.WithContext(ctx).
 		Where("baby_id = ? AND subtype IN ?", babyID, []string{HealthSubtypeTemperature, HealthSubtypeMedicine}).
@@ -147,6 +155,7 @@ func (s *Store) GetSmartDefaults(ctx context.Context, babyID int64) (*SmartDefau
 		}
 	}
 
+	// 5. 回溯最近 30 条自定义护理记录，去重提取前 5 个常用护理标题。
 	var cares []CareRecord
 	if err := s.db.WithContext(ctx).
 		Where("baby_id = ? AND subtype = ?", babyID, CareSubtypeOther).

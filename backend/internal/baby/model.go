@@ -33,6 +33,8 @@ var ErrAlreadyExists = errors.New("已存在宝宝档案，请直接修改现有
 var ErrNotFound = errors.New("请先完成宝宝建档")
 
 // Profile 对应 SQLite 中的 baby_profiles 表。
+// 可选测量字段使用指针类型 *float64 而非 float64：Go 中普通 float64 零值为 0.0 无法表示“未填写”，
+// 使用指针才能准确区分 nil（数据库 NULL / JSON null）与有效数值。
 type Profile struct {
 	ID            int64    `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
 	Nickname      string   `gorm:"column:nickname;not null" json:"nickname"`
@@ -44,6 +46,7 @@ type Profile struct {
 	UpdatedAt     string   `gorm:"column:updated_at;not null" json:"updated_at"`
 }
 
+// TableName 显式绑定 GORM 模型到 baby_profiles 表。
 func (Profile) TableName() string {
 	return "baby_profiles"
 }
@@ -57,7 +60,9 @@ type UpsertInput struct {
 	BirthHeightCm *float64 `json:"birth_height_cm"`
 }
 
-// ValidateAndNormalize 校验并标准化宝宝档案输入（以 loc 本地自然日判断出生日期不能晚于今天）。
+// ValidateAndNormalize 校验并标准化宝宝档案输入，返回可直接入库的归一化副本。
+// 出生日期按 loc 对应的本地自然日判断不得晚于今天；可选体重保留 2 位小数、身高保留 1 位小数。
+// 校验失败时返回 [*ValidationError]。
 func ValidateAndNormalize(in UpsertInput, now time.Time, loc *time.Location) (UpsertInput, error) {
 	if loc == nil {
 		loc, _ = timeutil.LoadLocation("")
@@ -77,6 +82,7 @@ func ValidateAndNormalize(in UpsertInput, now time.Time, loc *time.Location) (Up
 	if err != nil {
 		return UpsertInput{}, &ValidationError{Message: "出生日期格式应为 YYYY-MM-DD"}
 	}
+	// YYYY-MM-DD 格式的字典序与自然日先后严格一致，可直接按字符串比较是否为未来日期。
 	todayStr := timeutil.LocalDateKey(now, loc)
 	if birthDate > todayStr {
 		return UpsertInput{}, &ValidationError{Message: "出生日期不能晚于今天"}
@@ -93,6 +99,7 @@ func ValidateAndNormalize(in UpsertInput, now time.Time, loc *time.Location) (Up
 		return UpsertInput{}, &ValidationError{Message: "请选择有效的宝宝性别"}
 	}
 
+	// 可选浮点数须先拦截 NaN / Inf（防止非法浮点绕过区间比较），再按业务精度四舍五入。
 	var weight *float64
 	if in.BirthWeightKg != nil {
 		v := *in.BirthWeightKg

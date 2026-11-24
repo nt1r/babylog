@@ -264,6 +264,7 @@ export function getTemperatureSeverity(temp: number): {
   return { level: 'normal', label: '体温正常' };
 }
 
+/** 单条记录的新增/编辑/删除会同时影响分页列表、智能默认值与首页看板统计，统一失效三组查询缓存。 */
 function invalidateAllRecordQueries(queryClient: QueryClient) {
   void queryClient.invalidateQueries({ queryKey: RECORDS_QUERY_KEY });
   void queryClient.invalidateQueries({ queryKey: RECORD_DEFAULTS_QUERY_KEY });

@@ -25,7 +25,8 @@ type Config struct {
 	GinMode string
 }
 
-// Load 从环境变量加载运行配置并校验端口合法性。
+// Load 从环境变量加载运行配置并显式校验端口与 Gin 运行模式。
+// 未设置 PORT 时回退为 [DefaultPort]；PORT=0 合法，表示由操作系统自动分配空闲端口（常用于集成测试）。
 func Load() (Config, error) {
 	host := os.Getenv("HOST")
 	if host == "" {
@@ -33,6 +34,8 @@ func Load() (Config, error) {
 	}
 
 	port := DefaultPort
+	// 使用 os.LookupEnv 区分“未设置 PORT”与“显式设为 PORT= 空串”：
+	// 若用户显式设置了空值或非法字符，应直接报错而不是静默回退默认端口。
 	if rawPort, ok := os.LookupEnv("PORT"); ok {
 		parsed, err := strconv.Atoi(strings.TrimSpace(rawPort))
 		if err != nil || parsed < 0 || parsed > 65535 {
@@ -50,6 +53,7 @@ func Load() (Config, error) {
 	if rawDist := os.Getenv("BABYLOG_DIST_DIR"); rawDist != "" {
 		absDist, absErr := filepath.Abs(ResolvePathFromWorkDir(rawDist))
 		if absErr != nil {
+			// fmt.Errorf 的 `%w` 占位符会包装底层错误，保留错误链供上层 errors.Is / errors.As 识别。
 			return Config{}, fmt.Errorf("解析 BABYLOG_DIST_DIR 失败: %w", absErr)
 		}
 		distDir = absDist
@@ -75,6 +79,7 @@ func Load() (Config, error) {
 }
 
 // ResolvePathFromWorkDir 将相对路径基于调用方工作目录（BABYLOG_WORK_DIR）解析；
+// 例如通过根目录 `pnpm dev:server` 切进 `backend/` 启动进程时，仍能正确定位仓库根目录下的 `data/` 或密码文件。
 // 若已为绝对路径或未设置 BABYLOG_WORK_DIR，则原样返回。
 func ResolvePathFromWorkDir(path string) string {
 	if path == "" || filepath.IsAbs(path) {

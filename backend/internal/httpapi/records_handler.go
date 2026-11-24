@@ -25,6 +25,9 @@ func newRecordsHandler(recordStore *records.Store, logger *slog.Logger) *records
 	}
 }
 
+// handleRecordErr 将 records 领域错误统一映射为 HTTP 状态码与中文 JSON：
+// errors.As 匹配带自定义消息的 [*records.ValidationError]（400），errors.Is 匹配哨兵错误 [records.ErrNotFound]（404），
+// 其余未预期底层错误仅记录脱敏日志并返回 500。
 func (h *recordsHandler) handleRecordErr(c *gin.Context, op string, err error) {
 	var valErr *records.ValidationError
 	if errors.As(err, &valErr) {
@@ -39,6 +42,8 @@ func (h *recordsHandler) handleRecordErr(c *gin.Context, op string, err error) {
 	c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 }
 
+// recordCRUD 是泛型 CRUD 方法集（类型参数 Rec=记录模型、In=写入载荷、Sum=每日小计），
+// 用于将四类记录各自的 Store 方法绑定到统一的路由注册模板 `registerRecordRoutes`。
 type recordCRUD[Rec any, In any, Sum any] struct {
 	opPrefix string
 	list     func(context.Context, int64, records.ListFilter) (*records.ListResult[Rec, Sum], error)
@@ -130,6 +135,7 @@ func registerRecordRoutes[Rec any, In any, Sum any](
 }
 
 // registerRoutes 挂载智能默认值及四类日常记录的标准 CRUD 路由。
+// 传入的 `h.recordStore.ListFeeding` 等属于 Go 的“方法值”（Method Value），已自动绑定接收者实例，无需再套匿名闭包。
 func (h *recordsHandler) registerRoutes(group *gin.RouterGroup) {
 	group.GET("/defaults", h.getDefaults)
 

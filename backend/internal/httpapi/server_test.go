@@ -25,11 +25,14 @@ const (
 	testAdminPass = "babylog-integration-secret"
 )
 
+// TestMain 是 Go 测试包的全局入口：在所有测试用例运行前统一设置 Gin 为测试模式，避免并发竞态与调试日志噪音。
 func TestMain(m *testing.M) {
 	gin.SetMode(gin.TestMode)
 	os.Exit(m.Run())
 }
 
+// setupTestServer 为单个测试构建隔离的临时 SQLite、假前端 dist 目录与内存回环 HTTP 服务；
+// t.Helper() 让断言失败时定位到调用方用例行号，t.TempDir() 与 t.Cleanup 自动完成资源回收。
 func setupTestServer(t *testing.T) (*httptest.Server, *gin.Engine) {
 	t.Helper()
 

@@ -9,7 +9,8 @@ import (
 
 const versionUsage = "用法：babylog version"
 
-// 构建元信息通过 -ldflags 在打包与发版阶段注入，本地开发默认保持 dev/unknown。
+// 构建元信息通过 Go 链接器参数 `-ldflags "-X main.version=..."` 在发布构建时覆盖写入；
+// 本地开发直接 `go run` 时保持默认占位值。
 var (
 	version   = "dev"
 	commit    = "unknown"

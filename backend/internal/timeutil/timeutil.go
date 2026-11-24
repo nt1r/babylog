@@ -7,13 +7,16 @@ import (
 	"math"
 	"strings"
 	"time"
-	_ "time/tzdata" // 内嵌标准库时区数据库，确保精简容器与零 CGO 环境下始终可加载 IANA 时区。
+	// 空白导入（_）仅触发 time/tzdata 包的 init()：将标准库 IANA 时区数据库编译进二进制，
+	// 确保精简容器（无系统 tzdata 文件）及零 CGO 环境下始终可加载任意时区。
+	_ "time/tzdata"
 )
 
 // DefaultTimezone 为未显式传递时区参数时的默认 IANA 时区。
 const DefaultTimezone = "Asia/Shanghai"
 
 // DateLayout 为标准本地日期格式。
+// Go 不使用 YYYY-MM-DD 占位符，而是固定以参考时刻 "2006-01-02 15:04:05" 的对应数字作为格式化模板。
 const DateLayout = "2006-01-02"
 
 // MaxFutureSkew 允许客户端时钟相对服务端最多超前 5 分钟，避免点「刚刚」误报未来时间。
@@ -90,7 +93,10 @@ func RecentLocalDateKeys(now time.Time, days int, loc *time.Location) []string {
 }
 
 // SplitIntervalMinutesByLocalDay 将 [start, end) 时间区间按指定时区的自然日边界切分，
-// 返回每个本地自然日（YYYY-MM-DD）落入的分钟数（四舍五入到最近分钟，避免带秒时间戳跨零点时被两端截断丢分）。
+// 返回每个本地自然日（YYYY-MM-DD）落入的分钟数。
+//
+// 使用逐日推进到下一自然日零点的方式处理跨单夜或跨多日区间，并对每段时长四舍五入到最近分钟，
+// 避免带秒时间戳跨零点时被两端整除截断而丢失分钟。
 func SplitIntervalMinutesByLocalDay(start, end time.Time, loc *time.Location) map[string]int {
 	result := make(map[string]int)
 	if !end.After(start) {
@@ -100,6 +106,7 @@ func SplitIntervalMinutesByLocalDay(start, end time.Time, loc *time.Location) ma
 	cur := start.In(loc)
 	finish := end.In(loc)
 	for cur.Before(finish) {
+		// time.Date 会自动处理月末/年末进位以及夏令时（DST）切换时的本地零点。
 		nextMidnight := time.Date(cur.Year(), cur.Month(), cur.Day()+1, 0, 0, 0, 0, loc)
 		segEnd := nextMidnight
 		if finish.Before(segEnd) {
