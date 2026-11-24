@@ -111,7 +111,7 @@ export interface CareDailySummary {
   other_count: number;
 }
 
-export type HealthSubtype = 'temperature' | 'medicine' | 'growth' | 'teeth';
+type HealthSubtype = 'temperature' | 'medicine' | 'growth' | 'teeth';
 
 export interface HealthRecord {
   id: number;
@@ -158,7 +158,7 @@ interface RecordTypeMap {
 export type RecordOf<C extends RecordCategory> = RecordTypeMap[C]['record'];
 export type DailySummaryOf<C extends RecordCategory> = RecordTypeMap[C]['summary'];
 
-export interface ListResult<T, S> {
+interface ListResult<T, S> {
   items: T[];
   total: number;
   has_more: boolean;
@@ -276,7 +276,7 @@ function buildListQueryString(params: ListParams): string {
   return q.toString();
 }
 
-export async function fetchRecordList<C extends RecordCategory>(
+async function fetchRecordList<C extends RecordCategory>(
   category: C,
   params: ListParams,
   signal?: AbortSignal,
@@ -287,18 +287,18 @@ export async function fetchRecordList<C extends RecordCategory>(
   );
 }
 
-export async function fetchSmartDefaults(signal?: AbortSignal): Promise<SmartDefaults> {
+async function fetchSmartDefaults(signal?: AbortSignal): Promise<SmartDefaults> {
   return apiRequest<SmartDefaults>('/api/records/defaults', { signal });
 }
 
-export async function saveRecord(req: SaveRecordRequest): Promise<RecordOf<RecordCategory>> {
+async function saveRecord(req: SaveRecordRequest): Promise<RecordOf<RecordCategory>> {
   const path = req.id !== undefined ? `/api/records/${req.category}/${req.id}` : `/api/records/${req.category}`;
   const method = req.id !== undefined ? 'PUT' : 'POST';
   const res = await apiRequest<{ record: RecordOf<RecordCategory> }>(path, { method, body: req.payload });
   return res.record;
 }
 
-export async function deleteRecord(category: RecordCategory, id: number): Promise<void> {
+async function deleteRecord(category: RecordCategory, id: number): Promise<void> {
   await apiRequest<{ deleted: boolean }>(`/api/records/${category}/${id}`, { method: 'DELETE' });
 }
 

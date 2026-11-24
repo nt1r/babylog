@@ -12,7 +12,7 @@ import (
 )
 
 // vaccinesHandler 处理疫苗接种计划、模板库、自定义添加、单剂更新、批量操作与删除接口。
-// 路由组已挂载 requireBabyProfileMiddleware，处理器直接从上下文读取 babyID 与 birthDate。
+// 路由组已挂载 requireBabyProfileMiddleware（注入完整宝宝档案），处理器直接从上下文读取 babyID 与 birthDate。
 type vaccinesHandler struct {
 	store  *vaccines.Store
 	logger *slog.Logger

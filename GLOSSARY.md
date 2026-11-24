@@ -35,11 +35,11 @@ A Daily Record covering diaper changes (pee, poop, or both with optional stool d
 _Avoid_: Nursing, hygiene
 
 **Health**:
-A Daily Record tracking body temperature (`℃`), medicine/supplements, **Growth** measurements (`生长`: weight, height, head circumference), or teething notes.
+A Daily Record workspace (`/health`, persisted in `health_records`) tracking clinical care events: body temperature (`℃`) and medicine/supplements.
 _Avoid_: Medical record
 
 **Growth**:
-The Health subtype (`生长`) recording physical measurements (weight, height, head circumference).
+The physical development and milestone workspace (`/growth`, sharing `health_records` storage with subtypes `growth` and `teeth`) recording physical measurements (`生长`: weight, height, head circumference) and teething milestones (`长牙`).
 _Avoid_: 身高体重 (as a subtype label; use only for individual measurement fields)
 
 ### Summaries & Insights
@@ -53,7 +53,7 @@ Habit-based starter suggestions derived from recent Daily Records (latest and to
 _Avoid_: Presets, auto-fill cache
 
 **Dashboard Insights**:
-Timezone-aware overview combining today's KPI summaries, time-since-last-care indicators, multi-day feeding/sleep trends, and Care Rhythm distribution.
+Timezone-aware overview combining today's care KPI summaries (including Health Observation for temperature and today's medicine), time-since-last-care indicators, multi-day feeding/sleep trends, Care Rhythm distribution, vaccine attention alerts/progress, and latest growth highlights.
 _Avoid_: Analytics, reports
 
 **Care Rhythm**:

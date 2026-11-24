@@ -1,0 +1,18 @@
+# Test Plan
+
+## Unit Tests
+
+| Requirement / Scenario | Verification | Expected Result |
+| --- | --- | --- |
+| `daily-records` / `Filtered, timezone-scoped listing with pagination and daily subtotals` / `Filter health records by comma-separated subtype group` | 在 `backend/internal/records/store_test.go` 写入覆盖 `temperature`、`medicine`、`growth`、`teeth` 四类子类型的记录，分别调用 `ListHealth` 传入 `Subtype: "temperature,medicine"`、`Subtype: "growth,teeth"`（含重复项与空格如 `"growth, growth"`）及既有单子类型与 `"all"` | 返回的 `Items`、`Total`、`HasMore` 与 `DailySummaries` 仅包含目标子类型集合；既有单子类型与 `"all"` 行为保持兼容不变 |
+| `daily-records` / `Filtered, timezone-scoped listing with pagination and daily subtotals` / `Reject invalid or empty token in comma-separated health subtype filter` | 在 `backend/internal/records/store_test.go` 调用 `ListHealth` 传入 `"temperature,unknown"`、`"growth,"`、`",teeth"` | 全部返回 `*ValidationError` 且携带明确中文错误提示，不执行列表查询 |
+| `dashboard-insights` / `Timezone-aware daily KPI summary and recency indicators` / `Aggregate today's medicine count and latest medicine in requested timezone` | 在 `backend/internal/dashboard/service_test.go` 使用固定时钟与 `Asia/Shanghai` 时区写入跨自然日边界（昨日与今日多条）的 `medicine` 记录，调用 `Service.GetSummary` | `health.today_medicine_count` 仅计入本地今日的用药次数，`latest_medicine_name` 与 `latest_medicine_at` 准确指向今日最新一条用药记录；今日无用药时返回 `0` 与 `nil` |
+| `dashboard-insights` / `Timezone-aware daily KPI summary and recency indicators` / `Independently resolve partial growth measurements and apply birth-profile fallback` | 在 `backend/internal/dashboard/service_test.go` 测试三种组合：（1）无生长记录但宝宝档案含 `birth_weight_kg` / `birth_height_cm`；（2）旧记录仅含身高、新记录仅含体重、无头围、含 2 条 `teeth` 记录；（3）三项体格均已手动记录且宝宝档案无出生体格 | （1）体重/身高回退到出生值且 `weight_is_birth`/`height_is_birth` 为 `true`、日期为 `birth_date`，头围为 `nil`；（2）体重取新记录、身高取旧记录且各自 `*_is_birth` 为 `false`，`teeth_count == 2` 并返回最新 `latest_tooth_note`；（3）均取最新手动记录且 `*_is_birth` 为 `false` |
+
+## Integration Tests
+
+| Requirement / Scenario | Verification | Expected Result |
+| --- | --- | --- |
+| `daily-records` / `Filtered, timezone-scoped listing with pagination and daily subtotals` / `Filter health records by comma-separated subtype group` & `Reject invalid or empty token in comma-separated health subtype filter` | 在 `backend/internal/httpapi/records_dashboard_test.go` 经 HTTP 创建体温、用药、生长、长牙 4 条记录，分别请求 `GET /api/records/health?subtype=temperature,medicine&range=30d&tz=Asia/Shanghai`、`GET /api/records/health?subtype=growth,teeth&range=all&tz=Asia/Shanghai` 以及非法参数 `subtype=growth,bad` / `subtype=growth,` | 合法多子类型请求返回 HTTP 200，仅返回对应分组记录及准确 `total` 与 `daily_summaries`；非法或空项参数返回 HTTP 400 中文错误 JSON |
+| `dashboard-insights` / `Timezone-aware daily KPI summary and recency indicators` / `Aggregate today's medicine count and latest medicine in requested timezone` & `Independently resolve partial growth measurements and apply birth-profile fallback` | 在 `backend/internal/httpapi/records_dashboard_test.go` 建档（含出生体重/身高）后先请求 `GET /api/dashboard/summary?tz=Asia/Shanghai` 验证出生兜底，再依次写入今日用药、仅含体重的生长记录及长牙记录并再次请求 `GET /api/dashboard/summary?tz=Asia/Shanghai` | 首次请求返回 HTTP 200 且 `growth` 体重/身高使用出生档案兜底（`*_is_birth: true`）；写入记录后返回 HTTP 200，体重切换为手动测量值（`weight_is_birth: false`）、身高仍保留出生兜底（`height_is_birth: true`），`health.today_medicine_count`、`latest_medicine_name` 与 `growth.teeth_count`、`latest_tooth_note` 均与落库数据一致 |
+| `vaccine-management` / `Web vaccination workspace, calendar export, and mandatory risk notices` / `Surface vaccine status and trigger lazy NIP initialization from dashboard` | 复用 `backend/internal/httpapi/vaccines_test.go` 中既有的首访 `GET /api/vaccines?tz=Asia/Shanghai` 幂等初始化与 `birth_confirm_pending` / `next_focus` 集成测试 | 建档后首次 `GET /api/vaccines` 返回 HTTP 200、22 剂 NIP、`birth_confirm_pending: true` 及 `next_focus`，无需额外新增后端疫苗端点测试 |

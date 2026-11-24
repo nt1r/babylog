@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { differenceInCalendarDays, parseISO } from 'date-fns';
 import { RECORD_CATEGORY_META, type RecordCategoryMeta } from '@/lib/categories';
 import { apiRequest } from '@/lib/http';
 import { DASHBOARD_QUERY_KEY } from '@/lib/query-client';
@@ -8,9 +9,36 @@ import {
   getTemperatureSeverity,
   type SleepDailySummary,
 } from '@/lib/records';
-import { formatDurationMin, formatTimeSince, getBrowserTimeZone } from '@/lib/time';
+import {
+  formatDurationMin,
+  formatTimeSince,
+  getBrowserTimeZone,
+  getLocalDateKeyFromISO,
+  parseLocalDateKey,
+} from '@/lib/time';
+import {
+  formatDaysUntilLabel,
+  formatDoseShortTitle,
+  formatShortCnDate,
+  getAlertBadgeMeta,
+  type VaccineOverviewResponse,
+} from '@/lib/vaccines';
 
-export interface DashboardSummary {
+export interface DashboardGrowthSummary {
+  latest_weight_kg: number | null;
+  weight_recorded_at: string | null;
+  weight_is_birth: boolean;
+  latest_height_cm: number | null;
+  height_recorded_at: string | null;
+  height_is_birth: boolean;
+  latest_head_cm: number | null;
+  head_recorded_at: string | null;
+  teeth_count: number;
+  latest_tooth_note: string | null;
+  latest_tooth_at: string | null;
+}
+
+interface DashboardSummary {
   date: string;
   timezone: string;
   feeding: FeedingDailySummary & {
@@ -20,7 +48,11 @@ export interface DashboardSummary {
   health: {
     latest_temp_c: number | null;
     latest_temp_at: string | null;
+    today_medicine_count: number;
+    latest_medicine_name: string | null;
+    latest_medicine_at: string | null;
   };
+  growth: DashboardGrowthSummary;
   care: CareDailySummary & {
     last_diaper_at: string | null;
   };
@@ -45,7 +77,7 @@ export interface DashboardTrends {
 
 export type DashboardTrendTab = 'feeding' | 'sleep';
 
-export interface DashboardTrendView {
+interface DashboardTrendView {
   readonly daily: DashboardTrends['daily'];
   readonly isDirectBreastMode: boolean;
   readonly hasCurrentTrendData: boolean;
@@ -54,7 +86,7 @@ export interface DashboardTrendView {
   readonly hasSlotData: boolean;
 }
 
-export interface DashboardKpiCard {
+interface DashboardKpiCard {
   readonly id: RecordCategoryMeta['id'];
   readonly label: string;
   readonly value: string;
@@ -64,6 +96,40 @@ export interface DashboardKpiCard {
   readonly to: RecordCategoryMeta['url'];
   readonly alertTone: 'warning' | 'destructive' | null;
 }
+
+export interface DashboardVaccineAlertBanner {
+  readonly kind: 'birth_confirm' | 'scheduled_overdue' | 'overdue' | 'scheduled_soon' | 'due_soon';
+  readonly badgeLabel: string;
+  readonly badgeVariant: 'warning' | 'destructive' | 'info' | 'secondary';
+  readonly tone: 'primary' | 'info' | 'warning' | 'destructive';
+  readonly title: string;
+  readonly detail: string;
+  readonly countdown?: string;
+}
+
+export interface PostVaccineTempCue {
+  readonly doseNames: readonly string[];
+}
+
+interface DashboardVaccineCardFocus {
+  readonly showBirthConfirm: boolean;
+  readonly birthPendingDoses: readonly VaccineOverviewResponse['doses'][number][];
+  readonly focusDoses: readonly VaccineOverviewResponse['doses'][number][];
+  readonly nipPercent: number;
+}
+
+interface GrowthMetricTile {
+  readonly key: 'weight' | 'height' | 'head';
+  readonly shortLabel: string;
+  readonly fullLabel: string;
+  readonly value: string;
+  readonly isBirth: boolean;
+  readonly compactDate: string;
+  readonly detailDate: string;
+}
+
+const HEALTH_RECENT_TEMP_WINDOW_MS = 48 * 60 * 60 * 1000;
+const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000;
 
 /**
  * 纯函数推导近 N 日趋势图的展示模式（纯亲喂分钟数 vs 奶量 ml vs 睡眠小时）与空态判定。
@@ -91,7 +157,20 @@ export function selectTrendView(trends: DashboardTrends | undefined, tab: Dashbo
 }
 
 /**
- * 纯函数将今日汇总 KPI 转换为首页 4 张指标卡片的展示值、副标题与异常预警色调。
+ * 判断某 ISO 体温时间戳是否落在距今指定观测窗口内。
+ * 下限允许 -5 分钟（与后端写接口允许 +5 分钟客户端时钟漂移保持一致），避免刚保存记录因轻微时钟差落出窗口。
+ */
+function isWithinHours(isoStr: string | null, now: Date, windowMs: number): boolean {
+  if (!isoStr) return false;
+  const parsed = parseISO(isoStr);
+  if (Number.isNaN(parsed.getTime())) return false;
+  const diff = now.getTime() - parsed.getTime();
+  return diff <= windowMs && diff >= -CLOCK_SKEW_TOLERANCE_MS;
+}
+
+/**
+ * 纯函数将今日汇总 KPI 转换为首页 4 张指标卡片（顺序对齐侧栏：喂养 / 睡眠 / 护理 / 健康观察）。
+ * 健康观察优先级：近 48h 体温（发热自动预警色）→ 今日用药 → 历史体温（中性展示）→ 空态。
  */
 export function buildDashboardKpiCards(summary: DashboardSummary | undefined, now: Date): DashboardKpiCard[] {
   const feedingValue = summary
@@ -113,13 +192,6 @@ export function buildDashboardKpiCards(summary: DashboardSummary | undefined, no
     ? `小睡 ${summary.sleep.nap_count} 次 · 夜觉 ${formatDurationMin(summary.sleep.night_min)}`
     : '今日睡眠汇总';
 
-  const latestTemp = summary?.health.latest_temp_c ?? null;
-  const tempSeverity = latestTemp !== null ? getTemperatureSeverity(latestTemp) : null;
-  const healthValue = latestTemp !== null ? `${latestTemp.toFixed(1)} ℃` : '—';
-  const healthSub = summary?.health.latest_temp_at
-    ? `${tempSeverity?.label ?? ''} · ${formatTimeSince(summary.health.latest_temp_at, now)}`
-    : '暂无体温记录';
-
   const careValue = summary ? `${summary.care.total_count} 次` : '—';
   const careSub = summary
     ? summary.care.last_diaper_at
@@ -127,10 +199,37 @@ export function buildDashboardKpiCards(summary: DashboardSummary | undefined, no
       : `嘘嘘 ${summary.care.pee_count} · 便便 ${summary.care.poop_count}`
     : '今日护理汇总';
 
+  const latestTemp = summary?.health.latest_temp_c ?? null;
+  const latestTempAt = summary?.health.latest_temp_at ?? null;
+  const tempSeverity = latestTemp !== null ? getTemperatureSeverity(latestTemp) : null;
+  const isTempRecent = isWithinHours(latestTempAt, now, HEALTH_RECENT_TEMP_WINDOW_MS);
+  const todayMedCount = summary?.health.today_medicine_count ?? 0;
+  const latestMedName = summary?.health.latest_medicine_name ?? null;
+  const latestMedAt = summary?.health.latest_medicine_at ?? null;
+
+  let healthValue = '—';
+  let healthSub = '暂无健康记录';
+  let healthAlertTone: 'warning' | 'destructive' | null = null;
+
+  if (latestTemp !== null && isTempRecent) {
+    healthValue = `${latestTemp.toFixed(1)} ℃`;
+    const baseSub = `${tempSeverity?.label ?? ''} · ${formatTimeSince(latestTempAt, now)}`;
+    healthSub = todayMedCount > 0 ? `${baseSub} · 今日用药 ${todayMedCount} 次` : baseSub;
+    healthAlertTone = tempSeverity && tempSeverity.level !== 'normal' ? tempSeverity.level : null;
+  } else if (todayMedCount > 0) {
+    healthValue = `用药 ${todayMedCount} 次`;
+    healthSub = latestMedName
+      ? `${latestMedName} · ${formatTimeSince(latestMedAt, now)}`
+      : `今日已记录用药 ${todayMedCount} 次`;
+  } else if (latestTemp !== null) {
+    healthValue = `${latestTemp.toFixed(1)} ℃`;
+    healthSub = `${tempSeverity?.label ?? ''} · ${formatTimeSince(latestTempAt, now)}`;
+  }
+
   const feedingMeta = RECORD_CATEGORY_META.feeding;
   const sleepMeta = RECORD_CATEGORY_META.sleep;
-  const healthMeta = RECORD_CATEGORY_META.health;
   const careMeta = RECORD_CATEGORY_META.care;
+  const healthMeta = RECORD_CATEGORY_META.health;
 
   return [
     {
@@ -154,16 +253,6 @@ export function buildDashboardKpiCards(summary: DashboardSummary | undefined, no
       alertTone: null,
     },
     {
-      id: healthMeta.id,
-      label: '最近体温',
-      value: healthValue,
-      sub: healthSub,
-      iconClass: healthMeta.softClass,
-      icon: healthMeta.icon,
-      to: healthMeta.url,
-      alertTone: tempSeverity && tempSeverity.level !== 'normal' ? tempSeverity.level : null,
-    },
-    {
       id: careMeta.id,
       label: '今日护理',
       value: careValue,
@@ -173,24 +262,226 @@ export function buildDashboardKpiCards(summary: DashboardSummary | undefined, no
       to: careMeta.url,
       alertTone: null,
     },
+    {
+      id: healthMeta.id,
+      label: '健康观察',
+      value: healthValue,
+      sub: healthSub,
+      iconClass: healthMeta.softClass,
+      icon: healthMeta.icon,
+      to: healthMeta.url,
+      alertTone: healthAlertTone,
+    },
   ];
 }
 
-export async function fetchDashboardSummary(signal?: AbortSignal): Promise<DashboardSummary> {
+function buildFocusAlertBanner(
+  overview: VaccineOverviewResponse,
+  kind: 'scheduled_overdue' | 'overdue' | 'scheduled_soon' | 'due_soon',
+): DashboardVaccineAlertBanner | null {
+  const focus = overview.summary.next_focus;
+  if (!focus) return null;
+  const badgeMeta = getAlertBadgeMeta(kind);
+  const focusDoses = overview.doses.filter((d) => focus.dose_ids.includes(d.id));
+  const doseText = focusDoses.map((d) => formatDoseShortTitle(d)).join('、') || focus.age_label;
+  const dateText = `${formatShortCnDate(focus.target_date, overview.today)}${focus.scheduled_time ? ` ${focus.scheduled_time}` : ''}`;
+  const countdown = formatDaysUntilLabel(focus.days_until, kind.startsWith('scheduled') ? 'scheduled' : 'pending');
+  const clinicPart = focus.clinic_name ? ` · ${focus.clinic_name}` : '';
+  const tone =
+    kind === 'scheduled_overdue' || kind === 'overdue' ? 'destructive' : kind === 'scheduled_soon' ? 'info' : 'warning';
+
+  return {
+    kind,
+    badgeLabel: badgeMeta.label,
+    badgeVariant: badgeMeta.variant === 'success' ? 'secondary' : badgeMeta.variant,
+    tone,
+    title: `${dateText} · ${doseText}`,
+    detail: `${focus.age_label}${clinicPart}`,
+    countdown,
+  };
+}
+
+/** 判断疫苗总览当前是否存在优先于产院待确认的已预约紧急态（预约已过 / 7 天内即将接种）。 */
+function hasUrgentScheduledVaccine(overview: VaccineOverviewResponse): boolean {
+  const kind = overview.summary.next_focus?.kind;
+  return kind === 'scheduled_overdue' || kind === 'scheduled_soon';
+}
+
+/**
+ * 推导首页首屏常驻的疫苗提醒条（平稳期返回 null）：
+ * 已预约紧急态（预约已过 / 7 天内即将接种）优先于产院待确认，避免早产暂缓产院苗时遮蔽紧急预约；
+ * 其次提示产院出生疫苗待确认，再其次提示常规待补种或 14 天内可接种。
+ */
+export function selectDashboardVaccineAlert(
+  overview: VaccineOverviewResponse | undefined,
+): DashboardVaccineAlertBanner | null {
+  if (!overview) return null;
+  const { summary, doses } = overview;
+  const focus = summary.next_focus;
+
+  if (
+    focus &&
+    hasUrgentScheduledVaccine(overview) &&
+    (focus.kind === 'scheduled_overdue' || focus.kind === 'scheduled_soon')
+  ) {
+    return buildFocusAlertBanner(overview, focus.kind);
+  }
+
+  if (summary.birth_confirm_pending) {
+    const pendingBirth = doses.filter((d) => summary.birth_pending_dose_ids.includes(d.id));
+    const names = pendingBirth.map((d) => formatDoseShortTitle(d)).join('、');
+    return {
+      kind: 'birth_confirm',
+      badgeLabel: '待确认',
+      badgeVariant: 'warning',
+      tone: 'primary',
+      title: '产院出生疫苗待确认',
+      detail: names ? `请对照出院小结或接种证核对：${names}` : '请核对产院接种的乙肝第1剂与卡介苗记录',
+    };
+  }
+
+  if (focus && (focus.kind === 'overdue' || focus.kind === 'due_soon')) {
+    return buildFocusAlertBanner(overview, focus.kind);
+  }
+
+  return null;
+}
+
+/** 统一推导看板下方「疫苗接种计划」卡的展示模式、关联剂次及 NIP 进度，与顶部提醒条共享优先级规则。 */
+export function selectDashboardVaccineCardFocus(
+  overview: VaccineOverviewResponse | undefined,
+): DashboardVaccineCardFocus {
+  if (!overview) {
+    return { showBirthConfirm: false, birthPendingDoses: [], focusDoses: [], nipPercent: 0 };
+  }
+  const { summary, doses } = overview;
+  const showBirthConfirm = summary.birth_confirm_pending && !hasUrgentScheduledVaccine(overview);
+  const birthPendingDoses = showBirthConfirm ? doses.filter((d) => summary.birth_pending_dose_ids.includes(d.id)) : [];
+  const focus = summary.next_focus;
+  const focusDoses = focus ? doses.filter((d) => focus.dose_ids.includes(d.id)) : [];
+  const nipPercent = summary.nip_total > 0 ? Math.round((summary.nip_completed / summary.nip_total) * 100) : 0;
+  return { showBirthConfirm, birthPendingDoses, focusDoses, nipPercent };
+}
+
+/**
+ * 检测宝宝最近 48 小时（按本地自然日 0..2 天）内是否有刚接种完成的疫苗，
+ * 用于在看板健康观察区触发轻量测温联动提示。
+ */
+export function findRecentCompletedVaccineForTempCue(
+  overview: VaccineOverviewResponse | undefined,
+): PostVaccineTempCue | null {
+  if (!overview) return null;
+  const todayDate = parseLocalDateKey(overview.today);
+  if (!todayDate) return null;
+
+  const recent = overview.doses
+    .filter((d) => {
+      if (d.status !== 'completed' || !d.vaccinated_at) return false;
+      const vacDate = parseLocalDateKey(d.vaccinated_at);
+      if (!vacDate) return false;
+      const diffDays = differenceInCalendarDays(todayDate, vacDate);
+      return diffDays >= 0 && diffDays <= 2;
+    })
+    .sort((a, b) => (b.vaccinated_at ?? '').localeCompare(a.vaccinated_at ?? '') || b.id - a.id);
+
+  if (recent.length === 0 || !recent[0].vaccinated_at) return null;
+  const latestDate = recent[0].vaccinated_at;
+  const latestBatch = recent.filter((d) => d.vaccinated_at === latestDate);
+  return {
+    doseNames: latestBatch.map((d) => formatDoseShortTitle(d)),
+  };
+}
+
+/** 格式化生长概览指标的日期标注（兼容出生日期 YYYY-MM-DD 与记录 ISO 时间戳，复用统一短日期格式）。 */
+export function formatGrowthMetricDate(raw: string | null, referenceDateStr?: string): string {
+  if (!raw) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return formatShortCnDate(raw, referenceDateStr);
+  }
+  const dateKey = getLocalDateKeyFromISO(raw);
+  return dateKey ? formatShortCnDate(dateKey, referenceDateStr) : '';
+}
+
+/** 统一构造体重/身高/头围三项展示模型，供首页「最新生长发育」卡与 `/growth` 概览卡共享。 */
+export function buildGrowthMetricTiles(
+  growth: DashboardGrowthSummary | undefined,
+  referenceDateStr?: string,
+): readonly GrowthMetricTile[] {
+  const weightDate = growth?.weight_recorded_at
+    ? formatGrowthMetricDate(growth.weight_recorded_at, referenceDateStr)
+    : '';
+  const heightDate = growth?.height_recorded_at
+    ? formatGrowthMetricDate(growth.height_recorded_at, referenceDateStr)
+    : '';
+  const headDate = growth?.head_recorded_at ? formatGrowthMetricDate(growth.head_recorded_at, referenceDateStr) : '';
+
+  return [
+    {
+      key: 'weight',
+      shortLabel: '体重',
+      fullLabel: '最新体重',
+      value: growth?.latest_weight_kg != null ? `${growth.latest_weight_kg} kg` : '—',
+      isBirth: Boolean(growth?.weight_is_birth),
+      compactDate: weightDate || '未记录',
+      detailDate: weightDate ? `${growth?.weight_is_birth ? '出生记录 · ' : ''}${weightDate}` : '暂未记录',
+    },
+    {
+      key: 'height',
+      shortLabel: '身高',
+      fullLabel: '最新身高',
+      value: growth?.latest_height_cm != null ? `${growth.latest_height_cm} cm` : '—',
+      isBirth: Boolean(growth?.height_is_birth),
+      compactDate: heightDate || '未记录',
+      detailDate: heightDate ? `${growth?.height_is_birth ? '出生记录 · ' : ''}${heightDate}` : '暂未记录',
+    },
+    {
+      key: 'head',
+      shortLabel: '头围',
+      fullLabel: '最新头围',
+      value: growth?.latest_head_cm != null ? `${growth.latest_head_cm} cm` : '—',
+      isBirth: false,
+      compactDate: headDate || '未记录',
+      detailDate: headDate || '暂未记录',
+    },
+  ];
+}
+
+/**
+ * 统一格式化乳牙萌出副文案，供看板「最新生长发育」卡与 `/growth` 概览卡共享。
+ * 后端对 `teeth` 记录强制校验 `tooth_note` 非空，因此存在出牙记录时 `latest_tooth_note` 必有值。
+ */
+export function formatTeethSummaryText(
+  growth: DashboardGrowthSummary | undefined,
+  referenceDateStr: string | undefined,
+  emptyFallback: string,
+  prefix = '',
+): string {
+  if (!growth?.latest_tooth_note) return emptyFallback;
+  const datePart = growth.latest_tooth_at
+    ? ` · ${formatGrowthMetricDate(growth.latest_tooth_at, referenceDateStr)}`
+    : '';
+  return `${prefix}${growth.latest_tooth_note}${datePart}`;
+}
+
+async function fetchDashboardSummary(signal?: AbortSignal): Promise<DashboardSummary> {
   const tz = encodeURIComponent(getBrowserTimeZone());
   return apiRequest<DashboardSummary>(`/api/dashboard/summary?tz=${tz}`, { signal });
 }
 
-export async function fetchDashboardTrends(days = 7, signal?: AbortSignal): Promise<DashboardTrends> {
+async function fetchDashboardTrends(days = 7, signal?: AbortSignal): Promise<DashboardTrends> {
   const tz = encodeURIComponent(getBrowserTimeZone());
   return apiRequest<DashboardTrends>(`/api/dashboard/trends?days=${days}&tz=${tz}`, { signal });
 }
 
-export function useDashboardSummaryQuery() {
+interface DashboardSummaryQueryOptions {
+  readonly refetchInterval?: number | false;
+}
+
+export function useDashboardSummaryQuery(options?: DashboardSummaryQueryOptions) {
   return useQuery({
     queryKey: [...DASHBOARD_QUERY_KEY, 'summary'],
     queryFn: ({ signal }) => fetchDashboardSummary(signal),
-    refetchInterval: 60_000,
+    refetchInterval: options?.refetchInterval ?? 60_000,
   });
 }
 

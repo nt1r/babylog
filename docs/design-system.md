@@ -47,7 +47,7 @@
 
 ### 4. 插画专用色
 
-`--art-*`（`--art-meadow`、`--art-ink`、`--art-honey`、`--art-peach`、`--art-mint` 等）仅用于品牌插画、空状态与引导 SVG（[src/components/brand/little-moments.tsx](../src/components/brand/little-moments.tsx)），并同步维护亮/暗两套调色盘。
+`--art-*`（`--art-meadow`、`--art-ink`、`--art-honey`、`--art-peach`、`--art-mint` 等）仅用于品牌插画、空状态与引导 SVG（[src/components/brand/little-moments.tsx](../src/components/brand/little-moments.tsx)、[src/components/brand/time-scene-art.tsx](../src/components/brand/time-scene-art.tsx)），并同步维护亮/暗两套调色盘。
 
 ## 排版与数据规范
 
@@ -65,9 +65,9 @@
 - **桌面端主框架**：采用 `Inset Sidebar` + 吸顶 `AdminHeader`（侧栏折叠、面包屑、快捷「记一笔」、主题切换、用户菜单），支持 `Ctrl/Cmd + B` 折叠侧栏至图标态。
 - **移动端主框架**：顶部保留左侧抽屉导航（统一复用 [Drawer](../src/components/ui/drawer.tsx) 支持左滑手势关闭）与主题/账号入口，底部提供 5 槽位单手导航栏（核心 4 个入口 + 中央突出「快速记一笔」按钮，点击区不低于 `44px × 44px`）。
 - **页面与抽屉模板**：
-  - 看板页：使用 `@container/main` 响应式栅格（问候区 -> 一键直记条 -> 4 列 KPI 卡 -> `2:1` Recharts 图表 -> 四分类快捷录入）；
-  - 记录列表页：统一复用 [ListPageCard](../src/components/list-page-card.tsx) + `Tabs` 筛选 + [Empty](../src/components/ui/empty.tsx)；
-  - 录入/详情抽屉：统一复用 [EntityDrawer](../src/components/entity-drawer.tsx)（基于 `@base-ui/react/drawer`，桌面端右侧滑出、移动端底部滑出并支持嵌套抽屉堆栈）；
+  - 看板页：使用 `@container/main` 响应式栅格（绘本风时光问候与宝宝名片 Hero 卡 -> 条件浮现疫苗提醒条 -> 2×2/4 列一键直记快捷砖 -> 2×2/4 列今日概览 KPI 卡[含 48h 接种观察测温条] -> `2:1` Recharts 图表 -> 2 列「疫苗接种计划 + 最新生长发育」双卡）；
+  - 记录列表页：统一复用 [ListPageCard](../src/components/list-page-card.tsx) + `Tabs` 筛选 + [Empty](../src/components/ui/empty.tsx)；`/growth` 页额外包含顶部生长概览卡与纯日期历史列表；
+  - 录入/详情抽屉：统一复用 [EntityDrawer](../src/components/entity-drawer.tsx)（基于 `@base-ui/react/drawer`，桌面端右侧滑出、移动端底部滑出并支持嵌套抽屉堆栈），其中高频日常记录由 [QuickRecordDrawer](../src/components/quick-record-drawer.tsx) 承接，生长与长牙由纯日期 [GrowthRecordDrawer](../src/components/growth/growth-record-drawer.tsx) 承接；
   - 危险操作确认：统一复用 [DeleteConfirmDialog](../src/components/delete-confirm-dialog.tsx)。
 
 ## 样式组织与组件复用约定

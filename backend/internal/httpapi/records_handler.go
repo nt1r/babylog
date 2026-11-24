@@ -12,7 +12,7 @@ import (
 )
 
 // recordsHandler 处理喂养、睡眠、护理、健康四类记录的 CRUD 与智能默认值接口。
-// 路由组已挂载 requireBabyProfileMiddleware，因此各处理器直接从上下文获取已校验的 babyID。
+// 路由组已挂载 requireBabyProfileMiddleware（注入完整宝宝档案），各处理器直接从上下文读取 babyID。
 type recordsHandler struct {
 	recordStore *records.Store
 	logger      *slog.Logger

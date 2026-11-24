@@ -17,7 +17,6 @@ export interface RecordCategoryMeta {
   readonly icon: LucideIcon;
   readonly softClass: string;
   readonly activeClass: string;
-  readonly quickCardClass: string;
 }
 
 export const RECORD_CATEGORY_META: Record<RecordCategory, RecordCategoryMeta> = {
@@ -30,7 +29,6 @@ export const RECORD_CATEGORY_META: Record<RecordCategory, RecordCategoryMeta> = 
     icon: Milk,
     softClass: 'bg-feeding-soft text-feeding-soft-foreground',
     activeClass: 'border-feeding bg-feeding-soft text-feeding-soft-foreground',
-    quickCardClass: 'bg-feeding-soft/45 hover:border-feeding',
   },
   sleep: {
     id: 'sleep',
@@ -41,7 +39,6 @@ export const RECORD_CATEGORY_META: Record<RecordCategory, RecordCategoryMeta> = 
     icon: MoonStar,
     softClass: 'bg-sleep-soft text-sleep-soft-foreground',
     activeClass: 'border-sleep bg-sleep-soft text-sleep-soft-foreground',
-    quickCardClass: 'bg-sleep-soft/45 hover:border-sleep',
   },
   care: {
     id: 'care',
@@ -52,18 +49,16 @@ export const RECORD_CATEGORY_META: Record<RecordCategory, RecordCategoryMeta> = 
     icon: Baby,
     softClass: 'bg-care-soft text-care-soft-foreground',
     activeClass: 'border-care bg-care-soft text-care-soft-foreground',
-    quickCardClass: 'bg-care-soft/45 hover:border-care',
   },
   health: {
     id: 'health',
     shortLabel: '健康',
-    pageTitle: '健康与生长',
+    pageTitle: '健康记录',
     createLabel: '记一笔健康',
     url: '/health',
     icon: HeartPulse,
     softClass: 'bg-health-soft text-health-soft-foreground',
     activeClass: 'border-health bg-health-soft text-health-soft-foreground',
-    quickCardClass: 'bg-health-soft/45 hover:border-health',
   },
 };
 
@@ -108,9 +103,12 @@ export const HEALTH_SUBTYPE_LABELS = {
   teeth: '长牙',
 } as const;
 
-export const HEALTH_SUBTYPE_OPTIONS = [
+export const CLINICAL_HEALTH_SUBTYPE_OPTIONS = [
   { value: 'temperature', label: HEALTH_SUBTYPE_LABELS.temperature },
   { value: 'medicine', label: HEALTH_SUBTYPE_LABELS.medicine },
+] as const;
+
+export const GROWTH_SUBTYPE_OPTIONS = [
   { value: 'growth', label: HEALTH_SUBTYPE_LABELS.growth },
   { value: 'teeth', label: HEALTH_SUBTYPE_LABELS.teeth },
 ] as const;

@@ -1,23 +1,32 @@
 import type { LucideIcon } from 'lucide-react';
-import { BellRing, LayoutDashboard, Settings2, Syringe } from 'lucide-react';
-import { RECORD_CATEGORIES, RECORD_CATEGORY_META, type RecordCategory } from '@/lib/categories';
+import { BellRing, LayoutDashboard, Ruler, Settings2, Syringe } from 'lucide-react';
+import { RECORD_CATEGORY_META, type RecordCategory } from '@/lib/categories';
 
-export interface NavItem {
+interface NavItem {
   readonly id: string;
   readonly title: string;
   readonly shortTitle: string;
-  readonly url: '/dashboard' | '/vaccines' | '/feeding' | '/sleep' | '/care' | '/health' | '/reminders' | '/settings';
+  readonly url:
+    | '/dashboard'
+    | '/vaccines'
+    | '/feeding'
+    | '/sleep'
+    | '/care'
+    | '/health'
+    | '/growth'
+    | '/reminders'
+    | '/settings';
   readonly icon: LucideIcon;
   readonly category?: RecordCategory;
 }
 
-export interface NavGroup {
+interface NavGroup {
   readonly id: string;
   readonly label: string;
   readonly items: readonly NavItem[];
 }
 
-const DAILY_NAV_ITEMS: readonly NavItem[] = RECORD_CATEGORIES.map((category) => {
+function navItemFromCategory(category: RecordCategory): NavItem {
   const meta = RECORD_CATEGORY_META[category];
   return {
     id: meta.id,
@@ -27,7 +36,7 @@ const DAILY_NAV_ITEMS: readonly NavItem[] = RECORD_CATEGORIES.map((category) => 
     icon: meta.icon,
     category: meta.id,
   };
-});
+}
 
 export const NAV_GROUPS: readonly NavGroup[] = [
   {
@@ -45,19 +54,27 @@ export const NAV_GROUPS: readonly NavGroup[] = [
   },
   {
     id: 'daily',
-    label: '日常记录',
-    items: DAILY_NAV_ITEMS,
+    label: '日常照护',
+    items: [navItemFromCategory('feeding'), navItemFromCategory('sleep'), navItemFromCategory('care')],
   },
   {
-    id: 'plans',
-    label: '成长计划',
+    id: 'health_growth',
+    label: '健康与成长',
     items: [
+      navItemFromCategory('health'),
       {
         id: 'vaccines',
         title: '疫苗接种',
         shortTitle: '疫苗',
         url: '/vaccines',
         icon: Syringe,
+      },
+      {
+        id: 'growth',
+        title: '生长发育',
+        shortTitle: '生长',
+        url: '/growth',
+        icon: Ruler,
       },
     ],
   },
@@ -87,7 +104,7 @@ const HIDDEN_NAV_ITEMS: readonly NavItem[] = [
   },
 ];
 
-export const ALL_NAV_ITEMS: readonly NavItem[] = NAV_GROUPS.flatMap((group) => group.items);
+const ALL_NAV_ITEMS: readonly NavItem[] = NAV_GROUPS.flatMap((group) => group.items);
 
 // 移动端底部导航保留最高频的 4 个入口（搭配中央快速记一笔）
 const MOBILE_NAV_IDS = new Set(['dashboard', 'feeding', 'sleep', 'care']);

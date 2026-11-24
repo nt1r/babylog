@@ -16,6 +16,7 @@ import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as AppCareRouteImport } from './routes/_app/care'
 import { Route as AppDashboardRouteImport } from './routes/_app/dashboard'
 import { Route as AppFeedingRouteImport } from './routes/_app/feeding'
+import { Route as AppGrowthRouteImport } from './routes/_app/growth'
 import { Route as AppHealthRouteImport } from './routes/_app/health'
 import { Route as AppRemindersRouteImport } from './routes/_app/reminders'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
@@ -56,6 +57,11 @@ const AppFeedingRoute = AppFeedingRouteImport.update({
   path: '/feeding',
   getParentRoute: () => AppRoute,
 } as any)
+const AppGrowthRoute = AppGrowthRouteImport.update({
+  id: '/growth',
+  path: '/growth',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppHealthRoute = AppHealthRouteImport.update({
   id: '/health',
   path: '/health',
@@ -89,6 +95,7 @@ export interface FileRoutesByFullPath {
   '/care': typeof AppCareRoute
   '/dashboard': typeof AppDashboardRoute
   '/feeding': typeof AppFeedingRoute
+  '/growth': typeof AppGrowthRoute
   '/health': typeof AppHealthRoute
   '/reminders': typeof AppRemindersRoute
   '/settings': typeof AppSettingsRoute
@@ -102,6 +109,7 @@ export interface FileRoutesByTo {
   '/care': typeof AppCareRoute
   '/dashboard': typeof AppDashboardRoute
   '/feeding': typeof AppFeedingRoute
+  '/growth': typeof AppGrowthRoute
   '/health': typeof AppHealthRoute
   '/reminders': typeof AppRemindersRoute
   '/settings': typeof AppSettingsRoute
@@ -117,6 +125,7 @@ export interface FileRoutesById {
   '/_app/care': typeof AppCareRoute
   '/_app/dashboard': typeof AppDashboardRoute
   '/_app/feeding': typeof AppFeedingRoute
+  '/_app/growth': typeof AppGrowthRoute
   '/_app/health': typeof AppHealthRoute
   '/_app/reminders': typeof AppRemindersRoute
   '/_app/settings': typeof AppSettingsRoute
@@ -132,6 +141,7 @@ export interface FileRouteTypes {
     | '/care'
     | '/dashboard'
     | '/feeding'
+    | '/growth'
     | '/health'
     | '/reminders'
     | '/settings'
@@ -145,6 +155,7 @@ export interface FileRouteTypes {
     | '/care'
     | '/dashboard'
     | '/feeding'
+    | '/growth'
     | '/health'
     | '/reminders'
     | '/settings'
@@ -159,6 +170,7 @@ export interface FileRouteTypes {
     | '/_app/care'
     | '/_app/dashboard'
     | '/_app/feeding'
+    | '/_app/growth'
     | '/_app/health'
     | '/_app/reminders'
     | '/_app/settings'
@@ -224,6 +236,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppFeedingRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/growth': {
+      id: '/_app/growth'
+      path: '/growth'
+      fullPath: '/growth'
+      preLoaderRoute: typeof AppGrowthRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/health': {
       id: '/_app/health'
       path: '/health'
@@ -266,6 +285,7 @@ interface AppRouteChildren {
   AppCareRoute: typeof AppCareRoute
   AppDashboardRoute: typeof AppDashboardRoute
   AppFeedingRoute: typeof AppFeedingRoute
+  AppGrowthRoute: typeof AppGrowthRoute
   AppHealthRoute: typeof AppHealthRoute
   AppRemindersRoute: typeof AppRemindersRoute
   AppSettingsRoute: typeof AppSettingsRoute
@@ -277,6 +297,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppCareRoute: AppCareRoute,
   AppDashboardRoute: AppDashboardRoute,
   AppFeedingRoute: AppFeedingRoute,
+  AppGrowthRoute: AppGrowthRoute,
   AppHealthRoute: AppHealthRoute,
   AppRemindersRoute: AppRemindersRoute,
   AppSettingsRoute: AppSettingsRoute,

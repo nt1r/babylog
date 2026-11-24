@@ -56,7 +56,10 @@ if grep -rnE '<details\b' src/; then
   exit 1
 fi
 
-# 7. OpenSpec 规格严格校验
+# 7. 前端业务模块未使用导出（死导出）检查
+node scripts/check-unused-exports.mjs
+
+# 8. OpenSpec 主规格与活动变更严格校验
 if command -v openspec >/dev/null 2>&1; then
-  openspec validate --specs --strict
+  openspec validate --all --strict
 fi

@@ -45,7 +45,7 @@ function escapeIcsText(input: string): string {
  * 按 RFC 5545 §3.1 将单行按 UTF-8 字节上限 75 octets 折行（续行以单个空格开头），
  * 逐 Unicode 码点切分以避免截断多字节中文字符。
  */
-export function foldIcsLine(line: string, maxOctets = 75): string {
+function foldIcsLine(line: string, maxOctets = 75): string {
   if (utf8Encoder.encode(line).length <= maxOctets) {
     return line;
   }
@@ -170,7 +170,7 @@ function buildVaccineVisitIcs(input: VaccineCalendarEventInput, now: Date = new 
 }
 
 /** 统一组装单剂或多剂疫苗的日历事件描述（含接种前注意事项与风险提示），供导出与纯函数测试共用。 */
-export function buildVaccineVisitIcsFromDoses(params: ExportVaccineVisitParams, now: Date = new Date()): string {
+function buildVaccineVisitIcsFromDoses(params: ExportVaccineVisitParams, now: Date = new Date()): string {
   const titlePrefix = params.babyNickname ? `${params.babyNickname}疫苗接种` : '宝宝疫苗接种';
   const names = params.doses.map((d) => {
     const base = params.doses.length === 1 ? d.vaccine_name : d.short_name;

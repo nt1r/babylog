@@ -612,3 +612,100 @@ func TestDashboardTimezoneSummaryAndCrossMidnightTrends(t *testing.T) {
 		t.Errorf("unexpected slot counts: %+v", tr.Slots)
 	}
 }
+
+func TestHealthMultiSubtypeFilterAndDashboardGrowthSummary(t *testing.T) {
+	env := setupFullTestServer(t, func() time.Time { return fixedNow })
+	env.createDefaultBaby(t) // birth_date=2026-07-15, birth_weight_kg=3.35, birth_height_cm=50.2
+
+	// 1. 尚无手动生长记录时，看板摘要应使用出生体重/身高兜底
+	initResp := env.doJSON(t, http.MethodGet, "/api/dashboard/summary?tz=Asia/Shanghai", nil, true)
+	if initResp.StatusCode != http.StatusOK {
+		t.Fatalf("initial summary expected 200, got %d", initResp.StatusCode)
+	}
+	var initSum dashboard.SummaryResponse
+	if err := json.NewDecoder(initResp.Body).Decode(&initSum); err != nil {
+		t.Fatalf("decode initial summary: %v", err)
+	}
+	_ = initResp.Body.Close()
+	if initSum.Growth.LatestWeightKg == nil || *initSum.Growth.LatestWeightKg != 3.35 || !initSum.Growth.WeightIsBirth ||
+		initSum.Growth.LatestHeightCm == nil || *initSum.Growth.LatestHeightCm != 50.2 || !initSum.Growth.HeightIsBirth ||
+		initSum.Growth.LatestHeadCm != nil || initSum.Growth.TeethCount != 0 {
+		t.Fatalf("unexpected initial birth-fallback growth summary: %+v", initSum.Growth)
+	}
+
+	// 2. 写入体温、今日用药、昨日用药、仅含体重的生长记录及长牙记录
+	for _, p := range []map[string]any{
+		{"subtype": "temperature", "temperature_c": 37.8, "recorded_at": "2026-11-23T01:00:00Z"},
+		{"subtype": "medicine", "medicine_name": "维生素 D3", "medicine_dosage": "1 粒", "recorded_at": "2026-11-23T01:20:00Z"},
+		{"subtype": "medicine", "medicine_name": "昨日用药", "recorded_at": "2026-11-22T08:00:00Z"},
+		{"subtype": "growth", "weight_kg": 7.1, "recorded_at": "2026-11-20T04:00:00Z"},
+		{"subtype": "teeth", "tooth_note": "下中切牙（第 1 颗）", "recorded_at": "2026-11-21T04:00:00Z"},
+	} {
+		r := env.doJSON(t, http.MethodPost, "/api/records/health", p, true)
+		_ = r.Body.Close()
+		if r.StatusCode != http.StatusCreated {
+			t.Fatalf("create health %v expected 201, got %d", p["subtype"], r.StatusCode)
+		}
+	}
+
+	// 3. 验证逗号分隔多子类型列表筛选及非法参数拒绝
+	clinicalResp := env.doJSON(t, http.MethodGet, "/api/records/health?subtype=temperature,medicine&range=30d&tz=Asia/Shanghai", nil, true)
+	if clinicalResp.StatusCode != http.StatusOK {
+		t.Fatalf("clinical list expected 200, got %d", clinicalResp.StatusCode)
+	}
+	var clinicalList records.ListResult[records.HealthRecord, records.HealthDailySummary]
+	if err := json.NewDecoder(clinicalResp.Body).Decode(&clinicalList); err != nil {
+		t.Fatalf("decode clinical list: %v", err)
+	}
+	_ = clinicalResp.Body.Close()
+	if clinicalList.Total != 3 || clinicalList.DailySummaries["2026-11-23"].TotalCount != 2 ||
+		clinicalList.DailySummaries["2026-11-23"].MedicineCount != 1 || clinicalList.DailySummaries["2026-11-23"].GrowthCount != 0 {
+		t.Fatalf("unexpected clinical list: total=%d sum=%+v", clinicalList.Total, clinicalList.DailySummaries)
+	}
+
+	growthResp := env.doJSON(t, http.MethodGet, "/api/records/health?subtype=growth,teeth&range=all&tz=Asia/Shanghai", nil, true)
+	if growthResp.StatusCode != http.StatusOK {
+		t.Fatalf("growth list expected 200, got %d", growthResp.StatusCode)
+	}
+	var growthList records.ListResult[records.HealthRecord, records.HealthDailySummary]
+	if err := json.NewDecoder(growthResp.Body).Decode(&growthList); err != nil {
+		t.Fatalf("decode growth list: %v", err)
+	}
+	_ = growthResp.Body.Close()
+	if growthList.Total != 2 || len(growthList.Items) != 2 {
+		t.Fatalf("expected 2 growth/teeth records, got total=%d len=%d", growthList.Total, len(growthList.Items))
+	}
+
+	for _, bad := range []string{"growth,bad", "growth,"} {
+		badResp := env.doJSON(t, http.MethodGet, "/api/records/health?subtype="+bad, nil, true)
+		if badResp.StatusCode != http.StatusBadRequest {
+			_ = badResp.Body.Close()
+			t.Errorf("subtype=%q expected 400, got %d", bad, badResp.StatusCode)
+			continue
+		}
+		errBody := decodeJSONMap(t, badResp)
+		errMsg, _ := errBody["error"].(string)
+		if !strings.Contains(errMsg, "子类型") {
+			t.Errorf("subtype=%q expected Chinese error message, got %#v", bad, errBody)
+		}
+	}
+
+	// 4. 再次读取看板摘要：体重切换为手动测量值，身高保持出生兜底，今日用药与出牙数准确
+	afterResp := env.doJSON(t, http.MethodGet, "/api/dashboard/summary?tz=Asia/Shanghai", nil, true)
+	if afterResp.StatusCode != http.StatusOK {
+		t.Fatalf("after summary expected 200, got %d", afterResp.StatusCode)
+	}
+	var afterSum dashboard.SummaryResponse
+	if err := json.NewDecoder(afterResp.Body).Decode(&afterSum); err != nil {
+		t.Fatalf("decode after summary: %v", err)
+	}
+	_ = afterResp.Body.Close()
+	if afterSum.Health.TodayMedicineCount != 1 || afterSum.Health.LatestMedicineName == nil || *afterSum.Health.LatestMedicineName != "维生素 D3" {
+		t.Fatalf("unexpected health medicine summary: %+v", afterSum.Health)
+	}
+	if afterSum.Growth.LatestWeightKg == nil || *afterSum.Growth.LatestWeightKg != 7.1 || afterSum.Growth.WeightIsBirth ||
+		afterSum.Growth.LatestHeightCm == nil || *afterSum.Growth.LatestHeightCm != 50.2 || !afterSum.Growth.HeightIsBirth ||
+		afterSum.Growth.TeethCount != 1 || afterSum.Growth.LatestToothNote == nil || *afterSum.Growth.LatestToothNote != "下中切牙（第 1 颗）" {
+		t.Fatalf("unexpected after growth summary: %+v", afterSum.Growth)
+	}
+}

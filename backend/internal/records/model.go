@@ -262,7 +262,7 @@ type SmartDefaults struct {
 	Care    CareDefaults    `json:"care"`
 }
 
-// WindowOptions 控制 ReadWindow 是否包含健康记录，避免看板今日汇总轮询多打一次无用查询。
+// WindowOptions 控制 ReadWindow 是否一并加载健康记录（看板今日用药与多日节律均开启，按需查询可关闭）。
 type WindowOptions struct {
 	IncludeHealth bool
 }
@@ -276,10 +276,24 @@ type WindowSnapshot struct {
 	Healths  []HealthRecord
 }
 
-// LatestHighlights 汇总跨时间窗口的最近照护标记（上次喂养、上次换尿布、最近一次体温）。
+// GrowthHighlights 汇总跨时间窗口独立解析的最新体格测量值与累计出牙记录数。
+type GrowthHighlights struct {
+	LatestWeightKg   *float64
+	WeightRecordedAt *string
+	LatestHeightCm   *float64
+	HeightRecordedAt *string
+	LatestHeadCm     *float64
+	HeadRecordedAt   *string
+	TeethCount       int
+	LatestToothNote  *string
+	LatestToothAt    *string
+}
+
+// LatestHighlights 汇总跨时间窗口的最近照护标记（上次喂养、上次换尿布、最近一次体温及生长发育最新值）。
 type LatestHighlights struct {
 	LastFeedingAt *string
 	LastDiaperAt  *string
 	LatestTempC   *float64
 	LatestTempAt  *string
+	Growth        GrowthHighlights
 }

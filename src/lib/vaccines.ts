@@ -410,11 +410,12 @@ async function fetchVaccineCatalog(signal?: AbortSignal): Promise<VaccineCatalog
   return apiRequest<VaccineCatalogResponse>('/api/vaccines/catalog', { signal });
 }
 
-export function useVaccinesOverviewQuery(enabled = true) {
+export function useVaccinesOverviewQuery(enabled = true, staleTime?: number) {
   return useQuery({
     queryKey: VACCINES_QUERY_KEY,
     queryFn: ({ signal }) => fetchVaccinesOverview(signal),
     enabled,
+    ...(staleTime !== undefined ? { staleTime } : {}),
   });
 }
 

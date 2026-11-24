@@ -34,7 +34,7 @@ export function initPwaInstallListener() {
 }
 
 /** 判断当前是否正以独立 PWA 模式（主屏幕全屏）运行。 */
-export function isStandaloneMode(): boolean {
+function isStandaloneMode(): boolean {
   if (typeof window === 'undefined') return false;
   if (window.matchMedia('(display-mode: standalone)').matches) return true;
   const nav = window.navigator as Navigator & { standalone?: boolean };
@@ -42,7 +42,7 @@ export function isStandaloneMode(): boolean {
 }
 
 /** 判断当前是否为 iOS / iPadOS 设备（用于展示 Safari「添加到主屏幕」引导）。 */
-export function isIOSDevice(): boolean {
+function isIOSDevice(): boolean {
   if (typeof window === 'undefined') return false;
   const ua = window.navigator.userAgent;
   if (/iPhone|iPad|iPod/i.test(ua)) return true;

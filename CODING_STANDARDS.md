@@ -10,6 +10,7 @@
 - 响应式宽度与布局断点与 `useIsMobile`（`768px` = `md:`）保持一致；含内部滚动区的底部 `Drawer` 在滚动容器标注 `data-base-ui-swipe-ignore`，浮层与抽屉（`Popover`/`Drawer`）在 `disabled` 时仅拦截打开、始终放行关闭并在转为 `disabled` 时自动收起。
 - 亮/暗双色语义变量在 `src/styles/tokens.css` 中成对维护：亮色覆写限定在 `:root:not(.dark):not([data-theme="dark"]), .light, [data-theme="light"]`，暗色覆写限定在 `.dark, [data-theme="dark"]`。
 - 所有无障碍文案（`Spinner`、抽屉/弹窗关闭按钮、面包屑、步进按钮的 `aria-label`）使用中文；按钮内的 `Spinner` 标注 `aria-hidden="true" role="presentation"`，避免嵌套 live region 或中英文混播。
+- 375px 窄屏下关键提醒与医疗/安全提示文案允许自然换行或 `line-clamp-2`，避免单行 `truncate` 截断；3 列及以上数值磁贴须核对单格可用宽度与 `whitespace-nowrap`，防止带徽章或小数数值异常折行。
 
 ### 状态边界、分页与异步交互
 - TanStack Query 负责服务端数据查询与缓存，Zustand 负责认证会话、主题偏好与抽屉意图；全局请求层收到非认证接口 `401` 时统一清空认证状态与 Query 缓存并退回登录页。
@@ -45,7 +46,7 @@
 - **同步维护**：代码变更时同步新增、更新或清理对应注释，不保留注释掉的废弃代码。
 
 ## 前后端契约与审查核对
-- 修改或精简请求/响应字段前，同步核对三处事实来源：Go `json` tag、前端 `src/lib/*.ts` 类型定义与 `openspec/specs/*.md`；未归档的活动 `openspec/changes/` 在迭代调整交互或接口时须同轮同步 `proposal.md` / `specs/` / `design.md` / `test-plan.md` / `tasks.md`。
+- 修改或精简请求/响应字段前，同步核对三处事实来源：Go `json` tag、前端 `src/lib/*.ts` 类型定义与 `openspec/specs/*.md`。
 - Go 后端以 `*string` 表达三态语义（`nil` 保留原值、`""` 显式清空）时，前端留空输入默认序列化为 `undefined`，仅在明确需要清空旧值时发送空字符串。
 - 确认任何未消费字段或接口前，先检索全仓页面、导航、抽屉与 OpenSpec 规格，确保不破坏既有契约或引发回归。
-- 收口重构后的死导出与跨模块横向引用，仅导出模块对外接口所需的符号。
+- 保持模块边界清晰，避免跨业务模块横向耦合引用（前端未引用死导出已由 `pnpm lint` 自动门禁拦截）。

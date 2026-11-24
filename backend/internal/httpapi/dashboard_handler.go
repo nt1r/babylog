@@ -26,9 +26,9 @@ func newDashboardHandler(svc *dashboard.Service, logger *slog.Logger) *dashboard
 	}
 }
 
-// getSummary 处理 GET /api/dashboard/summary，按指定 IANA 时区返回今日 KPI 与距上次照护时间戳。
+// getSummary 处理 GET /api/dashboard/summary，按指定 IANA 时区返回今日 KPI、健康观察与生长概览。
 func (h *dashboardHandler) getSummary(c *gin.Context) {
-	babyID, ok := mustBabyID(c)
+	profile, ok := mustBabyProfile(c)
 	if !ok {
 		return
 	}
@@ -36,7 +36,12 @@ func (h *dashboardHandler) getSummary(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res, err := h.svc.GetSummary(c.Request.Context(), babyID, loc)
+	baseline := &dashboard.BirthBaseline{
+		BirthDate: profile.BirthDate,
+		WeightKg:  profile.BirthWeightKg,
+		HeightCm:  profile.BirthHeightCm,
+	}
+	res, err := h.svc.GetSummary(c.Request.Context(), profile.ID, loc, baseline)
 	if err != nil {
 		h.logger.Error("dashboard getSummary failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
