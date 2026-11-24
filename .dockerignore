@@ -14,6 +14,7 @@ node_modules
 /docs
 /openspec
 /scripts
+/backend/data
 /backend/tmp
 /backend/internal/webui/dist/*
 !/backend/internal/webui/dist/.gitkeep
