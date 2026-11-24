@@ -2,9 +2,13 @@ node_modules/
 /dist/
 /bin/
 /data/
+backend/data/
 backend/tmp/
 backend/internal/webui/dist/*
 !backend/internal/webui/dist/.gitkeep
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
 .secrets/
 .env
 .env.*
