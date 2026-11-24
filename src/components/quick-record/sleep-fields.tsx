@@ -130,7 +130,7 @@ export function SleepFields({
         />
       </div>
 
-      <div className="flex items-center justify-between rounded-xl border border-border/70 bg-muted/30 px-3.5 py-2.5 text-xs">
+      <div className="flex items-center justify-between rounded-xl border border-border/70 bg-muted/30 px-3.5 py-2.5 text-[13px]">
         <span className="text-muted-foreground">本次时长</span>
         <span className="font-semibold text-foreground tabular-nums">
           {durationMin > 0 ? formatDurationMin(durationMin) : '请调整入睡与醒来时间'}

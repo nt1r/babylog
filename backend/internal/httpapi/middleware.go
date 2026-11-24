@@ -14,7 +14,10 @@ import (
 	"github.com/nt1r/babylog/backend/internal/baby"
 )
 
-const ctxBabyIDKey = "babyID"
+const (
+	ctxBabyIDKey        = "babyID"
+	ctxBabyBirthDateKey = "babyBirthDate"
+)
 
 // requireAuthMiddleware 校验有效管理员会话，未认证或会话已过期时统一返回 401 中文 JSON。
 // Gin 中间件通过 c.AbortWithStatusJSON 终止后续调用链并写回响应，校验通过则调用 c.Next() 放行。
@@ -38,8 +41,8 @@ func requireAuthMiddleware(store *auth.Store, logger *slog.Logger) gin.HandlerFu
 	}
 }
 
-// requireBabyProfileMiddleware 校验单宝宝档案已完成建档，并将 babyID 注入请求上下文。
-// 对依赖宝宝档案的记录与看板接口而言，未建档属于前置状态冲突，因此统一返回 409 Conflict。
+// requireBabyProfileMiddleware 校验单宝宝档案已完成建档，并将 babyID 与 birthDate 注入请求上下文。
+// 对依赖宝宝档案的记录、看板与疫苗接口而言，未建档属于前置状态冲突，因此统一返回 409 Conflict。
 func requireBabyProfileMiddleware(babyStore *baby.Store, logger *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		profile, err := babyStore.GetFirst(c.Request.Context())
@@ -53,6 +56,7 @@ func requireBabyProfileMiddleware(babyStore *baby.Store, logger *slog.Logger) gi
 			return
 		}
 		c.Set(ctxBabyIDKey, profile.ID)
+		c.Set(ctxBabyBirthDateKey, profile.BirthDate)
 		c.Next()
 	}
 }
@@ -71,6 +75,22 @@ func mustBabyID(c *gin.Context) (int64, bool) {
 		return 0, false
 	}
 	return babyID, true
+}
+
+// mustBabyBirthDate 从 Gin 上下文读取已通过 requireBabyProfileMiddleware 校验的宝宝出生日期。
+// c.Get 返回类型为 any，需通过 Go 类型断言 `raw.(string)` 安全还原，避免直接转换触发 panic。
+func mustBabyBirthDate(c *gin.Context) (string, bool) {
+	raw, ok := c.Get(ctxBabyBirthDateKey)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
+		return "", false
+	}
+	birthDate, ok := raw.(string)
+	if !ok || birthDate == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
+		return "", false
+	}
+	return birthDate, true
 }
 
 // apiSecurityMiddleware 为所有 /api/* 响应强制禁用缓存，并对写操作执行 Same-Origin 防护。

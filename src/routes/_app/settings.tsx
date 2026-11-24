@@ -332,7 +332,7 @@ function SettingsPage() {
           <CardContent>
             {canPromptInstall ? (
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/80 bg-muted/30 p-4">
-                <p className="text-xs leading-relaxed text-muted-foreground">
+                <p className="text-sm leading-relaxed text-muted-foreground">
                   将 BabyLog 添加到桌面，点击图标即可快速记录。
                 </p>
                 <Button
@@ -353,7 +353,7 @@ function SettingsPage() {
                 </Button>
               </div>
             ) : isIOS ? (
-              <div className="space-y-2 rounded-2xl border border-border/80 bg-muted/30 p-4 text-xs leading-relaxed text-muted-foreground">
+              <div className="space-y-2 rounded-2xl border border-border/80 bg-muted/30 p-4 text-sm leading-relaxed text-muted-foreground">
                 <p className="font-medium text-foreground">在 Safari 添加到主屏幕：</p>
                 <ol className="list-decimal space-y-1 pl-4">
                   <li>
@@ -371,7 +371,7 @@ function SettingsPage() {
                 </ol>
               </div>
             ) : (
-              <p className="rounded-2xl border border-border/80 bg-muted/30 p-4 text-xs leading-relaxed text-muted-foreground">
+              <p className="rounded-2xl border border-border/80 bg-muted/30 p-4 text-sm leading-relaxed text-muted-foreground">
                 在手机浏览器中选择「分享 → 添加到主屏幕」，或在桌面浏览器地址栏点击安装图标，即可像独立应用一样打开。
               </p>
             )}

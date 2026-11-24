@@ -3,6 +3,8 @@ import { QueryClient } from '@tanstack/react-query';
 export const RECORDS_QUERY_KEY = ['records'] as const;
 export const RECORD_DEFAULTS_QUERY_KEY = ['record-defaults'] as const;
 export const DASHBOARD_QUERY_KEY = ['dashboard'] as const;
+export const VACCINES_QUERY_KEY = ['vaccines'] as const;
+export const VACCINE_CATALOG_QUERY_KEY = ['vaccine-catalog'] as const;
 
 export const queryClient = new QueryClient({
   defaultOptions: {

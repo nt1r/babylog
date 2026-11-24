@@ -1,0 +1,551 @@
+import { AlertTriangle, HeartPulse, SaveIcon, Syringe, Trash2 } from 'lucide-react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
+import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog';
+import { EntityDrawer } from '@/components/entity-drawer';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
+import { Separator } from '@/components/ui/separator';
+import { Spinner } from '@/components/ui/spinner';
+import { toast } from '@/components/ui/toast';
+import { ClinicInputField } from '@/components/vaccines/clinic-input-field';
+import { VaccineKnowledgeSection } from '@/components/vaccines/vaccine-knowledge-section';
+import { cn } from '@/lib/utils';
+import {
+  formatDoseOrderLabel,
+  formatShortCnDate,
+  getAlertBadgeMeta,
+  useDeleteVaccineDoseMutation,
+  useDeleteVaccineTemplateMutation,
+  useUpdateVaccineDoseMutation,
+  VACCINE_REACTION_PRESETS,
+  VACCINE_SITE_PRESETS,
+  type VaccineDose,
+  type VaccineStatus,
+} from '@/lib/vaccines';
+import { useQuickRecordStore } from '@/stores/quick-record';
+
+interface VaccineDetailDrawerProps {
+  readonly open: boolean;
+  readonly dose: VaccineDose | null;
+  readonly birthDate: string;
+  readonly today: string;
+  readonly recentClinics: readonly string[];
+  readonly onOpenChange: (open: boolean) => void;
+}
+
+const STATUS_OPTIONS: ReadonlyArray<{ value: VaccineStatus; label: string }> = [
+  { value: 'pending', label: '待接种' },
+  { value: 'scheduled', label: '已预约' },
+  { value: 'completed', label: '已接种' },
+];
+
+/** 单剂疫苗详情抽屉：支持三态流转（待接种/已预约/已接种）、接种后快捷记体温及只读科普风险区。 */
+export function VaccineDetailDrawer({
+  open,
+  dose,
+  birthDate,
+  today,
+  recentClinics,
+  onOpenChange,
+}: VaccineDetailDrawerProps) {
+  const updateMutation = useUpdateVaccineDoseMutation();
+  const deleteMutation = useDeleteVaccineDoseMutation();
+  const deleteTemplateMutation = useDeleteVaccineTemplateMutation();
+  const openHealthQuickCreate = useQuickRecordStore((state) => state.openCreate);
+
+  // 关闭动画期间保留上一个 dose 引用，防止抽屉滑出瞬间内容闪烁。
+  const [renderedDose, setRenderedDose] = useState<VaccineDose | null>(dose);
+  const [status, setStatus] = useState<VaccineStatus>('pending');
+  const [ageMonths, setAgeMonths] = useState('0');
+  // plannedDate 仅保存用户手动覆盖值；为空时输入框回显 default_due_date，提交仍传 null 以保持出生日期变更联动。
+  const [plannedDate, setPlannedDate] = useState('');
+  const [scheduledDate, setScheduledDate] = useState('');
+  const [scheduledTime, setScheduledTime] = useState('');
+  const [clinicName, setClinicName] = useState('');
+  const [vaccinatedAt, setVaccinatedAt] = useState('');
+  const [site, setSite] = useState('');
+  const [manufacturer, setManufacturer] = useState('');
+  const [batchNo, setBatchNo] = useState('');
+  const [reaction, setReaction] = useState('');
+  const [note, setNote] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
+  const [deleteMode, setDeleteMode] = useState<'dose' | 'template' | null>(null);
+
+  // 仅在抽屉打开或切换不同剂次 ID 时重置表单，防止窗口重连触发后台 refetch 覆盖未保存编辑。
+  const latestDoseRef = useRef(dose);
+  latestDoseRef.current = dose;
+  const todayRef = useRef(today);
+  todayRef.current = today;
+  const doseId = dose?.id ?? null;
+
+  useEffect(() => {
+    const currentDose = latestDoseRef.current;
+    if (!open || !currentDose) return;
+    const currentToday = todayRef.current;
+    setRenderedDose(currentDose);
+    setStatus(currentDose.status);
+    setAgeMonths(String(currentDose.age_months));
+    setPlannedDate(currentDose.planned_date ?? '');
+    setScheduledDate(currentDose.scheduled_date ?? currentDose.effective_date);
+    setScheduledTime(currentDose.scheduled_time ?? '');
+    setClinicName(currentDose.clinic_name);
+    let defaultVacDate = currentToday;
+    if (currentDose.vaccinated_at) {
+      defaultVacDate = currentDose.vaccinated_at;
+    } else if (currentDose.effective_date <= currentToday) {
+      defaultVacDate = currentDose.effective_date;
+    }
+    setVaccinatedAt(defaultVacDate);
+    setSite(currentDose.site || (currentDose.route.includes('口服') ? '口服' : ''));
+    setManufacturer(currentDose.manufacturer);
+    setBatchNo(currentDose.batch_no);
+    setReaction(currentDose.reaction);
+    setNote(currentDose.note);
+    setFormError(null);
+    setDeleteMode(null);
+  }, [open, doseId]);
+
+  const busy = updateMutation.isPending || deleteMutation.isPending || deleteTemplateMutation.isPending;
+
+  // 提交或删除进行中禁止关闭抽屉，避免异步失败错误写入已关闭容器而丢失反馈。
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen && busy) return;
+    onOpenChange(nextOpen);
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!renderedDose || busy) return;
+
+    if (status === 'scheduled' && !scheduledDate) {
+      setFormError('登记预约时请选择预约日期');
+      return;
+    }
+    if (status === 'completed') {
+      if (!vaccinatedAt) {
+        setFormError('标记已接种时请选择实际接种日期');
+        return;
+      }
+      if (vaccinatedAt > today) {
+        setFormError('实际接种日期不能晚于今天');
+        return;
+      }
+      if (birthDate && vaccinatedAt < birthDate) {
+        setFormError('实际接种日期不能早于宝宝出生日期');
+        return;
+      }
+    }
+
+    // 适龄月龄输入框仅在 pending 态渲染，非 pending 态不校验也不下发，避免隐藏字段拦阻提交或覆盖模板阶段文案。
+    let parsedAgeMonths: number | undefined;
+    if (status === 'pending' && renderedDose.deletable) {
+      const trimmedAge = ageMonths.trim();
+      if (!/^\d+$/.test(trimmedAge)) {
+        setFormError('适龄月龄请填写 0 至 144 之间的整数');
+        return;
+      }
+      const n = Number.parseInt(trimmedAge, 10);
+      if (n < 0 || n > 144) {
+        setFormError('适龄月龄应在 0 至 144 个月之间');
+        return;
+      }
+      parsedAgeMonths = n;
+    }
+
+    setFormError(null);
+    try {
+      await updateMutation.mutateAsync({
+        id: renderedDose.id,
+        input: {
+          status,
+          age_months: parsedAgeMonths,
+          planned_date: plannedDate.trim() || null,
+          scheduled_date: status === 'scheduled' ? scheduledDate : null,
+          scheduled_time: status === 'scheduled' ? scheduledTime.trim() || null : null,
+          clinic_name: status === 'pending' ? '' : clinicName.trim(),
+          vaccinated_at: status === 'completed' ? vaccinatedAt : null,
+          site: status === 'completed' ? site.trim() : '',
+          manufacturer: status === 'completed' ? manufacturer.trim() : '',
+          batch_no: status === 'completed' ? batchNo.trim() : '',
+          reaction: status === 'completed' ? reaction.trim() : '',
+          note: note.trim(),
+        },
+      });
+      toast.success(
+        status === 'completed' ? '接种记录已保存' : status === 'scheduled' ? '疫苗预约已登记' : '疫苗计划已更新',
+      );
+      onOpenChange(false);
+    } catch (cause) {
+      setFormError(cause instanceof Error ? cause.message : '保存失败，请稍后重试');
+    }
+  }
+
+  async function handleConfirmDelete() {
+    if (!renderedDose || !deleteMode || busy) return;
+    try {
+      if (deleteMode === 'template' && renderedDose.template_code) {
+        await deleteTemplateMutation.mutateAsync(renderedDose.template_code);
+        toast.success(`已将「${renderedDose.vaccine_name}」整套移出计划`);
+      } else {
+        await deleteMutation.mutateAsync(renderedDose.id);
+        toast.success('已删除本剂，后续剂次序号已自动顺延');
+      }
+      setDeleteMode(null);
+      onOpenChange(false);
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : '删除失败，请稍后重试');
+    }
+  }
+
+  const active = renderedDose;
+  const badgeMeta = active ? getAlertBadgeMeta(active.alert_state) : null;
+  const isOptionalTemplate = Boolean(active?.template_code && active.category === 'optional');
+
+  return (
+    <>
+      <EntityDrawer
+        open={open}
+        onOpenChange={handleOpenChange}
+        title={active ? active.vaccine_name : '疫苗详情'}
+        description={
+          active
+            ? `${active.age_label} · ${formatDoseOrderLabel(active)}${active.route ? ` · ${active.route}` : ''}`
+            : undefined
+        }
+        icon={<Syringe className="size-4.5 text-health" strokeWidth={1.8} />}
+        badge={active && badgeMeta ? <Badge variant={badgeMeta.variant}>{badgeMeta.label}</Badge> : undefined}
+        footer={
+          active ? (
+            <div className="flex w-full flex-wrap items-center justify-between gap-2">
+              {active.deletable ? (
+                <div className="flex flex-wrap items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy}
+                    className="px-2 text-destructive hover:bg-destructive-soft hover:text-destructive"
+                    onClick={() => setDeleteMode('dose')}
+                  >
+                    <Trash2 className="size-3.5" />
+                    删除本剂
+                  </Button>
+                  {isOptionalTemplate && active.total_doses > 1 ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy}
+                      className="px-2 text-muted-foreground hover:bg-destructive-soft hover:text-destructive"
+                      onClick={() => setDeleteMode('template')}
+                    >
+                      移出整套
+                    </Button>
+                  ) : null}
+                </div>
+              ) : (
+                <span className="text-xs text-muted-foreground">国家免疫规划基础项</span>
+              )}
+
+              <div className="flex items-center gap-2">
+                <Button type="button" variant="outline" disabled={busy} onClick={() => handleOpenChange(false)}>
+                  取消
+                </Button>
+                <Button type="submit" form="vaccine-dose-form" disabled={busy}>
+                  {updateMutation.isPending ? (
+                    <Spinner className="size-4" aria-hidden="true" role="presentation" />
+                  ) : (
+                    <SaveIcon className="size-4" />
+                  )}
+                  {updateMutation.isPending ? '保存中…' : '保存更改'}
+                </Button>
+              </div>
+            </div>
+          ) : null
+        }
+      >
+        {active ? (
+          <div className="flex flex-col gap-5">
+            <form id="vaccine-dose-form" onSubmit={handleSubmit} noValidate className="space-y-4">
+              <div className="space-y-2">
+                <p className="text-[13px] font-medium text-foreground">接种状态</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {STATUS_OPTIONS.map((opt) => {
+                    const selected = status === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => {
+                          setStatus(opt.value);
+                          setFormError(null);
+                        }}
+                        className={cn(
+                          'flex h-10 cursor-pointer items-center justify-center rounded-xl border px-3 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                          selected
+                            ? 'border-primary bg-accent text-accent-foreground'
+                            : 'border-border/80 bg-background text-muted-foreground hover:bg-muted/50',
+                        )}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {formError ? (
+                <Alert variant="destructive">
+                  <AlertTriangle className="size-4" />
+                  <AlertDescription>{formError}</AlertDescription>
+                </Alert>
+              ) : null}
+
+              {status === 'pending' ? (
+                <FieldGroup className="space-y-3">
+                  {active.deletable ? (
+                    <Field>
+                      <FieldLabel htmlFor="vac-age-months">适龄月龄</FieldLabel>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          id="vac-age-months"
+                          type="number"
+                          inputMode="numeric"
+                          min="0"
+                          max="144"
+                          value={ageMonths}
+                          className="w-28 tabular-nums"
+                          onChange={(e) => setAgeMonths(e.target.value)}
+                        />
+                        <span className="text-xs text-muted-foreground">月龄（修改后自动更新默认推算日）</span>
+                      </div>
+                    </Field>
+                  ) : null}
+
+                  <Field>
+                    <FieldLabel htmlFor="vac-planned-date">预计日期</FieldLabel>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="vac-planned-date"
+                        type="date"
+                        value={plannedDate || active.default_due_date}
+                        className="tabular-nums"
+                        onChange={(e) => setPlannedDate(e.target.value)}
+                      />
+                      {plannedDate ? (
+                        <Button type="button" variant="outline" size="sm" onClick={() => setPlannedDate('')}>
+                          恢复默认
+                        </Button>
+                      ) : null}
+                    </div>
+                    <p className="text-xs text-muted-foreground tabular-nums">
+                      默认推算 {formatShortCnDate(active.default_due_date, today)}
+                    </p>
+                  </Field>
+                </FieldGroup>
+              ) : null}
+
+              {status === 'scheduled' ? (
+                <FieldGroup className="space-y-3">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <Field>
+                      <FieldLabel htmlFor="vac-sched-date">预约日期</FieldLabel>
+                      <Input
+                        id="vac-sched-date"
+                        type="date"
+                        value={scheduledDate}
+                        className="tabular-nums"
+                        onChange={(e) => setScheduledDate(e.target.value)}
+                      />
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="vac-sched-time">预约时间（可选）</FieldLabel>
+                      <Input
+                        id="vac-sched-time"
+                        type="time"
+                        value={scheduledTime}
+                        className="tabular-nums"
+                        onChange={(e) => setScheduledTime(e.target.value)}
+                      />
+                    </Field>
+                  </div>
+
+                  <ClinicInputField
+                    id="vac-clinic"
+                    label="接种地点 / 社区门诊"
+                    value={clinicName}
+                    recentClinics={recentClinics}
+                    onChange={setClinicName}
+                  />
+                </FieldGroup>
+              ) : null}
+
+              {status === 'completed' ? (
+                <FieldGroup className="space-y-3">
+                  <Field>
+                    <FieldLabel htmlFor="vac-completed-date">实际接种日期</FieldLabel>
+                    <Input
+                      id="vac-completed-date"
+                      type="date"
+                      min={birthDate}
+                      max={today}
+                      value={vaccinatedAt}
+                      className="tabular-nums"
+                      onChange={(e) => setVaccinatedAt(e.target.value)}
+                    />
+                  </Field>
+
+                  <ClinicInputField
+                    id="vac-done-clinic"
+                    label="接种地点（可选）"
+                    value={clinicName}
+                    recentClinics={recentClinics}
+                    onChange={setClinicName}
+                  />
+
+                  <Field>
+                    <FieldLabel htmlFor="vac-site">接种部位（可选）</FieldLabel>
+                    <Input
+                      id="vac-site"
+                      value={site}
+                      maxLength={32}
+                      placeholder="如 左上臂 / 左大腿前外侧 / 口服"
+                      onChange={(e) => setSite(e.target.value)}
+                    />
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {VACCINE_SITE_PRESETS.map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setSite(preset)}
+                          className={cn(
+                            'cursor-pointer rounded-full border px-2.5 py-0.5 text-xs transition-colors',
+                            site === preset
+                              ? 'border-primary bg-accent text-accent-foreground'
+                              : 'border-border/80 bg-muted/40 text-muted-foreground hover:bg-muted',
+                          )}
+                        >
+                          {preset}
+                        </button>
+                      ))}
+                    </div>
+                  </Field>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <Field>
+                      <FieldLabel htmlFor="vac-maker">疫苗品牌 / 厂家（可选）</FieldLabel>
+                      <Input
+                        id="vac-maker"
+                        value={manufacturer}
+                        maxLength={60}
+                        placeholder="对照绿本选填"
+                        onChange={(e) => setManufacturer(e.target.value)}
+                      />
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="vac-batch">疫苗批号（可选）</FieldLabel>
+                      <Input
+                        id="vac-batch"
+                        value={batchNo}
+                        maxLength={60}
+                        placeholder="对照绿本选填"
+                        className="tabular-nums"
+                        onChange={(e) => setBatchNo(e.target.value)}
+                      />
+                    </Field>
+                  </div>
+
+                  <Field>
+                    <FieldLabel htmlFor="vac-reaction">接种后反应观察（可选）</FieldLabel>
+                    <Input
+                      id="vac-reaction"
+                      value={reaction}
+                      maxLength={200}
+                      placeholder="如 无异常 / 低热 37.6℃"
+                      onChange={(e) => setReaction(e.target.value)}
+                    />
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {VACCINE_REACTION_PRESETS.map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setReaction(preset)}
+                          className={cn(
+                            'cursor-pointer rounded-full border px-2.5 py-0.5 text-xs transition-colors',
+                            reaction === preset
+                              ? 'border-primary bg-accent text-accent-foreground'
+                              : 'border-border/80 bg-muted/40 text-muted-foreground hover:bg-muted',
+                          )}
+                        >
+                          {preset}
+                        </button>
+                      ))}
+                    </div>
+                  </Field>
+
+                  {/* 接种后与既有「健康与生长」体温记录快捷联动 */}
+                  <div className="flex items-center justify-between gap-2 rounded-xl border border-health/30 bg-health-soft/35 px-3 py-2.5">
+                    <div className="flex items-center gap-2 text-xs text-health-soft-foreground">
+                      <HeartPulse className="size-4 shrink-0" />
+                      <span>接种后 48 小时内若发热，可随时记一笔体温追踪</span>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 shrink-0 text-xs"
+                      onClick={() => {
+                        onOpenChange(false);
+                        openHealthQuickCreate('health');
+                      }}
+                    >
+                      去记体温
+                    </Button>
+                  </div>
+                </FieldGroup>
+              ) : null}
+
+              <Field>
+                <FieldLabel htmlFor="vac-note">备注（可选）</FieldLabel>
+                <Input
+                  id="vac-note"
+                  value={note}
+                  maxLength={500}
+                  placeholder="如 医生建议间隔时间、携带资料提醒等"
+                  onChange={(e) => setNote(e.target.value)}
+                />
+              </Field>
+            </form>
+
+            <Separator />
+
+            <VaccineKnowledgeSection dose={active} />
+          </div>
+        ) : null}
+      </EntityDrawer>
+
+      <DeleteConfirmDialog
+        open={deleteMode !== null}
+        onOpenChange={(next) => {
+          if (!next && (deleteMutation.isPending || deleteTemplateMutation.isPending)) return;
+          if (!next) setDeleteMode(null);
+        }}
+        title={deleteMode === 'template' ? '确认整套移出该自费疫苗？' : '确认删除本剂疫苗？'}
+        description={
+          active
+            ? deleteMode === 'template'
+              ? `将把「${active.vaccine_name}」全部 ${active.total_doses} 剂从计划中移出（含已填记录），移出后可随时在「添加疫苗」重新加入。`
+              : `将删除「${active.vaccine_name}（${formatDoseOrderLabel(active)}）」，同疫苗后续剂次序号将自动依次前移补齐。`
+            : ''
+        }
+        confirmLabel={deleteMode === 'template' ? '确认移出整套' : '确认删除'}
+        pending={deleteMutation.isPending || deleteTemplateMutation.isPending}
+        onConfirm={handleConfirmDelete}
+      />
+    </>
+  );
+}

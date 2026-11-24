@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { BellRing, HomeIcon } from 'lucide-react';
+import { BellRing, HomeIcon, Syringe } from 'lucide-react';
 import { LittleMoments } from '@/components/brand/little-moments';
 import { ListPageCard } from '@/components/list-page-card';
 import { Button } from '@/components/ui/button';
@@ -23,10 +23,16 @@ function RemindersPage() {
         <EmptyMedia>
           <LittleMoments className="max-w-44" />
         </EmptyMedia>
-        <EmptyTitle>提醒待办暂未开放</EmptyTitle>
-        <EmptyDescription>疫苗接种、定时用药与儿保体检提醒正在准备中，敬请期待。</EmptyDescription>
+        <EmptyTitle>更多提醒待办正在准备中</EmptyTitle>
+        <EmptyDescription>
+          宝宝疫苗接种计划、日历与预约提醒已上线；定时用药与儿保体检提醒正在陆续完善。
+        </EmptyDescription>
         <EmptyActions>
-          <Button render={<Link to="/dashboard" />} nativeButton={false}>
+          <Button render={<Link to="/vaccines" />} nativeButton={false}>
+            <Syringe className="size-4" />
+            前往疫苗接种
+          </Button>
+          <Button variant="outline" render={<Link to="/dashboard" />} nativeButton={false}>
             <HomeIcon className="size-4" />
             返回首页看板
           </Button>

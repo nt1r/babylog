@@ -24,6 +24,7 @@ import (
 	"github.com/nt1r/babylog/backend/internal/database"
 	"github.com/nt1r/babylog/backend/internal/httpapi"
 	"github.com/nt1r/babylog/backend/internal/records"
+	"github.com/nt1r/babylog/backend/internal/vaccines"
 )
 
 // newServeCommand 构建 `babylog serve` 子命令，用于启动内置 HTTP 服务。
@@ -66,11 +67,13 @@ func runServe(parentCtx context.Context) error {
 	babyStore := baby.NewStore(db.Gorm())
 	recordStore := records.NewStore(db.Gorm())
 	dashboardSvc := dashboard.NewService(recordStore)
+	vaccineStore := vaccines.NewStore(db.Gorm())
 	router := httpapi.NewRouter(httpapi.Options{
 		Store:           store,
 		BabyStore:       babyStore,
 		RecordStore:     recordStore,
 		DashboardSvc:    dashboardSvc,
+		VaccineStore:    vaccineStore,
 		DistDir:         cfg.DistDir,
 		FallbackDistDir: config.DefaultDistDir(),
 		Logger:          logger,

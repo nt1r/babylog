@@ -27,7 +27,8 @@
 
 | 状态 | CSS 变量 | Tailwind 工具类示例 | 适用场景 |
 | --- | --- | --- | --- |
-| 成功 / 正常 | `--success` / `--success-soft` | `bg-success-soft text-success-soft-foreground` | 记录已保存、提醒已完成、正常指标 |
+| 成功 / 正常 | `--success` / `--success-soft` | `bg-success-soft text-success-soft-foreground` | 记录已保存、接种已完成、正常指标 |
+| 信息 / 预约 | `--info` / `--info-soft` | `bg-info-soft text-info-soft-foreground` | 疫苗已预约日程与状态标记（与成功绿明确区分） |
 | 提醒 / 注意 | `--warning` / `--warning-soft` | `bg-warning-soft text-warning-soft-foreground` | 即将到期提醒、低烧或轻度波动提示 |
 | 错误 / 异常 | `--destructive` / `--destructive-soft` | `bg-destructive-soft text-destructive-soft-foreground` | 表单校验、网络错误、高热预警、删除确认 |
 
@@ -38,9 +39,9 @@
 | 业务分类 | CSS 变量 | Tailwind 工具类示例 | 覆盖场景 |
 | --- | --- | --- | --- |
 | 喂养（暖蜜黄） | `--feeding` / `--feeding-soft` / `--feeding-soft-foreground` | `bg-feeding-soft text-feeding-soft-foreground` | 母乳、奶粉、辅食、奶量曲线 |
-| 睡眠（柔薄荷） | `--sleep` / `--sleep-soft` / `--sleep-soft-foreground` | `bg-sleep-soft text-sleep-soft-foreground` | 小睡、夜觉时长、作息节律 |
-| 健康（暖蜜桃） | `--health` / `--health-soft` / `--health-soft-foreground` | `bg-health-soft text-health-soft-foreground` | 体温、用药、疫苗、体检、长牙 |
-| 护理（柔木棕） | `--care` / `--care-soft` / `--care-soft-foreground` | `bg-care-soft text-care-soft-foreground` | 大小便、洗澡、身高体重生长记录 |
+| 睡眠（静谧青蓝） | `--sleep` / `--sleep-soft` / `--sleep-soft-foreground` | `bg-sleep-soft text-sleep-soft-foreground` | 小睡、夜觉时长、作息节律（与品牌鼠尾草绿及成功绿区分） |
+| 健康（暖蜜桃橘） | `--health` / `--health-soft` / `--health-soft-foreground` | `bg-health-soft text-health-soft-foreground` | 体温、用药、疫苗、体检、长牙（与警示红区分） |
+| 护理（柔薰衣草紫） | `--care` / `--care-soft` / `--care-soft-foreground` | `bg-care-soft text-care-soft-foreground` | 大小便、洗澡、日常护理（与喂养暖蜜黄区分） |
 
 > 图表多系列色板通过 `--chart-1` 至 `--chart-5` 按 `feeding -> sleep -> health -> care -> primary` 顺序映射，避免在同一视图引入未登记的临时色值。
 
@@ -71,7 +72,7 @@
 
 ## 样式组织与组件复用约定
 
-1. **基础 UI 原语**：统一放在 `src/components/ui/`，基于 `@base-ui/react` 与 `class-variance-authority` 编写（配置见 [components.json](../components.json)）。
+1. **基础 UI 原语与表单控件复用**：基础原语统一放在 `src/components/ui/`（基于 `@base-ui/react` 与 `class-variance-authority`，配置见 [components.json](../components.json)）；新增表单优先对齐 [field.tsx](../src/components/ui/field.tsx)（`FieldLabel` `13px`）、[input.tsx](../src/components/ui/input.tsx)（默认 `text-base md:text-sm`，桌面紧凑覆写须带 `md:` 前缀）、[checkbox.tsx](../src/components/ui/checkbox.tsx) 及 [record-controls.tsx](../src/components/quick-record/record-controls.tsx)（`SegmentedControl` / `ChoiceCardButton` / `QuickChip`）。
 2. **主题启动无闪烁**：主题模式（`light` / `dark` / `system`）由 [src/scripts/theme-boot-script.ts](../src/scripts/theme-boot-script.ts) 在 HTML 渲染前同步写入 `<html>` 与 `<meta name="theme-color">`。
 3. **品牌与动效**：
    - UI 图标统一使用 `lucide-react`，线宽保持 `1.75–1.8`；

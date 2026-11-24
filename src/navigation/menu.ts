@@ -1,12 +1,12 @@
 import type { LucideIcon } from 'lucide-react';
-import { BellRing, LayoutDashboard, Settings2 } from 'lucide-react';
+import { BellRing, LayoutDashboard, Settings2, Syringe } from 'lucide-react';
 import { RECORD_CATEGORIES, RECORD_CATEGORY_META, type RecordCategory } from '@/lib/categories';
 
 export interface NavItem {
   readonly id: string;
   readonly title: string;
   readonly shortTitle: string;
-  readonly url: '/dashboard' | '/feeding' | '/sleep' | '/care' | '/health' | '/reminders' | '/settings';
+  readonly url: '/dashboard' | '/vaccines' | '/feeding' | '/sleep' | '/care' | '/health' | '/reminders' | '/settings';
   readonly icon: LucideIcon;
   readonly category?: RecordCategory;
 }
@@ -47,6 +47,19 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     id: 'daily',
     label: '日常记录',
     items: DAILY_NAV_ITEMS,
+  },
+  {
+    id: 'plans',
+    label: '成长计划',
+    items: [
+      {
+        id: 'vaccines',
+        title: '疫苗接种',
+        shortTitle: '疫苗',
+        url: '/vaccines',
+        icon: Syringe,
+      },
+    ],
   },
   {
     id: 'family',

@@ -7,14 +7,13 @@
 - **新增或修改前后端代码、维护中文注释或代码审查** → 先读 `CODING_STANDARDS.md`
 - **架构设计、模块命名或核对业务术语** → 先读 `GLOSSARY.md`
 - **调整视觉样式、亮暗主题或分类色 Token** → 先读 `docs/design-system.md`
-- **在系统临时目录验证前端纯 TS 模块** → 先读 `docs/temp-verification.md`
+- **验证前端纯 TS 模块或对新页面/大幅 UI 改动做免登录组件视觉预览** → 先读 `docs/temp-verification.md`
 - **查看可用脚本与依赖版本** → 以 `package.json`、`backend/go.mod` 与 `tsconfig.json` 为单一事实来源
 
 ## 工程硬边界
 
 - 后端根目录为 `backend/`；开发、静态检查、测试与发布全链路保持 `CGO_ENABLED=0`，静态检查覆盖所有构建标签（含 `embedwebui`），开发态与发布态内嵌资源互不污染，开发工具不写入主 `backend/go.mod`。
-- 前端包管理器固定为 `pnpm`，依赖版本保持精确固定；`src/routeTree.gen.ts` 由 `@tanstack/router-plugin` 自动生成并纳入版本控制以保证直接运行 `pnpm check`，禁止手动编辑。
-- 改动核心业务、复杂流程或 Go 特有机制代码时，按 `CODING_STANDARDS.md` 同步维护中文注释，保持注释与实现一致。
+- 前端包管理器固定为 `pnpm`，依赖版本保持精确固定；新增或修改路由后运行 `pnpm build:web` 重新生成 `src/routeTree.gen.ts` 并纳入版本控制（保证直接运行 `pnpm check`），避免手动编辑。
 
 ## 安全与隐私红线
 
@@ -28,16 +27,7 @@
 - 涉及后端框架、数据库或整体架构切换等重大工程重构前，先与维护者确认是否需要通过 `openspec/` 留档。
 - 纯样式微调、文案修正、工程配置或局部缺陷修复可直接实施，但仍须执行对应验证。
 - 仓库内 `.omp/` 与 `.pi/` 为不同客户端工具的 OpenSpec 目录；调整 OpenSpec 工作流时保持一致，不单边删除。
-
-### OpenSpec 变更的测试计划
-
-每个 OpenSpec 变更都生成 `test-plan.md`，记录该变更需要的后端测试范围。编写计划本身不启动测试实施。
-
-- Unit Tests 与 Integration Tests 各列出适用用例，引用对应的 capability、requirement、scenario 名称，写明验证方式和可观察的预期结果。
-- 某一类确实没有适用用例时写 `None` 并说明真实原因；实现尚未开始不构成不适用。
-- 计划可复用已有测试覆盖，写明复用的用例即可，不要求为每个场景新增代码。
-- 用户明确要求实施该变更时，计划中列出的后端测试和必要 fixture 属于实施范围，不再逐项确认。
-- `tasks.md` 的测试项引用测试计划，并与对应实现工作放在同一任务组；不在任务中复制计划内容，也不把测试集中到最后阶段。
+- 每个 OpenSpec 变更均须生成 `test-plan.md`（编写计划本身不启动实施）；具体编写与任务编排规则见 `openspec/config.yaml`。
 
 ## 测试范围与临时验证
 

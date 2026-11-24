@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/http';
 import { parseOptionalStrictNumber } from '@/lib/number';
+import { VACCINES_QUERY_KEY } from '@/lib/query-client';
 import { getBrowserTimeZone } from '@/lib/time';
 
 export type BabyGender = 'male' | 'female' | 'unknown';
@@ -136,6 +137,8 @@ export function useUpdateBabyMutation() {
     mutationFn: updateBabyProfile,
     onSuccess: (baby) => {
       queryClient.setQueryData(BABY_QUERY_KEY, baby);
+      // 修改出生日期会联动重算未手动覆盖的疫苗预计接种日期，同步失效疫苗计划缓存。
+      void queryClient.invalidateQueries({ queryKey: VACCINES_QUERY_KEY });
     },
   });
 }

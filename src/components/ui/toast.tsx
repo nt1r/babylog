@@ -55,7 +55,7 @@ function ToastList() {
                 type === 'success' && 'text-success',
                 type === 'error' && 'text-destructive',
                 type === 'warning' && 'text-warning',
-                type === 'info' && 'text-primary',
+                type === 'info' && 'text-info',
               )}
               aria-hidden="true"
             />

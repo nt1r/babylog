@@ -6,7 +6,7 @@
 
 ### 设计系统与无障碍
 - 配色、圆角与业务分类色以 `docs/design-system.md`、`src/styles/tokens.css` 与 `src/styles/globals.css` 为准；业务界面复用语义 Token（含 `feeding` / `sleep` / `health` / `care` 分类色）与 Tailwind v4 工具类，不使用硬编码十六进制色值或 Tailwind 原始色阶。
-- 基础交互原语统一放在 `src/components/ui/`（基于 `@base-ui/react` + `class-variance-authority`）；布局优先使用 Tailwind v4 语义工具类与 `@container` 响应式栅格。
+- 基础交互原语统一放在 `src/components/ui/`（基于 `@base-ui/react` + `class-variance-authority`）；业务表单复用 `Checkbox`、`FieldLabel`、`Input` 等原语，紧凑 `Input` 缩小桌面字号时使用 `md:text-[13px]` 保持移动端 `text-base`（`16px`），同层级表单标签与 `FieldLabel`（`13px`）对齐、卡片单选块与 `ChoiceCardButton`（`h-10 text-sm`）对齐。
 - 亮/暗双色语义变量在 `src/styles/tokens.css` 中成对维护：亮色覆写限定在 `:root:not(.dark):not([data-theme="dark"]), .light, [data-theme="light"]`，暗色覆写限定在 `.dark, [data-theme="dark"]`。
 - 所有无障碍文案（`Spinner`、抽屉/弹窗关闭按钮、面包屑、步进按钮的 `aria-label`）使用中文；按钮内的 `Spinner` 标注 `aria-hidden="true" role="presentation"`，避免嵌套 live region 或中英文混播。
 
@@ -15,7 +15,7 @@
 - 列表翻页使用 `useInfiniteQuery` 按 `offset` 递增拉取并与后端 `MaxListLimit` 对齐。翻页请求失败（`isFetchNextPageError`）时保留已加载列表并在底部提供内联重试按钮（重试中禁用并展示加载态），仅在首屏无数据且报错时渲染整页错误态。
 - 提交或删除进行中（`isPending`）时，抽屉与确认弹窗须拦截关闭操作（遮罩点击 / `Esc`），防止异步失败错误被写入已关闭容器而丢失反馈。
 - 高频直记按钮除禁用态外须配备 `useRef` 同步防重入锁；一次性撤销回调（如 Toast 撤销按钮）须配备单次执行守卫，防止连点重复请求导致误报 404。
-- 抽屉关闭动画期间保持当前意图稳定，由下次打开动作写入新意图，避免标题与表单区在滑出瞬间闪烁。
+- 抽屉关闭动画期间保持当前意图稳定，由下次打开动作写入新意图，避免标题与表单区在滑出瞬间闪烁；表单初始化 `useEffect` 仅依赖 `[open, entityId]`（其余默认值通过 `useRef` 读取），避免后台 Query 刷新冲掉未保存编辑，且校验与提交仅覆盖当前激活状态下可见的字段。
 
 ### 表单受控、步进单调性与智能默认值
 - 数字与小数输入框一律以 `string` 受控，仅在点击步进或提交时解析与校验，保证退格删空重输流畅。
@@ -44,6 +44,7 @@
 - **同步维护**：代码变更时同步新增、更新或清理对应注释，不保留注释掉的废弃代码。
 
 ## 前后端契约与审查核对
-- 修改或精简请求/响应字段前，同步核对三处事实来源：Go `json` tag、前端 `src/lib/*.ts` 类型定义与 `openspec/specs/*.md`。
+- 修改或精简请求/响应字段前，同步核对三处事实来源：Go `json` tag、前端 `src/lib/*.ts` 类型定义与 `openspec/specs/*.md`；未归档的活动 `openspec/changes/` 在迭代调整交互或接口时须同轮同步 `proposal.md` / `specs/` / `design.md` / `test-plan.md` / `tasks.md`。
+- Go 后端以 `*string` 表达三态语义（`nil` 保留原值、`""` 显式清空）时，前端留空输入默认序列化为 `undefined`，仅在明确需要清空旧值时发送空字符串。
 - 确认任何未消费字段或接口前，先检索全仓页面、导航、抽屉与 OpenSpec 规格，确保不破坏既有契约或引发回归。
 - 收口重构后的死导出与跨模块横向引用，仅导出模块对外接口所需的符号。
