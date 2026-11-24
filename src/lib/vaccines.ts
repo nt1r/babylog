@@ -16,7 +16,6 @@ type VaccineAlertState =
 
 export interface VaccineDose {
   id: number;
-  baby_id: number;
   template_code: string | null;
   dose_number: number;
   total_doses: number;
@@ -35,8 +34,6 @@ export interface VaccineDose {
   batch_no: string;
   reaction: string;
   note: string;
-  created_at: string;
-  updated_at: string;
   short_name: string;
   default_due_date: string;
   effective_date: string;

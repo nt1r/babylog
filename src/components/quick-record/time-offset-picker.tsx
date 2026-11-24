@@ -1,6 +1,6 @@
 import { subMinutes } from 'date-fns';
-import { DateTimeInputRow } from '@/components/quick-record/date-time-input-row';
-import { QuickChip } from '@/components/quick-record/record-controls';
+import { DateTimeInputRow } from '@/components/date-time-input-row';
+import { QuickChip } from '@/components/ui/choice-controls';
 import { splitLocalDateTime } from '@/lib/time';
 
 const TIME_OFFSETS = [

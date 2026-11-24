@@ -276,9 +276,10 @@ pnpm dev
 
 `PASSWORD_FILE` 由操作者设置为仓库外已有的私有密码文件。密码长度须为 12–1024 字符，文件末尾仅一个 LF 或 CRLF 会被移除，其余空白原样保留。默认用户名为 `admin`，可用 `--username` 指定；重复执行初始化会拒绝覆盖已有管理员。
 
-数据写入 `data/babylog.sqlite`（已被 `.gitignore` 忽略）；设置 `BABYLOG_DATA_DIR` 可改用其他目录，初始化与运行需使用同一取值。开发页面为 `http://127.0.0.1:11115`，Go 后端（经 `air` 热重载）默认监听 `21115`；可用 `PORT` 覆盖端口，Vite 代理同步使用该值。
+数据写入 `data/babylog.sqlite`（已被 `.gitignore` 忽略）；设置 `BABYLOG_DATA_DIR` 可改用其他目录（例如多 worktree 共用 `~/.local/share/babylog-dev`），初始化与运行需使用同一取值。`pnpm dev` 会等待 Go 后端（经 `air` 热重载，默认 `21115` 端口）就绪后再拉起前端页面（`http://127.0.0.1:11115`）；可用 `PORT` 覆盖端口，Vite 代理同步使用该值。
 
-- `pnpm lint`：执行 Biome 检查与 `go vet`。
+- `pnpm dev:reset-db`：重置本地开发数据库并重新初始化管理员（默认放行 `./data`、`~/.local/share/*dev*` 与临时目录，拒绝在容器或生产环境执行）。
+- `pnpm lint`：执行 Biome 检查、工程门禁与 `go vet`。
 - `pnpm check`：执行 TypeScript 类型检查。
 - `pnpm test`：执行 Go 后端单元与集成测试（`CGO_ENABLED=0`）。
 - `pnpm build`：构建前端产物并内嵌打包为单二进制 `bin/babylog`。

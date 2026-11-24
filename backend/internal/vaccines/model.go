@@ -64,7 +64,7 @@ var ErrCannotDeleteNIP = errors.New("国家免疫规划基础疫苗不支持删�
 // DoseRecord 对应 SQLite 中的 vaccine_doses 表。
 type DoseRecord struct {
 	ID            int64   `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
-	BabyID        int64   `gorm:"column:baby_id;not null" json:"baby_id"`
+	BabyID        int64   `gorm:"column:baby_id;not null" json:"-"`
 	TemplateCode  *string `gorm:"column:template_code" json:"template_code"`
 	DoseNumber    int     `gorm:"column:dose_number;not null" json:"dose_number"`
 	TotalDoses    int     `gorm:"column:total_doses;not null" json:"total_doses"`
@@ -83,8 +83,8 @@ type DoseRecord struct {
 	BatchNo       string  `gorm:"column:batch_no;not null;default:''" json:"batch_no"`
 	Reaction      string  `gorm:"column:reaction;not null;default:''" json:"reaction"`
 	Note          string  `gorm:"column:note;not null;default:''" json:"note"`
-	CreatedAt     string  `gorm:"column:created_at;not null" json:"created_at"`
-	UpdatedAt     string  `gorm:"column:updated_at;not null" json:"updated_at"`
+	CreatedAt     string  `gorm:"column:created_at;not null" json:"-"`
+	UpdatedAt     string  `gorm:"column:updated_at;not null" json:"-"`
 }
 
 // TableName 实现 GORM 的 Tabler 接口，显式绑定表名 vaccine_doses，避免依赖框架复数推断。

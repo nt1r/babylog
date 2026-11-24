@@ -17,6 +17,7 @@ import { FeedingFields } from '@/components/quick-record/feeding-fields';
 import { HealthFields } from '@/components/quick-record/health-fields';
 import { SleepFields } from '@/components/quick-record/sleep-fields';
 import { TimeOffsetPicker } from '@/components/quick-record/time-offset-picker';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Field, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
@@ -109,6 +110,7 @@ export function QuickRecordDrawer() {
   return (
     <EntityDrawer
       open={open}
+      pending={saveMutation.isPending}
       onOpenChange={(next) => {
         if (!saveMutation.isPending) setOpen(next);
       }}
@@ -117,13 +119,10 @@ export function QuickRecordDrawer() {
       footer={
         <div className="flex w-full flex-col gap-2.5">
           {formError ? (
-            <div
-              role="alert"
-              className="flex items-center gap-2 rounded-xl border border-destructive/40 bg-destructive-soft px-3 py-2 text-xs font-medium text-destructive-soft-foreground"
-            >
+            <Alert variant="destructive" size="compact" className="font-medium">
               <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
               <span>{formError}</span>
-            </div>
+            </Alert>
           ) : null}
           <div className="grid w-full grid-cols-[1fr_2fr] gap-2.5 sm:flex sm:w-auto sm:items-center sm:justify-end">
             <Button

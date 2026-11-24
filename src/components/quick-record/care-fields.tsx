@@ -1,5 +1,5 @@
 import type { CareFormState } from '@/components/quick-record/codecs/care';
-import { ChoiceCardButton, QuickChip, SegmentedControl } from '@/components/quick-record/record-controls';
+import { ChoiceCardButton, QuickChip, SegmentedControl } from '@/components/ui/choice-controls';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { CARE_SUBTYPE_OPTIONS } from '@/lib/categories';

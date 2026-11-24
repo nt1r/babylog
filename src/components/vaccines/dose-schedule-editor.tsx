@@ -1,6 +1,7 @@
 import { PlusIcon, RotateCcw, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import type { DosePlanInput } from '@/lib/vaccines';
 
@@ -143,13 +144,16 @@ export function DoseScheduleEditor({ rows, disabled, onChange, onResetDefaults }
                 <span className="text-xs text-muted-foreground">月龄</span>
               </div>
 
-              <Input
-                type="date"
-                aria-label={`第 ${index + 1} 剂预计日期（可选）`}
+              <DatePicker
+                size="sm"
+                clearable
+                placeholder="默认推算"
+                ariaLabel={`第 ${index + 1} 剂预计日期（可选）`}
+                drawerTitle={`第 ${index + 1} 剂预计日期`}
                 disabled={disabled}
                 value={row.plannedDate}
-                onChange={(e) => handleUpdateRow(index, { plannedDate: e.target.value })}
-                className="h-8 w-36 max-w-44 flex-1 rounded-lg px-2 text-base tabular-nums md:text-[13px]"
+                onChange={(nextDate) => handleUpdateRow(index, { plannedDate: nextDate })}
+                className="w-36 max-w-44 flex-1"
               />
 
               <Button

@@ -1,10 +1,11 @@
 import { ArrowRight, Baby, CalendarClock, CheckCircle2, MapPin, ShieldAlert, Syringe } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Separator } from '@/components/ui/separator';
 import { Spinner } from '@/components/ui/spinner';
 import { VaccineCalendar } from '@/components/vaccines/vaccine-calendar';
@@ -101,13 +102,10 @@ export function VaccineOverview({
   return (
     <div className="flex flex-col gap-3.5">
       {/* 单行紧凑风险提示：精简不占屏，始终强调须自行核实 */}
-      <div
-        role="alert"
-        className="flex items-start gap-2 rounded-xl border border-warning/25 bg-warning-soft px-3.5 py-2.5 text-xs leading-relaxed text-warning-soft-foreground"
-      >
-        <ShieldAlert className="mt-0.5 size-4 shrink-0" />
+      <Alert variant="warning" size="compact" role="note">
+        <ShieldAlert aria-hidden="true" />
         <span>{overview.disclaimer}</span>
-      </div>
+      </Alert>
 
       {/* 产院出生疫苗确认：单层紧凑内边距，自适应胶囊宽度避免宽屏出现大块空洞 */}
       {summary.birth_confirm_pending && !birthConfirmDismissed ? (
@@ -196,20 +194,21 @@ export function VaccineOverview({
                       {defaultHint}
                     </span>
                   </label>
-                  <Input
-                    type="date"
-                    aria-label={`${label}实际接种日期`}
+                  <DatePicker
+                    size="sm"
+                    ariaLabel={`${label}实际接种日期`}
+                    drawerTitle={`${label}接种日期`}
                     min={overview.birth_date}
                     max={today}
                     disabled={!entry.checked || confirmingBirth}
                     value={entry.date}
-                    onChange={(e) =>
+                    onChange={(nextDate) =>
                       setBirthSelection((prev) => ({
                         ...prev,
-                        [dose.id]: { ...entry, date: e.target.value },
+                        [dose.id]: { ...entry, date: nextDate },
                       }))
                     }
-                    className="h-8 w-36 shrink-0 rounded-lg px-2 py-0.5 text-base tabular-nums sm:w-[8.75rem] md:text-[13px]"
+                    className="w-36 shrink-0 sm:w-[8.75rem]"
                   />
                 </div>
               );

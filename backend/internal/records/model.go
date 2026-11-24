@@ -60,7 +60,7 @@ var ErrNotFound = errors.New("记录不存在或已被删除")
 // 其余记录模型（CareRecord、HealthRecord）遵循同一约定，后续不再重复说明。
 type FeedingRecord struct {
 	ID          int64   `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
-	BabyID      int64   `gorm:"column:baby_id;not null" json:"baby_id"`
+	BabyID      int64   `gorm:"column:baby_id;not null" json:"-"`
 	Subtype     string  `gorm:"column:subtype;not null" json:"subtype"`
 	FeedingMode *string `gorm:"column:feeding_mode" json:"feeding_mode"`
 	BreastSide  *string `gorm:"column:breast_side" json:"breast_side"`
@@ -71,8 +71,8 @@ type FeedingRecord struct {
 	Acceptance  *string `gorm:"column:acceptance" json:"acceptance"`
 	RecordedAt  string  `gorm:"column:recorded_at;not null" json:"recorded_at"`
 	Note        string  `gorm:"column:note;not null;default:''" json:"note"`
-	CreatedAt   string  `gorm:"column:created_at;not null" json:"created_at"`
-	UpdatedAt   string  `gorm:"column:updated_at;not null" json:"updated_at"`
+	CreatedAt   string  `gorm:"column:created_at;not null" json:"-"`
+	UpdatedAt   string  `gorm:"column:updated_at;not null" json:"-"`
 }
 
 func (FeedingRecord) TableName() string { return "feeding_records" }
@@ -103,14 +103,14 @@ type FeedingDailySummary struct {
 // SleepRecord 对应 SQLite 中的 sleep_records 表。
 type SleepRecord struct {
 	ID          int64  `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
-	BabyID      int64  `gorm:"column:baby_id;not null" json:"baby_id"`
+	BabyID      int64  `gorm:"column:baby_id;not null" json:"-"`
 	Subtype     string `gorm:"column:subtype;not null" json:"subtype"`
 	StartedAt   string `gorm:"column:started_at;not null" json:"started_at"`
 	EndedAt     string `gorm:"column:ended_at;not null" json:"ended_at"`
 	DurationMin int    `gorm:"column:duration_min;not null" json:"duration_min"`
 	Note        string `gorm:"column:note;not null;default:''" json:"note"`
-	CreatedAt   string `gorm:"column:created_at;not null" json:"created_at"`
-	UpdatedAt   string `gorm:"column:updated_at;not null" json:"updated_at"`
+	CreatedAt   string `gorm:"column:created_at;not null" json:"-"`
+	UpdatedAt   string `gorm:"column:updated_at;not null" json:"-"`
 }
 
 func (SleepRecord) TableName() string { return "sleep_records" }
@@ -133,7 +133,7 @@ type SleepDailySummary struct {
 // CareRecord 对应 SQLite 中的 care_records 表。
 type CareRecord struct {
 	ID               int64   `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
-	BabyID           int64   `gorm:"column:baby_id;not null" json:"baby_id"`
+	BabyID           int64   `gorm:"column:baby_id;not null" json:"-"`
 	Subtype          string  `gorm:"column:subtype;not null" json:"subtype"`
 	DiaperKind       *string `gorm:"column:diaper_kind" json:"diaper_kind"`
 	StoolConsistency *string `gorm:"column:stool_consistency" json:"stool_consistency"`
@@ -141,8 +141,8 @@ type CareRecord struct {
 	CareTitle        *string `gorm:"column:care_title" json:"care_title"`
 	RecordedAt       string  `gorm:"column:recorded_at;not null" json:"recorded_at"`
 	Note             string  `gorm:"column:note;not null;default:''" json:"note"`
-	CreatedAt        string  `gorm:"column:created_at;not null" json:"created_at"`
-	UpdatedAt        string  `gorm:"column:updated_at;not null" json:"updated_at"`
+	CreatedAt        string  `gorm:"column:created_at;not null" json:"-"`
+	UpdatedAt        string  `gorm:"column:updated_at;not null" json:"-"`
 }
 
 func (CareRecord) TableName() string { return "care_records" }
@@ -170,7 +170,7 @@ type CareDailySummary struct {
 // HealthRecord 对应 SQLite 中的 health_records 表。
 type HealthRecord struct {
 	ID             int64    `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
-	BabyID         int64    `gorm:"column:baby_id;not null" json:"baby_id"`
+	BabyID         int64    `gorm:"column:baby_id;not null" json:"-"`
 	Subtype        string   `gorm:"column:subtype;not null" json:"subtype"`
 	TemperatureC   *float64 `gorm:"column:temperature_c" json:"temperature_c"`
 	MedicineName   *string  `gorm:"column:medicine_name" json:"medicine_name"`
@@ -181,8 +181,8 @@ type HealthRecord struct {
 	ToothNote      *string  `gorm:"column:tooth_note" json:"tooth_note"`
 	RecordedAt     string   `gorm:"column:recorded_at;not null" json:"recorded_at"`
 	Note           string   `gorm:"column:note;not null;default:''" json:"note"`
-	CreatedAt      string   `gorm:"column:created_at;not null" json:"created_at"`
-	UpdatedAt      string   `gorm:"column:updated_at;not null" json:"updated_at"`
+	CreatedAt      string   `gorm:"column:created_at;not null" json:"-"`
+	UpdatedAt      string   `gorm:"column:updated_at;not null" json:"-"`
 }
 
 func (HealthRecord) TableName() string { return "health_records" }

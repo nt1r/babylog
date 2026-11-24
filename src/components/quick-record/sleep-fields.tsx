@@ -1,7 +1,7 @@
 import { subMinutes } from 'date-fns';
+import { DateTimeInputRow } from '@/components/date-time-input-row';
 import type { SleepFormState } from '@/components/quick-record/codecs/sleep';
-import { DateTimeInputRow } from '@/components/quick-record/date-time-input-row';
-import { QuickChip, SegmentedControl } from '@/components/quick-record/record-controls';
+import { QuickChip, SegmentedControl } from '@/components/ui/choice-controls';
 import { FieldGroup } from '@/components/ui/field';
 import { SLEEP_SUBTYPE_OPTIONS } from '@/lib/categories';
 import type { SleepSubtype } from '@/lib/records';
