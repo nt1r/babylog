@@ -16,6 +16,7 @@ const badgeVariants = cva(
         health: 'bg-health-soft text-health-soft-foreground',
         care: 'bg-care-soft text-care-soft-foreground',
         success: 'bg-success-soft text-success-soft-foreground',
+        info: 'bg-info-soft text-info-soft-foreground',
         warning: 'bg-warning-soft text-warning-soft-foreground',
         destructive: 'bg-destructive-soft text-destructive-soft-foreground',
       },

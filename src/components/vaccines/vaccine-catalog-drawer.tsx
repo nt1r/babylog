@@ -1,0 +1,443 @@
+import { ChevronDown, ChevronUp, PlusIcon, ShieldAlert, Syringe, Trash2 } from 'lucide-react';
+import { type FormEvent, useRef, useState } from 'react';
+import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog';
+import { EntityDrawer } from '@/components/entity-drawer';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Spinner } from '@/components/ui/spinner';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { toast } from '@/components/ui/toast';
+import {
+  DoseScheduleEditor,
+  type EditableDoseRow,
+  nextDoseRowKey,
+  parseEditableDoseRows,
+} from '@/components/vaccines/dose-schedule-editor';
+import { cn } from '@/lib/utils';
+import {
+  useAddVaccineTemplateMutation,
+  useCreateCustomVaccineMutation,
+  useDeleteVaccineTemplateMutation,
+  useVaccineCatalogQuery,
+  type VaccineCatalogItem,
+  type VaccineCategory,
+} from '@/lib/vaccines';
+
+interface VaccineCatalogDrawerProps {
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+}
+
+function createRowsFromTemplate(tpl: VaccineCatalogItem): EditableDoseRow[] {
+  return tpl.doses.map((d) => ({
+    key: nextDoseRowKey(),
+    ageMonths: String(d.age_months),
+    plannedDate: '',
+    tip: d.dose_tip,
+  }));
+}
+
+function createInitialCustomRows(): EditableDoseRow[] {
+  return [{ key: nextDoseRowKey(), ageMonths: '6', plannedDate: '' }];
+}
+
+/** 自费疫苗模板库（含默认剂次明细、按需调删后加入与整套移出）及多剂自定义疫苗新增抽屉。 */
+export function VaccineCatalogDrawer({ open, onOpenChange }: VaccineCatalogDrawerProps) {
+  const catalogQuery = useVaccineCatalogQuery(open);
+  const addTemplateMutation = useAddVaccineTemplateMutation();
+  const deleteTemplateMutation = useDeleteVaccineTemplateMutation();
+  const createCustomMutation = useCreateCustomVaccineMutation();
+
+  const [tab, setTab] = useState<'templates' | 'custom'>('templates');
+  const [expandedCode, setExpandedCode] = useState<string | null>(null);
+  const [templateDrafts, setTemplateDrafts] = useState<Record<string, EditableDoseRow[]>>({});
+  const [templateError, setTemplateError] = useState<string | null>(null);
+  const [addingCode, setAddingCode] = useState<string | null>(null);
+  const [removingTemplate, setRemovingTemplate] = useState<VaccineCatalogItem | null>(null);
+
+  // 同步防重入锁：在 React 状态更新触发按钮禁用前的同一帧内拦截连点，防止重复提交同一模板。
+  const addLockRef = useRef(false);
+
+  // 自定义疫苗多剂次表单
+  const [vaccineName, setVaccineName] = useState('');
+  const [category, setCategory] = useState<VaccineCategory>('optional');
+  const [customRows, setCustomRows] = useState<EditableDoseRow[]>(createInitialCustomRows);
+  const [note, setNote] = useState('');
+  const [customError, setCustomError] = useState<string | null>(null);
+
+  const busy = addTemplateMutation.isPending || deleteTemplateMutation.isPending || createCustomMutation.isPending;
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen && busy) return;
+    onOpenChange(nextOpen);
+  }
+
+  function toggleTemplateEditor(tpl: VaccineCatalogItem) {
+    setTemplateError(null);
+    if (expandedCode === tpl.code) {
+      setExpandedCode(null);
+      return;
+    }
+    setTemplateDrafts((prev) => (prev[tpl.code] ? prev : { ...prev, [tpl.code]: createRowsFromTemplate(tpl) }));
+    setExpandedCode(tpl.code);
+  }
+
+  async function handleConfirmAddTemplate(tpl: VaccineCatalogItem) {
+    if (addLockRef.current || busy) return;
+    const rows = templateDrafts[tpl.code] ?? createRowsFromTemplate(tpl);
+    const parsed = parseEditableDoseRows(rows);
+    if (!parsed.plans) {
+      setTemplateError(parsed.error);
+      return;
+    }
+
+    addLockRef.current = true;
+    setTemplateError(null);
+    setAddingCode(tpl.code);
+    // 若用户未修改默认排期，则省略 doses 让后端直接按内置模板默认排期入库（完整保留各剂阶段标签）。
+    const matchesTemplateDefault =
+      parsed.plans.length === tpl.doses.length &&
+      parsed.plans.every((plan, idx) => plan.age_months === tpl.doses[idx]?.age_months && plan.planned_date === null);
+    try {
+      await addTemplateMutation.mutateAsync({
+        templateCode: tpl.code,
+        ...(matchesTemplateDefault ? {} : { doses: parsed.plans }),
+      });
+      toast.success(`已将「${tpl.name}（共 ${parsed.plans.length} 剂）」加入计划`);
+      setExpandedCode(null);
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : '加入失败，请稍后重试');
+    } finally {
+      addLockRef.current = false;
+      setAddingCode(null);
+    }
+  }
+
+  async function handleConfirmRemoveTemplate() {
+    if (!removingTemplate || deleteTemplateMutation.isPending) return;
+    const target = removingTemplate;
+    try {
+      await deleteTemplateMutation.mutateAsync(target.code);
+      setRemovingTemplate(null);
+      toast.success(`已将「${target.name}」整套移出计划`);
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : '移出失败，请稍后重试');
+    }
+  }
+
+  async function handleCreateCustom(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) return;
+
+    const trimmedName = vaccineName.trim();
+    if (!trimmedName) {
+      setCustomError('请填写疫苗名称');
+      return;
+    }
+
+    const parsed = parseEditableDoseRows(customRows);
+    if (!parsed.plans) {
+      setCustomError(parsed.error);
+      return;
+    }
+
+    setCustomError(null);
+    try {
+      await createCustomMutation.mutateAsync({
+        vaccine_name: trimmedName,
+        category,
+        note: note.trim(),
+        doses: parsed.plans,
+      });
+      toast.success(`已添加「${trimmedName}（共 ${parsed.plans.length} 剂）」`);
+      setVaccineName('');
+      setCustomRows(createInitialCustomRows());
+      setNote('');
+      onOpenChange(false);
+    } catch (cause) {
+      setCustomError(cause instanceof Error ? cause.message : '添加失败，请稍后重试');
+    }
+  }
+
+  return (
+    <>
+      <EntityDrawer
+        open={open}
+        onOpenChange={handleOpenChange}
+        title="添加疫苗"
+        icon={<Syringe className="size-4.5 text-health" strokeWidth={1.8} />}
+        className="sm:max-w-lg"
+      >
+        <Tabs value={tab} onValueChange={(v) => setTab(v === 'custom' ? 'custom' : 'templates')}>
+          <TabsList className="w-full">
+            <TabsTrigger value="templates" className="flex-1">
+              常见自费
+            </TabsTrigger>
+            <TabsTrigger value="custom" className="flex-1">
+              自定义
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="templates" className="mt-3 space-y-3">
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-xl border border-warning/25 bg-warning-soft px-3 py-2 text-xs leading-relaxed text-warning-soft-foreground"
+            >
+              <ShieldAlert className="mt-0.5 size-4 shrink-0" />
+              <span>
+                {catalogQuery.data?.disclaimer ??
+                  '自费疫苗因品牌与起始月龄不同，剂次间隔差异较大；加入后请按门诊排期及说明书核对。'}
+              </span>
+            </div>
+
+            {catalogQuery.isLoading ? (
+              <div className="space-y-3">
+                <Skeleton className="h-28 w-full rounded-2xl" />
+                <Skeleton className="h-28 w-full rounded-2xl" />
+              </div>
+            ) : catalogQuery.isError ? (
+              <div className="rounded-xl border border-destructive/30 bg-destructive-soft/30 p-4 text-xs text-destructive-soft-foreground">
+                {catalogQuery.error instanceof Error ? catalogQuery.error.message : '加载自费疫苗库失败'}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {(catalogQuery.data?.templates ?? []).map((tpl) => {
+                  const isExpanded = expandedCode === tpl.code;
+                  const isAdding = addingCode === tpl.code;
+                  // 仅在卡片展开时读取草稿（toggleTemplateEditor 已在展开时初始化），避免折叠卡片渲染期产生副作用。
+                  const draftRows = isExpanded ? (templateDrafts[tpl.code] ?? []) : [];
+
+                  return (
+                    <div key={tpl.code} className="space-y-2.5 rounded-2xl border border-border/80 bg-card p-3.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="space-y-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <h3 className="text-sm font-semibold text-foreground">{tpl.name}</h3>
+                            {tpl.added ? (
+                              <Badge variant="success">已加入 · {tpl.added_dose_count} 剂</Badge>
+                            ) : (
+                              <Badge variant="health">默认 {tpl.dose_count} 剂</Badge>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            预防：{tpl.prevents}（{tpl.route}）
+                          </p>
+                        </div>
+
+                        {tpl.added ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={busy}
+                            onClick={() => setRemovingTemplate(tpl)}
+                            className="shrink-0 text-destructive hover:bg-destructive-soft hover:text-destructive"
+                          >
+                            <Trash2 className="size-3.5" />
+                            移出计划
+                          </Button>
+                        ) : (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={isExpanded ? 'secondary' : 'default'}
+                            disabled={busy}
+                            onClick={() => toggleTemplateEditor(tpl)}
+                            className="shrink-0"
+                          >
+                            {isExpanded ? (
+                              <>
+                                收起
+                                <ChevronUp className="size-3.5" />
+                              </>
+                            ) : (
+                              <>
+                                配置 / 加入
+                                <ChevronDown className="size-3.5" />
+                              </>
+                            )}
+                          </Button>
+                        )}
+                      </div>
+
+                      {/* 展开前展示核实后的各剂默认月龄胶囊，方便一眼看清几剂和各自月龄 */}
+                      {!isExpanded ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {tpl.doses.map((d) => (
+                            <span
+                              key={d.dose_number}
+                              className="inline-flex items-center rounded-full border border-border/75 bg-muted/40 px-2.5 py-0.5 text-xs text-foreground tabular-nums"
+                            >
+                              第{d.dose_number}剂 · {d.age_label}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      <p className="rounded-xl bg-warning-soft/55 px-2.5 py-2 text-xs leading-relaxed text-warning-soft-foreground">
+                        {tpl.risk_warning}
+                      </p>
+
+                      {isExpanded && !tpl.added ? (
+                        <div className="space-y-3 border-t border-border/70 pt-3">
+                          {templateError ? (
+                            <Alert variant="destructive">
+                              <AlertDescription>{templateError}</AlertDescription>
+                            </Alert>
+                          ) : null}
+
+                          <DoseScheduleEditor
+                            rows={draftRows}
+                            disabled={busy}
+                            onChange={(nextRows) => {
+                              setTemplateError(null);
+                              setTemplateDrafts((prev) => ({ ...prev, [tpl.code]: nextRows }));
+                            }}
+                            onResetDefaults={() => {
+                              setTemplateError(null);
+                              setTemplateDrafts((prev) => ({ ...prev, [tpl.code]: createRowsFromTemplate(tpl) }));
+                            }}
+                          />
+
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={busy}
+                              onClick={() => setExpandedCode(null)}
+                            >
+                              取消
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={busy}
+                              onClick={() => void handleConfirmAddTemplate(tpl)}
+                            >
+                              {isAdding ? (
+                                <Spinner className="size-3.5" aria-hidden="true" role="presentation" />
+                              ) : (
+                                <PlusIcon className="size-3.5" />
+                              )}
+                              {isAdding ? '加入中…' : `确认加入（共 ${draftRows.length} 剂）`}
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="custom" className="mt-3">
+            <form onSubmit={handleCreateCustom} noValidate className="space-y-4">
+              {customError ? (
+                <Alert variant="destructive">
+                  <AlertDescription>{customError}</AlertDescription>
+                </Alert>
+              ) : null}
+
+              <FieldGroup className="space-y-3.5">
+                <Field>
+                  <FieldLabel htmlFor="custom-vac-name">疫苗名称</FieldLabel>
+                  <Input
+                    id="custom-vac-name"
+                    value={vaccineName}
+                    maxLength={60}
+                    placeholder="如 五联疫苗 / AC流脑结合 / 甲肝灭活"
+                    onChange={(e) => setVaccineName(e.target.value)}
+                  />
+                </Field>
+
+                <div className="space-y-2">
+                  <p className="text-[13px] font-medium text-foreground">疫苗类型</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(
+                      [
+                        { value: 'optional', label: '自费（非免疫规划）' },
+                        { value: 'nip', label: '免费（地方/免疫规划）' },
+                      ] as const
+                    ).map((item) => (
+                      <button
+                        key={item.value}
+                        type="button"
+                        aria-pressed={category === item.value}
+                        onClick={() => setCategory(item.value)}
+                        className={cn(
+                          'flex h-10 cursor-pointer items-center justify-center rounded-xl border px-3 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                          category === item.value
+                            ? 'border-primary bg-accent text-accent-foreground'
+                            : 'border-border/80 bg-background text-muted-foreground hover:bg-muted/50',
+                        )}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <DoseScheduleEditor
+                  rows={customRows}
+                  disabled={busy}
+                  onChange={(nextRows) => {
+                    setCustomError(null);
+                    setCustomRows(nextRows);
+                  }}
+                />
+
+                <Field>
+                  <FieldLabel htmlFor="custom-vac-note">备注（可选）</FieldLabel>
+                  <Input
+                    id="custom-vac-note"
+                    value={note}
+                    maxLength={500}
+                    placeholder="如 社区门诊排期说明、注意事项"
+                    onChange={(e) => setNote(e.target.value)}
+                  />
+                </Field>
+              </FieldGroup>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button type="button" variant="outline" disabled={busy} onClick={() => handleOpenChange(false)}>
+                  取消
+                </Button>
+                <Button type="submit" disabled={busy}>
+                  {createCustomMutation.isPending ? (
+                    <Spinner className="size-4" aria-hidden="true" role="presentation" />
+                  ) : (
+                    <PlusIcon className="size-4" />
+                  )}
+                  {createCustomMutation.isPending ? '添加中…' : `添加到计划（共 ${customRows.length} 剂）`}
+                </Button>
+              </div>
+            </form>
+          </TabsContent>
+        </Tabs>
+      </EntityDrawer>
+
+      <DeleteConfirmDialog
+        open={removingTemplate !== null}
+        onOpenChange={(next) => {
+          if (!next && deleteTemplateMutation.isPending) return;
+          if (!next) setRemovingTemplate(null);
+        }}
+        title="确认整套移出该自费疫苗？"
+        description={
+          removingTemplate
+            ? `将移除「${removingTemplate.name}」在计划中的全部 ${removingTemplate.added_dose_count} 剂（含已登记预约或接种记录），移出后不可恢复，但可随时重新加入。`
+            : ''
+        }
+        confirmLabel={deleteTemplateMutation.isPending ? '移出中…' : '确认移出'}
+        pending={deleteTemplateMutation.isPending}
+        onConfirm={handleConfirmRemoveTemplate}
+      />
+    </>
+  );
+}

@@ -59,3 +59,21 @@ _Avoid_: Analytics, reports
 **Care Rhythm**:
 The distribution of Daily Records across five ordered local time-of-day slots: `清晨` (05:00–08:59), `上午` (09:00–11:59), `下午` (12:00–17:59), `傍晚` (18:00–20:59), and `夜间` (21:00–04:59).
 _Avoid_: Activity heatmap, hourly histogram
+
+### Vaccination
+
+**Vaccination Schedule**:
+The per-baby immunization plan anchored to the Baby Profile's `birth_date`, lazily seeded with China's National Immunization Program (NIP) baseline doses and extensible with optional templates or custom doses.
+_Avoid_: Vaccine table, immunization calendar (as the data model name)
+
+**Vaccine Dose**:
+A single immunization entry (`vaccine_doses`) belonging to the Baby Profile with one of three persisted statuses (`pending`, `scheduled`, `completed`) and a timezone-aware derived reminder state (`upcoming`, `due_soon`, `overdue`, `scheduled`, `scheduled_soon`, `scheduled_overdue`, `completed`).
+_Avoid_: Shot, injection log
+
+**NIP Vaccine**:
+A National Immunization Program (`nip`, 免疫规划 / 免费) vaccine from the built-in national baseline catalog, seeded automatically and protected from hard deletion.
+_Avoid_: Class-1 vaccine (in code identifiers; use `nip`)
+
+**Optional Vaccine**:
+A non-NIP (`optional`, 非免疫规划 / 自费) vaccine added on demand from the built-in optional template catalog or as a custom dose.
+_Avoid_: Class-2 vaccine (in code identifiers; use `optional`)

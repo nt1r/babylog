@@ -18,6 +18,7 @@ import (
 	"github.com/nt1r/babylog/backend/internal/database"
 	"github.com/nt1r/babylog/backend/internal/httpapi"
 	"github.com/nt1r/babylog/backend/internal/records"
+	"github.com/nt1r/babylog/backend/internal/vaccines"
 )
 
 // fixedNow 固定在 2026-11-23 10:00:00+08:00（2026-11-23 02:00:00Z），便于确定性验证跨零点与跨夜统计。
@@ -47,10 +48,12 @@ func setupFullTestServer(t *testing.T, clock func() time.Time) *fullTestEnv {
 	babyStore := baby.NewStore(db.Gorm())
 	recordStore := records.NewStore(db.Gorm())
 	dashSvc := dashboard.NewService(recordStore)
+	vaccineStore := vaccines.NewStore(db.Gorm())
 	if clock != nil {
 		babyStore.WithClock(clock)
 		recordStore.WithClock(clock)
 		dashSvc.WithClock(clock)
+		vaccineStore.WithClock(clock)
 	}
 
 	router := httpapi.NewRouter(httpapi.Options{
@@ -58,6 +61,7 @@ func setupFullTestServer(t *testing.T, clock func() time.Time) *fullTestEnv {
 		BabyStore:    babyStore,
 		RecordStore:  recordStore,
 		DashboardSvc: dashSvc,
+		VaccineStore: vaccineStore,
 	})
 	ts := httptest.NewServer(router)
 	t.Cleanup(ts.Close)

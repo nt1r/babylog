@@ -12,6 +12,7 @@ import (
 	"github.com/nt1r/babylog/backend/internal/baby"
 	"github.com/nt1r/babylog/backend/internal/dashboard"
 	"github.com/nt1r/babylog/backend/internal/records"
+	"github.com/nt1r/babylog/backend/internal/vaccines"
 )
 
 // Options 控制 HTTP 路由装配所需的依赖与运行参数。
@@ -20,6 +21,7 @@ type Options struct {
 	BabyStore       *baby.Store
 	RecordStore     *records.Store
 	DashboardSvc    *dashboard.Service
+	VaccineStore    *vaccines.Store
 	DistDir         string
 	FallbackDistDir string
 	Logger          *slog.Logger
@@ -80,6 +82,12 @@ func NewRouter(opts Options) *gin.Engine {
 				dashGroup := protected.Group("/dashboard", requireBabyProfileMiddleware(opts.BabyStore, logger))
 				dashGroup.GET("/summary", dashH.getSummary)
 				dashGroup.GET("/trends", dashH.getTrends)
+			}
+
+			if opts.BabyStore != nil && opts.VaccineStore != nil {
+				vacH := newVaccinesHandler(opts.VaccineStore, logger)
+				vacGroup := protected.Group("/vaccines", requireBabyProfileMiddleware(opts.BabyStore, logger))
+				vacH.registerRoutes(vacGroup)
 			}
 		}
 	}

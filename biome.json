@@ -43,6 +43,9 @@
   "linter": {
     "enabled": true,
     "rules": {
+      "complexity": {
+        "useMathMinMax": "off"
+      },
       "suspicious": {
         "noImportCycles": "error"
       }

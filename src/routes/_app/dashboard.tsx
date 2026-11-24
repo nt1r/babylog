@@ -326,7 +326,7 @@ function DashboardPage() {
               disabled={quickBusyKey !== null || Boolean(preset.disabled)}
               onClick={() => void handleOneTap(preset)}
               className={cn(
-                'inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-full border px-3.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                'inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-full border px-3.5 text-[13px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60',
                 preset.buttonClass,
               )}
             >

@@ -34,7 +34,89 @@ EOF
 node "$TMP_TEST"; STATUS=$?; rm -f "$TMP_TEST"; exit $STATUS
 ```
 
+## 免登录隔离 UI 组件视觉预览（按需用于新页面/大幅排版与配色调整）
+
+仅在**新建完整页面**或**大幅调整布局、留白、字号与主题配色**时按需执行（日常文案修正或局部小改跳过即可）。无需启动 Go 后端或登录：在 `$TMPDIR` 中写入预览入口，并通过 Vite 虚拟模块将其锚定为 `/src/__temp_preview__.tsx`，即可复用工作区 `@/` 别名、Tailwind v4 与 `node_modules`（物理文件全程留在工作区之外）：
+
+```bash
+TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/babylog-ui-preview.XXXXXX")
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+cat <<'EOF' > "$TMP_DIR/preview.tsx"
+import '@fontsource-variable/geist';
+import '@/styles/globals.css';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+// 替换为待核验的纯展示组件与 Mock 数据
+import { Checkbox } from '@/components/ui/checkbox';
+
+if (new URLSearchParams(window.location.search).get('theme') === 'dark') {
+  document.documentElement.classList.add('dark');
+}
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <div className="min-h-screen bg-background p-6 text-foreground">
+      <Checkbox checked />
+    </div>
+  </StrictMode>,
+);
+EOF
+
+cat <<'EOF' > "$TMP_DIR/serve.mjs"
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const tmpDir = process.env.TMP_DIR;
+const virtualId = path.resolve(process.cwd(), 'src/__temp_preview__.tsx');
+const { createServer } = await import(
+  pathToFileURL(path.resolve(process.cwd(), 'node_modules/vite/dist/node/index.js')).href
+);
+
+const server = await createServer({
+  root: process.cwd(),
+  server: { host: '127.0.0.1', port: 0, strictPort: false },
+  logLevel: 'error',
+  plugins: [
+    {
+      name: 'babylog:temp-preview',
+      enforce: 'pre',
+      resolveId(id) {
+        if (id === '/src/__temp_preview__.tsx' || id === virtualId) return virtualId;
+      },
+      async load(id) {
+        if (id === virtualId) return readFile(path.join(tmpDir, 'preview.tsx'), 'utf8');
+      },
+      configureServer(srv) {
+        srv.middlewares.use('/__preview', async (req, res) => {
+          const rawHtml =
+            '<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module" src="/src/__temp_preview__.tsx"></script></body></html>';
+          const html = await srv.transformIndexHtml(req.originalUrl || '/__preview', rawHtml);
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          res.end(html);
+        });
+      },
+    },
+  ],
+});
+
+await server.listen();
+const { port } = server.httpServer.address();
+console.log(`PREVIEW_URL=http://127.0.0.1:${port}/__preview`);
+process.on('SIGINT', () => void server.close().finally(() => process.exit(0)));
+process.on('SIGTERM', () => void server.close().finally(() => process.exit(0)));
+EOF
+
+TMP_DIR="$TMP_DIR" node "$TMP_DIR/serve.mjs"
+```
+
+核验要点（截图同样存放在 `$TMP_DIR`，检查完毕随 `trap` 或 `rm -rf` 一并清理）：
+- 分别访问 `/__preview`（浅色）与 `/__preview?theme=dark`（深色），覆盖桌面宽屏与移动端窄屏；
+- 重点核对：卡片/区块留白是否过大、同层级字号是否统一、相邻语义色（如成功/信息/提醒）区分度及暗色可读性。
+
 ## 约束提醒
 
-- 始终在 `finally` 中关闭 Vite server，并在退出前 `rm -f "$TMP_TEST"` 清理临时脚本。
-- 不将临时验证脚本写入仓库、`.gitignore` 目录、常驻 `package.json` 脚本或 CI。
+- 始终在 `finally` 或信号处理中关闭 Vite server，并在退出前清理系统临时目录中的所有脚本与截图。
+- 不将临时验证脚本、截图或 Mock 预览入口写入仓库、`.gitignore` 目录、常驻 `package.json` 脚本或 CI。

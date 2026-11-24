@@ -20,6 +20,7 @@ import { Route as AppHealthRouteImport } from './routes/_app/health'
 import { Route as AppRemindersRouteImport } from './routes/_app/reminders'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppSleepRouteImport } from './routes/_app/sleep'
+import { Route as AppVaccinesRouteImport } from './routes/_app/vaccines'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -75,6 +76,11 @@ const AppSleepRoute = AppSleepRouteImport.update({
   path: '/sleep',
   getParentRoute: () => AppRoute,
 } as any)
+const AppVaccinesRoute = AppVaccinesRouteImport.update({
+  id: '/vaccines',
+  path: '/vaccines',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -87,6 +93,7 @@ export interface FileRoutesByFullPath {
   '/reminders': typeof AppRemindersRoute
   '/settings': typeof AppSettingsRoute
   '/sleep': typeof AppSleepRoute
+  '/vaccines': typeof AppVaccinesRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -99,6 +106,7 @@ export interface FileRoutesByTo {
   '/reminders': typeof AppRemindersRoute
   '/settings': typeof AppSettingsRoute
   '/sleep': typeof AppSleepRoute
+  '/vaccines': typeof AppVaccinesRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -113,6 +121,7 @@ export interface FileRoutesById {
   '/_app/reminders': typeof AppRemindersRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/sleep': typeof AppSleepRoute
+  '/_app/vaccines': typeof AppVaccinesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -127,6 +136,7 @@ export interface FileRouteTypes {
     | '/reminders'
     | '/settings'
     | '/sleep'
+    | '/vaccines'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -139,6 +149,7 @@ export interface FileRouteTypes {
     | '/reminders'
     | '/settings'
     | '/sleep'
+    | '/vaccines'
   id:
     | '__root__'
     | '/'
@@ -152,6 +163,7 @@ export interface FileRouteTypes {
     | '/_app/reminders'
     | '/_app/settings'
     | '/_app/sleep'
+    | '/_app/vaccines'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -240,6 +252,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSleepRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/vaccines': {
+      id: '/_app/vaccines'
+      path: '/vaccines'
+      fullPath: '/vaccines'
+      preLoaderRoute: typeof AppVaccinesRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
@@ -251,6 +270,7 @@ interface AppRouteChildren {
   AppRemindersRoute: typeof AppRemindersRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppSleepRoute: typeof AppSleepRoute
+  AppVaccinesRoute: typeof AppVaccinesRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -261,6 +281,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppRemindersRoute: AppRemindersRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppSleepRoute: AppSleepRoute,
+  AppVaccinesRoute: AppVaccinesRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
