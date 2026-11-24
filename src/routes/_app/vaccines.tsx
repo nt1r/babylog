@@ -14,6 +14,7 @@ import { VaccineTimeline } from '@/components/vaccines/vaccine-timeline';
 import { useBabyProfileQuery } from '@/lib/baby';
 import {
   filterVaccineDoses,
+  useUpdateDefaultClinicMutation,
   useUpdateVaccineDoseMutation,
   useVaccinesOverviewQuery,
   type VaccineCategoryFilter,
@@ -43,6 +44,7 @@ function VaccinesPage() {
   const babyQuery = useBabyProfileQuery();
   const overviewQuery = useVaccinesOverviewQuery();
   const updateDoseMutation = useUpdateVaccineDoseMutation();
+  const updateDefaultClinicMutation = useUpdateDefaultClinicMutation();
 
   const [statusFilter, setStatusFilter] = useState<VaccineStatusFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState<VaccineCategoryFilter>('all');
@@ -80,9 +82,21 @@ function VaccinesPage() {
     doseIds: number[],
     stageLabel: string,
     defaultDate: string,
+    defaultClinic?: string,
   ) {
-    setBatchIntent({ action, doseIds, stageLabel, defaultDate });
+    setBatchIntent({ action, doseIds, stageLabel, defaultDate, defaultClinic });
     setBatchOpen(true);
+  }
+
+  async function handleSaveDefaultClinic(clinicName: string): Promise<boolean> {
+    try {
+      const res = await updateDefaultClinicMutation.mutateAsync(clinicName);
+      toast.success(res.default_clinic_name ? `已将「${res.default_clinic_name}」设为常去门诊` : '已清除常去接种门诊');
+      return true;
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : '保存失败，请稍后重试');
+      return false;
+    }
   }
 
   async function handleConfirmBirthDoses(items: readonly BirthConfirmItem[]) {
@@ -169,11 +183,16 @@ function VaccinesPage() {
             babyNickname={baby?.nickname}
             birthConfirmDismissed={birthConfirmDismissed}
             confirmingBirth={confirmingBirth}
+            savingDefaultClinic={updateDefaultClinicMutation.isPending}
             onConfirmBirthDoses={(items) => void handleConfirmBirthDoses(items)}
             onDismissBirthConfirm={() => setBirthConfirmDismissed(true)}
+            onSaveDefaultClinic={handleSaveDefaultClinic}
             onOpenDose={openDoseDetail}
             onOpenBatchScheduleFocus={(doseIds, label, defaultDate) =>
               openBatchDrawer('schedule', doseIds, label, defaultDate)
+            }
+            onOpenBatchCompleteFocus={(doseIds, label, defaultDate, defaultClinic) =>
+              openBatchDrawer('complete', doseIds, label, defaultDate, defaultClinic)
             }
           />
 
@@ -244,8 +263,10 @@ function VaccinesPage() {
           <VaccineDetailDrawer
             open={detailOpen}
             dose={selectedDose}
+            allDoses={overview.doses}
             birthDate={overview.birth_date}
             today={overview.today}
+            defaultClinicName={overview.default_clinic_name}
             recentClinics={overview.recent_clinics}
             onOpenChange={setDetailOpen}
           />
@@ -258,6 +279,7 @@ function VaccinesPage() {
             allDoses={overview.doses}
             birthDate={overview.birth_date}
             today={overview.today}
+            defaultClinicName={overview.default_clinic_name}
             recentClinics={overview.recent_clinics}
             onOpenChange={setBatchOpen}
           />

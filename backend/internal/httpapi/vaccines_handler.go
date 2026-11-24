@@ -8,26 +8,30 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/nt1r/babylog/backend/internal/baby"
 	"github.com/nt1r/babylog/backend/internal/vaccines"
 )
 
 // vaccinesHandler 处理疫苗接种计划、模板库、自定义添加、单剂更新、批量操作与删除接口。
 // 路由组已挂载 requireBabyProfileMiddleware（注入完整宝宝档案），处理器直接从上下文读取 babyID 与 birthDate。
 type vaccinesHandler struct {
-	store  *vaccines.Store
-	logger *slog.Logger
+	store     *vaccines.Store
+	babyStore *baby.Store
+	logger    *slog.Logger
 }
 
-func newVaccinesHandler(store *vaccines.Store, logger *slog.Logger) *vaccinesHandler {
+func newVaccinesHandler(store *vaccines.Store, babyStore *baby.Store, logger *slog.Logger) *vaccinesHandler {
 	return &vaccinesHandler{
-		store:  store,
-		logger: logger,
+		store:     store,
+		babyStore: babyStore,
+		logger:    logger,
 	}
 }
 
 func (h *vaccinesHandler) registerRoutes(group *gin.RouterGroup) {
 	group.GET("", h.getOverview)
 	group.GET("/catalog", h.getCatalog)
+	group.PUT("/default-clinic", h.updateDefaultClinic)
 	group.POST("/from-template", h.addFromTemplate)
 	group.POST("/batch", h.batchUpdate)
 	group.POST("", h.createCustom)
@@ -79,11 +83,15 @@ func (h *vaccinesHandler) handleErr(c *gin.Context, op string, err error) {
 }
 
 func (h *vaccinesHandler) getOverview(c *gin.Context) {
-	babyID, birthDate, loc, ok := parseBabyTimezoneContext(c)
+	profile, ok := mustBabyProfile(c)
 	if !ok {
 		return
 	}
-	overview, err := h.store.GetOverview(c.Request.Context(), babyID, birthDate, loc)
+	loc, ok := parseTimezoneQuery(c)
+	if !ok {
+		return
+	}
+	overview, err := h.store.GetOverview(c.Request.Context(), profile.ID, profile.BirthDate, profile.DefaultClinicName, loc)
 	if err != nil {
 		h.handleErr(c, "getVaccineOverview", err)
 		return
@@ -178,6 +186,28 @@ func (h *vaccinesHandler) batchUpdate(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"doses": doses})
+}
+
+// updateDefaultClinic 处理 PUT /api/vaccines/default-clinic：
+// 路由归属疫苗工作区以便直接行内设置常去门诊，底层字段归属单宝宝档案因此委派给 babyStore 持久化。
+func (h *vaccinesHandler) updateDefaultClinic(c *gin.Context) {
+	babyID, ok := mustBabyID(c)
+	if !ok {
+		return
+	}
+	var input struct {
+		ClinicName string `json:"clinic_name"`
+	}
+	if status, msg := decodeJSONBody(c, &input); status != 0 {
+		c.JSON(status, gin.H{"error": msg})
+		return
+	}
+	updated, err := h.babyStore.UpdateDefaultClinic(c.Request.Context(), babyID, input.ClinicName)
+	if err != nil {
+		handleBabyStoreError(c, h.logger, "updateDefaultClinic", err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"default_clinic_name": updated})
 }
 
 func (h *vaccinesHandler) deleteTemplate(c *gin.Context) {

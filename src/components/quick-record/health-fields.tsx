@@ -9,6 +9,7 @@ import { parseOptionalStrictNumber } from '@/lib/number';
 import { getTemperatureSeverity, type MedicinePreset } from '@/lib/records';
 
 const TEMP_PRESETS = [36.5, 36.8, 37.3, 38.0, 38.5] as const;
+const MEDICINE_DOSAGE_PRESETS = ['1 粒', '1 滴', '2.5 ml', '5 ml', '半袋', '1 袋'] as const;
 
 interface HealthFieldsProps {
   readonly state: HealthFormState;
@@ -91,7 +92,16 @@ export function HealthFields({ state, medicinePresets, onChange }: HealthFieldsP
               id="medicine-name-input"
               value={state.medicineName}
               placeholder="例如：维生素 D3、布洛芬混悬液"
-              onChange={(event) => onChange({ medicineName: event.target.value })}
+              onChange={(event) => {
+                const nextName = event.target.value;
+                const matched = !state.medicineDosage.trim()
+                  ? medicinePresets.find((med) => med.name === nextName.trim() && med.dosage)
+                  : undefined;
+                onChange({
+                  medicineName: nextName,
+                  ...(matched ? { medicineDosage: matched.dosage } : {}),
+                });
+              }}
             />
             <div className="flex flex-wrap gap-1.5 pt-1">
               {medicinePresets.map((med) => (
@@ -102,7 +112,7 @@ export function HealthFields({ state, medicinePresets, onChange }: HealthFieldsP
                   onClick={() =>
                     onChange({
                       medicineName: med.name,
-                      ...(med.dosage ? { medicineDosage: med.dosage } : {}),
+                      medicineDosage: med.dosage,
                     })
                   }
                 >
@@ -120,6 +130,18 @@ export function HealthFields({ state, medicinePresets, onChange }: HealthFieldsP
               placeholder="例如：1 粒、2.5 ml"
               onChange={(event) => onChange({ medicineDosage: event.target.value })}
             />
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {MEDICINE_DOSAGE_PRESETS.map((dosage) => (
+                <QuickChip
+                  key={dosage}
+                  tone="health"
+                  active={state.medicineDosage === dosage}
+                  onClick={() => onChange({ medicineDosage: state.medicineDosage === dosage ? '' : dosage })}
+                >
+                  {dosage}
+                </QuickChip>
+              ))}
+            </div>
           </Field>
         </div>
       ) : null}

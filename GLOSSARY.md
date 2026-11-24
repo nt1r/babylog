@@ -49,7 +49,7 @@ Per-local-calendar-day aggregate subtotals computed across all records of a cate
 _Avoid_: Page total, daily stats
 
 **Smart Defaults**:
-Habit-based starter suggestions derived from recent Daily Records (latest and top-3 frequent milk volumes, last breastfeeding side and suggested opposite side, recent solid foods, latest temperature, recent medicines, and recent custom care titles) used to prefill entry forms and one-tap actions.
+Habit-based starter suggestions derived from recent Daily Records (latest and top-3 frequent milk volumes, latest breastfeeding mode/duration, last breastfeeding side and suggested opposite side, recent solid foods with portions, median nap and night sleep durations, latest temperature, recent medicines with dosages, and recent custom care titles) plus the Baby Profile's default vaccination clinic (`default_clinic_name`), used to prefill entry forms and one-tap actions.
 _Avoid_: Presets, auto-fill cache
 
 **Dashboard Insights**:

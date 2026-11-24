@@ -20,6 +20,7 @@ const WEEKDAY_HEADERS = ['一', '二', '三', '四', '五', '六', '日'] as con
 interface VaccineCalendarProps {
   readonly doses: readonly VaccineDose[];
   readonly today: string;
+  readonly defaultClinicName: string;
   readonly nextFocus: VaccineNextFocus | null;
   readonly babyNickname?: string;
   readonly onSelectDose: (dose: VaccineDose) => void;
@@ -39,7 +40,14 @@ function parseYearMonth(dateStr: string): { year: number; monthIndex: number } {
  * 默认自动定格在下一次接种所在月份，内置全页唯一的「导出日历 (.ics)」入口，
  * 并在日历下方联动展示选中日期或当月全部接种条目。
  */
-export function VaccineCalendar({ doses, today, nextFocus, babyNickname, onSelectDose }: VaccineCalendarProps) {
+export function VaccineCalendar({
+  doses,
+  today,
+  defaultClinicName,
+  nextFocus,
+  babyNickname,
+  onSelectDose,
+}: VaccineCalendarProps) {
   const initialYM = parseYearMonth(nextFocus?.target_date ?? today);
   const [year, setYear] = useState(initialYM.year);
   const [monthIndex, setMonthIndex] = useState(initialYM.monthIndex);
@@ -102,7 +110,7 @@ export function VaccineCalendar({ doses, today, nextFocus, babyNickname, onSelec
     if (!exportTarget) return;
     const lead = exportTarget.doses[0];
     const scheduledTime = exportTarget.doses.find((d) => d.status === 'scheduled' && d.scheduled_time)?.scheduled_time;
-    const clinicName = exportTarget.doses.find((d) => d.clinic_name)?.clinic_name;
+    const clinicName = exportTarget.doses.find((d) => d.clinic_name)?.clinic_name || defaultClinicName.trim();
 
     exportVaccineVisitIcs({
       uidSeed: `cal-${exportTarget.date}-${exportTarget.doses.map((d) => d.id).join('-')}`,

@@ -557,7 +557,13 @@ func TestGetSmartDefaultsHeuristics(t *testing.T) {
 	}
 	if starter.Feeding.LastMilkML != records.DefaultStarterMilk ||
 		starter.Feeding.LastFeedingSubtype != records.FeedingSubtypeFormula ||
+		starter.Feeding.LastMilkSubtype != records.FeedingSubtypeFormula ||
+		starter.Feeding.LastBreastMode != "direct" ||
+		starter.Feeding.LastBreastDurationMin != records.DefaultStarterBreastMin ||
 		starter.Feeding.SuggestedBreastSide != "left" ||
+		len(starter.Feeding.RecentSolids) != 0 ||
+		starter.Sleep.SuggestedNapMin != records.DefaultStarterNapMin ||
+		starter.Sleep.SuggestedNightMin != records.DefaultStarterNightMin ||
 		starter.Health.LastTemperatureC != records.DefaultStarterTemp ||
 		len(starter.Feeding.FrequentMilkML) != 3 {
 		t.Fatalf("unexpected starter defaults: %+v", starter)
@@ -568,19 +574,36 @@ func TestGetSmartDefaultsHeuristics(t *testing.T) {
 		{Subtype: records.FeedingSubtypeFormula, AmountML: intPtr(150), RecordedAt: "2026-11-23T06:00:00Z"},
 		{Subtype: records.FeedingSubtypeFormula, AmountML: intPtr(150), RecordedAt: "2026-11-23T08:00:00Z"},
 		{Subtype: records.FeedingSubtypeFormula, AmountML: intPtr(180), RecordedAt: "2026-11-23T10:00:00Z"},
-		// 最近一次亲喂为右侧 -> 建议换左侧
-		{Subtype: records.FeedingSubtypeBreast, FeedingMode: strPtr("direct"), BreastSide: strPtr("right"), DurationMin: intPtr(12), RecordedAt: "2026-11-23T12:00:00Z"},
-		// 6 种辅食（含重复）-> 去重后最多保留最近 5 种
-		{Subtype: records.FeedingSubtypeSolid, SolidFood: strPtr("米糊"), RecordedAt: "2026-11-23T12:10:00Z"},
-		{Subtype: records.FeedingSubtypeSolid, SolidFood: strPtr("南瓜泥"), RecordedAt: "2026-11-23T12:20:00Z"},
+		// 最近一次亲喂为右侧 12 分钟 -> 建议换左侧、时长 12 分钟；随后有一条更晚的瓶喂母乳 -> last_breast_mode 应为 bottle
+		{Subtype: records.FeedingSubtypeBreast, FeedingMode: strPtr("direct"), BreastSide: strPtr("right"), DurationMin: intPtr(12), RecordedAt: "2026-11-23T11:30:00Z"},
+		{Subtype: records.FeedingSubtypeBreast, FeedingMode: strPtr("bottle"), AmountML: intPtr(180), RecordedAt: "2026-11-23T12:00:00Z"},
+		// 6 种辅食（含重复与份量）-> 去重后最多保留最近 5 种且保留最新份量
+		{Subtype: records.FeedingSubtypeSolid, SolidFood: strPtr("米糊"), SolidAmount: strPtr("几口"), RecordedAt: "2026-11-23T12:10:00Z"},
+		{Subtype: records.FeedingSubtypeSolid, SolidFood: strPtr("南瓜泥"), SolidAmount: strPtr("半碗"), RecordedAt: "2026-11-23T12:20:00Z"},
 		{Subtype: records.FeedingSubtypeSolid, SolidFood: strPtr("苹果泥"), RecordedAt: "2026-11-23T12:30:00Z"},
 		{Subtype: records.FeedingSubtypeSolid, SolidFood: strPtr("胡萝卜泥"), RecordedAt: "2026-11-23T12:40:00Z"},
 		{Subtype: records.FeedingSubtypeSolid, SolidFood: strPtr("牛油果泥"), RecordedAt: "2026-11-23T12:50:00Z"},
-		{Subtype: records.FeedingSubtypeSolid, SolidFood: strPtr("香蕉泥"), RecordedAt: "2026-11-23T13:00:00Z"},
-		{Subtype: records.FeedingSubtypeSolid, SolidFood: strPtr("香蕉泥"), RecordedAt: "2026-11-23T13:10:00Z"},
+		{Subtype: records.FeedingSubtypeSolid, SolidFood: strPtr("香蕉泥"), SolidAmount: strPtr("几口"), RecordedAt: "2026-11-23T13:00:00Z"},
+		{Subtype: records.FeedingSubtypeSolid, SolidFood: strPtr("香蕉泥"), SolidAmount: strPtr("半根"), RecordedAt: "2026-11-23T13:10:00Z"},
 	} {
 		if _, err := store.CreateFeeding(ctx, babyID, f); err != nil {
 			t.Fatalf("create feeding %+v: %v", f, err)
+		}
+	}
+
+	// 写入多条小睡（40/45/50/120/45 分钟 -> 中位数 45）与夜觉（540/600/570 分钟 -> 中位数 570）。
+	for _, sl := range []records.SleepInput{
+		{Subtype: records.SleepSubtypeNap, StartedAt: "2026-11-21T01:00:00Z", EndedAt: "2026-11-21T01:40:00Z"},
+		{Subtype: records.SleepSubtypeNap, StartedAt: "2026-11-21T05:00:00Z", EndedAt: "2026-11-21T05:45:00Z"},
+		{Subtype: records.SleepSubtypeNap, StartedAt: "2026-11-22T01:00:00Z", EndedAt: "2026-11-22T01:50:00Z"},
+		{Subtype: records.SleepSubtypeNap, StartedAt: "2026-11-22T05:00:00Z", EndedAt: "2026-11-22T07:00:00Z"},
+		{Subtype: records.SleepSubtypeNap, StartedAt: "2026-11-23T01:00:00Z", EndedAt: "2026-11-23T01:45:00Z"},
+		{Subtype: records.SleepSubtypeNight, StartedAt: "2026-11-20T13:00:00Z", EndedAt: "2026-11-20T22:00:00Z"}, // 540
+		{Subtype: records.SleepSubtypeNight, StartedAt: "2026-11-21T13:00:00Z", EndedAt: "2026-11-21T23:00:00Z"}, // 600
+		{Subtype: records.SleepSubtypeNight, StartedAt: "2026-11-22T13:00:00Z", EndedAt: "2026-11-22T22:30:00Z"}, // 570
+	} {
+		if _, err := store.CreateSleep(ctx, babyID, sl); err != nil {
+			t.Fatalf("create sleep %+v: %v", sl, err)
 		}
 	}
 
@@ -588,8 +611,11 @@ func TestGetSmartDefaultsHeuristics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSmartDefaults populated: %v", err)
 	}
-	if got.Feeding.LastMilkML != 180 || got.Feeding.LastFeedingSubtype != records.FeedingSubtypeSolid {
-		t.Fatalf("unexpected last milk/subtype: %+v", got.Feeding)
+	if got.Feeding.LastMilkML != 180 || got.Feeding.LastFeedingSubtype != records.FeedingSubtypeSolid || got.Feeding.LastMilkSubtype != records.FeedingSubtypeBreast {
+		t.Fatalf("unexpected last milk/subtype (expected solid + milk subtype breast): %+v", got.Feeding)
+	}
+	if got.Feeding.LastBreastMode != "bottle" || got.Feeding.LastBreastDurationMin != 12 {
+		t.Fatalf("expected last_breast_mode=bottle and duration=12, got %+v", got.Feeding)
 	}
 	if got.Feeding.LastBreastSide == nil || *got.Feeding.LastBreastSide != "right" || got.Feeding.SuggestedBreastSide != "left" {
 		t.Fatalf("expected right->left breast suggestion, got %+v", got.Feeding)
@@ -601,8 +627,11 @@ func TestGetSmartDefaultsHeuristics(t *testing.T) {
 		got.Feeding.FrequentMilkML[2] != wantFreq[2] {
 		t.Fatalf("expected frequent milk %v, got %v", wantFreq, got.Feeding.FrequentMilkML)
 	}
-	if len(got.Feeding.RecentSolidFoods) != 5 || got.Feeding.RecentSolidFoods[0] != "香蕉泥" {
-		t.Fatalf("expected 5 deduped recent solid foods starting with 香蕉泥, got %v", got.Feeding.RecentSolidFoods)
+	if len(got.Feeding.RecentSolids) != 5 || got.Feeding.RecentSolids[0].Food != "香蕉泥" || got.Feeding.RecentSolids[0].Amount != "半根" {
+		t.Fatalf("expected paired recent_solids starting with 香蕉泥(半根), got %+v", got.Feeding.RecentSolids)
+	}
+	if got.Sleep.SuggestedNapMin != 45 || got.Sleep.SuggestedNightMin != 570 {
+		t.Fatalf("expected median sleep defaults nap=45 night=570, got %+v", got.Sleep)
 	}
 }
 

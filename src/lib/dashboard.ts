@@ -4,10 +4,13 @@ import { RECORD_CATEGORY_META, type RecordCategoryMeta } from '@/lib/categories'
 import { apiRequest } from '@/lib/http';
 import { DASHBOARD_QUERY_KEY } from '@/lib/query-client';
 import {
+  BREAST_SIDE_LABELS,
   type CareDailySummary,
   type FeedingDailySummary,
   getTemperatureSeverity,
+  type SaveRecordRequest,
   type SleepDailySummary,
+  type SmartDefaults,
 } from '@/lib/records';
 import {
   formatDurationMin,
@@ -473,7 +476,92 @@ async function fetchDashboardTrends(days = 7, signal?: AbortSignal): Promise<Das
   return apiRequest<DashboardTrends>(`/api/dashboard/trends?days=${days}&tz=${tz}`, { signal });
 }
 
+interface AdaptiveFeedingOneTap {
+  readonly title: string;
+  readonly hint: string;
+  readonly toastTitle: string;
+  readonly buildRequest: (recordedAt: string) => SaveRecordRequest;
+}
+
+/**
+ * 根据宝宝最近喂养习惯自适应首页第一张一键直记卡（配方奶 / 瓶喂母乳 / 亲喂左右交替），
+ * 避免纯母乳或混合喂养家庭因卡片写死配方奶而误记。
+ */
+export function buildAdaptiveFeedingOneTap(
+  defaults: SmartDefaults | undefined,
+  defaultsReady: boolean,
+  fallbackMilkML = 90,
+  fallbackBreastMin = 15,
+): AdaptiveFeedingOneTap {
+  const feeding = defaults?.feeding;
+  const lastMilkML = feeding?.last_milk_ml ?? fallbackMilkML;
+
+  if (!defaultsReady) {
+    return {
+      title: '再来一顿',
+      hint: '加载喂养习惯…',
+      toastTitle: `已记录 · ${lastMilkML} ml 配方奶`,
+      buildRequest: (recordedAt) => ({
+        category: 'feeding',
+        payload: { subtype: 'formula', amount_ml: lastMilkML, recorded_at: recordedAt, note: '' },
+      }),
+    };
+  }
+
+  // 优先基于最近一次奶类喂养类型（last_milk_subtype，忽略辅食），避免纯亲喂/瓶喂母乳宝宝记完辅食后直记卡回退为配方奶。
+  if (feeding?.last_milk_subtype === 'breast') {
+    if (feeding.last_breast_mode === 'bottle') {
+      return {
+        title: '再来一顿',
+        hint: `${lastMilkML} ml 瓶喂母乳`,
+        toastTitle: `已记录 · ${lastMilkML} ml 瓶喂母乳`,
+        buildRequest: (recordedAt) => ({
+          category: 'feeding',
+          payload: {
+            subtype: 'breast',
+            feeding_mode: 'bottle',
+            amount_ml: lastMilkML,
+            recorded_at: recordedAt,
+            note: '',
+          },
+        }),
+      };
+    }
+
+    const side = feeding.suggested_breast_side ?? 'left';
+    const durationMin = feeding.last_breast_duration_min || fallbackBreastMin;
+    const sideLabel = BREAST_SIDE_LABELS[side];
+    return {
+      title: '再来一次亲喂',
+      hint: `${sideLabel} · ${durationMin} 分钟`,
+      toastTitle: `已记录 · 亲喂 ${sideLabel} ${durationMin} 分钟`,
+      buildRequest: (recordedAt) => ({
+        category: 'feeding',
+        payload: {
+          subtype: 'breast',
+          feeding_mode: 'direct',
+          breast_side: side,
+          duration_min: durationMin,
+          recorded_at: recordedAt,
+          note: '',
+        },
+      }),
+    };
+  }
+
+  return {
+    title: '再来一顿',
+    hint: `${lastMilkML} ml 配方奶`,
+    toastTitle: `已记录 · ${lastMilkML} ml 配方奶`,
+    buildRequest: (recordedAt) => ({
+      category: 'feeding',
+      payload: { subtype: 'formula', amount_ml: lastMilkML, recorded_at: recordedAt, note: '' },
+    }),
+  };
+}
+
 interface DashboardSummaryQueryOptions {
+  readonly enabled?: boolean;
   readonly refetchInterval?: number | false;
 }
 
@@ -481,6 +569,7 @@ export function useDashboardSummaryQuery(options?: DashboardSummaryQueryOptions)
   return useQuery({
     queryKey: [...DASHBOARD_QUERY_KEY, 'summary'],
     queryFn: ({ signal }) => fetchDashboardSummary(signal),
+    enabled: options?.enabled ?? true,
     refetchInterval: options?.refetchInterval ?? 60_000,
   });
 }

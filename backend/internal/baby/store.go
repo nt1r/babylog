@@ -64,14 +64,19 @@ func (s *Store) Create(ctx context.Context, in UpsertInput, loc *time.Location) 
 		}
 
 		ts := timeutil.FormatUTC(now)
+		defaultClinic := ""
+		if clean.DefaultClinicName != nil {
+			defaultClinic = *clean.DefaultClinicName
+		}
 		created = Profile{
-			Nickname:      clean.Nickname,
-			BirthDate:     clean.BirthDate,
-			Gender:        clean.Gender,
-			BirthWeightKg: clean.BirthWeightKg,
-			BirthHeightCm: clean.BirthHeightCm,
-			CreatedAt:     ts,
-			UpdatedAt:     ts,
+			Nickname:          clean.Nickname,
+			BirthDate:         clean.BirthDate,
+			Gender:            clean.Gender,
+			BirthWeightKg:     clean.BirthWeightKg,
+			BirthHeightCm:     clean.BirthHeightCm,
+			DefaultClinicName: defaultClinic,
+			CreatedAt:         ts,
+			UpdatedAt:         ts,
 		}
 		return tx.Create(&created).Error
 	})
@@ -103,16 +108,48 @@ func (s *Store) Update(ctx context.Context, in UpsertInput, loc *time.Location) 
 		updated.Gender = clean.Gender
 		updated.BirthWeightKg = clean.BirthWeightKg
 		updated.BirthHeightCm = clean.BirthHeightCm
+		if clean.DefaultClinicName != nil {
+			updated.DefaultClinicName = *clean.DefaultClinicName
+		}
 		updated.UpdatedAt = timeutil.FormatUTC(now)
 
 		// GORM 默认的 Updates(&struct) 会跳过 nil 指针与零值字段；
-		// 显式调用 Select 指定全部可更新列，保证用户清空出生体重/身高时能正确将对应列写为 SQL NULL。
+		// 显式调用 Select 指定全部可更新列，保证用户清空出生体重/身高或常去门诊时能正确落库。
 		return tx.Model(&updated).Select(
-			"nickname", "birth_date", "gender", "birth_weight_kg", "birth_height_cm", "updated_at",
+			"nickname", "birth_date", "gender", "birth_weight_kg", "birth_height_cm", "default_clinic_name", "updated_at",
 		).Updates(&updated).Error
 	})
 	if txErr != nil {
 		return nil, txErr
 	}
 	return &updated, nil
+}
+
+// UpdateDefaultClinic 单独设置或清空指定宝宝的常去接种门诊名称（允许传空串清空）。
+func (s *Store) UpdateDefaultClinic(ctx context.Context, babyID int64, rawClinicName string) (string, error) {
+	clinicName, err := ValidateClinicName(rawClinicName)
+	if err != nil {
+		return "", err
+	}
+
+	nowStr := timeutil.FormatUTC(s.now())
+	txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&Profile{}).
+			Where("id = ?", babyID).
+			Updates(map[string]any{
+				"default_clinic_name": clinicName,
+				"updated_at":          nowStr,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
+	if txErr != nil {
+		return "", txErr
+	}
+	return clinicName, nil
 }

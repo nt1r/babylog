@@ -19,6 +19,9 @@ import {
   formatDoseOrderLabel,
   formatShortCnDate,
   getAlertBadgeMeta,
+  getSameDaySiteSuggestion,
+  getSuggestedManufacturers,
+  resolvePreferredClinic,
   useDeleteVaccineDoseMutation,
   useDeleteVaccineTemplateMutation,
   useUpdateVaccineDoseMutation,
@@ -32,8 +35,10 @@ import { useQuickRecordStore } from '@/stores/quick-record';
 interface VaccineDetailDrawerProps {
   readonly open: boolean;
   readonly dose: VaccineDose | null;
+  readonly allDoses: readonly VaccineDose[];
   readonly birthDate: string;
   readonly today: string;
+  readonly defaultClinicName: string;
   readonly recentClinics: readonly string[];
   readonly onOpenChange: (open: boolean) => void;
 }
@@ -48,8 +53,10 @@ const STATUS_OPTIONS: ReadonlyArray<{ value: VaccineStatus; label: string }> = [
 export function VaccineDetailDrawer({
   open,
   dose,
+  allDoses,
   birthDate,
   today,
+  defaultClinicName,
   recentClinics,
   onOpenChange,
 }: VaccineDetailDrawerProps) {
@@ -67,6 +74,9 @@ export function VaccineDetailDrawer({
   const [scheduledDate, setScheduledDate] = useState('');
   const [scheduledTime, setScheduledTime] = useState('');
   const [clinicName, setClinicName] = useState('');
+  const [clinicTouched, setClinicTouched] = useState(false);
+  const [clinicAutoFilled, setClinicAutoFilled] = useState(false);
+  const [pinAsDefault, setPinAsDefault] = useState(false);
   const [vaccinatedAt, setVaccinatedAt] = useState('');
   const [site, setSite] = useState('');
   const [manufacturer, setManufacturer] = useState('');
@@ -81,6 +91,10 @@ export function VaccineDetailDrawer({
   latestDoseRef.current = dose;
   const todayRef = useRef(today);
   todayRef.current = today;
+  const defaultClinicRef = useRef(defaultClinicName);
+  defaultClinicRef.current = defaultClinicName;
+  const recentClinicsRef = useRef(recentClinics);
+  recentClinicsRef.current = recentClinics;
   const doseId = dose?.id ?? null;
 
   useEffect(() => {
@@ -94,6 +108,9 @@ export function VaccineDetailDrawer({
     setScheduledDate(currentDose.scheduled_date ?? currentDose.effective_date);
     setScheduledTime(currentDose.scheduled_time ?? '');
     setClinicName(currentDose.clinic_name);
+    setClinicTouched(false);
+    setClinicAutoFilled(false);
+    setPinAsDefault(false);
     let defaultVacDate = currentToday;
     if (currentDose.vaccinated_at) {
       defaultVacDate = currentDose.vaccinated_at;
@@ -109,6 +126,31 @@ export function VaccineDetailDrawer({
     setFormError(null);
     setDeleteMode(null);
   }, [open, doseId]);
+
+  function handleClinicChange(nextValue: string) {
+    setClinicName(nextValue);
+    setClinicTouched(true);
+    setClinicAutoFilled(false);
+    const trimmed = nextValue.trim();
+    // 输入清空或切回当前默认门诊（此时置顶勾选框会隐藏）时同步复位 pinAsDefault，避免后续改填其他医院时残留勾选态误改默认门诊。
+    if (!trimmed || trimmed === defaultClinicRef.current.trim()) {
+      setPinAsDefault(false);
+    }
+  }
+
+  // 仅在从「待接种」切入「已预约」或「已接种」且用户尚未手改接种地点时，自动预填常去门诊（或最近门诊）。
+  function handleStatusChange(nextStatus: VaccineStatus) {
+    const prevStatus = status;
+    setStatus(nextStatus);
+    setFormError(null);
+    if (prevStatus === 'pending' && nextStatus !== 'pending' && !clinicTouched && !clinicName.trim()) {
+      const preferred = resolvePreferredClinic(defaultClinicRef.current, recentClinicsRef.current);
+      if (preferred) {
+        setClinicName(preferred);
+        setClinicAutoFilled(true);
+      }
+    }
+  }
 
   const busy = updateMutation.isPending || deleteMutation.isPending || deleteTemplateMutation.isPending;
 
@@ -168,6 +210,7 @@ export function VaccineDetailDrawer({
           scheduled_date: status === 'scheduled' ? scheduledDate : null,
           scheduled_time: status === 'scheduled' ? scheduledTime.trim() || null : null,
           clinic_name: status === 'pending' ? '' : clinicName.trim(),
+          set_default_clinic: status !== 'pending' && Boolean(clinicName.trim()) && pinAsDefault,
           vaccinated_at: status === 'completed' ? vaccinatedAt : null,
           site: status === 'completed' ? site.trim() : '',
           manufacturer: status === 'completed' ? manufacturer.trim() : '',
@@ -205,6 +248,11 @@ export function VaccineDetailDrawer({
   const active = renderedDose;
   const badgeMeta = active ? getAlertBadgeMeta(active.alert_state) : null;
   const isOptionalTemplate = Boolean(active?.template_code && active.category === 'optional');
+  const suggestedManufacturers = active ? getSuggestedManufacturers(active, allDoses) : [];
+  const sameDaySite =
+    active && status === 'completed' && !active.route.includes('口服')
+      ? getSameDaySiteSuggestion(active.id, vaccinatedAt, allDoses)
+      : { usedSites: [], recommendedSite: null };
 
   return (
     <>
@@ -280,10 +328,7 @@ export function VaccineDetailDrawer({
                     <ChoiceCardButton
                       key={opt.value}
                       active={status === opt.value}
-                      onClick={() => {
-                        setStatus(opt.value);
-                        setFormError(null);
-                      }}
+                      onClick={() => handleStatusChange(opt.value)}
                     >
                       {opt.label}
                     </ChoiceCardButton>
@@ -363,8 +408,12 @@ export function VaccineDetailDrawer({
                     id="vac-clinic"
                     label="接种地点 / 社区门诊"
                     value={clinicName}
+                    defaultClinicName={defaultClinicName}
                     recentClinics={recentClinics}
-                    onChange={setClinicName}
+                    autoFilled={clinicAutoFilled}
+                    pinAsDefault={pinAsDefault}
+                    onPinAsDefaultChange={setPinAsDefault}
+                    onChange={handleClinicChange}
                   />
                 </FieldGroup>
               ) : null}
@@ -388,12 +437,24 @@ export function VaccineDetailDrawer({
                     id="vac-done-clinic"
                     label="接种地点（可选）"
                     value={clinicName}
+                    defaultClinicName={defaultClinicName}
                     recentClinics={recentClinics}
-                    onChange={setClinicName}
+                    autoFilled={clinicAutoFilled}
+                    pinAsDefault={pinAsDefault}
+                    onPinAsDefaultChange={setPinAsDefault}
+                    onChange={handleClinicChange}
                   />
 
                   <Field>
-                    <FieldLabel htmlFor="vac-site">接种部位（可选）</FieldLabel>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <FieldLabel htmlFor="vac-site">接种部位（可选）</FieldLabel>
+                      {sameDaySite.usedSites.length > 0 ? (
+                        <span className="text-xs text-primary">
+                          同日已打 {sameDaySite.usedSites.join('、')}
+                          {sameDaySite.recommendedSite ? ` · 建议 ${sameDaySite.recommendedSite}` : ''}
+                        </span>
+                      ) : null}
+                    </div>
                     <Input
                       id="vac-site"
                       value={site}
@@ -402,16 +463,22 @@ export function VaccineDetailDrawer({
                       onChange={(e) => setSite(e.target.value)}
                     />
                     <div className="flex flex-wrap gap-1.5 pt-1">
-                      {VACCINE_SITE_PRESETS.map((preset) => (
-                        <QuickChip
-                          key={preset}
-                          variant="outline"
-                          active={site === preset}
-                          onClick={() => setSite(preset)}
-                        >
-                          {preset}
-                        </QuickChip>
-                      ))}
+                      {VACCINE_SITE_PRESETS.map((preset) => {
+                        const isRecommended = !site && sameDaySite.recommendedSite === preset;
+                        return (
+                          <QuickChip
+                            key={preset}
+                            variant="outline"
+                            tone={isRecommended ? 'primary' : 'health'}
+                            active={site === preset}
+                            onClick={() => setSite(preset)}
+                            className={isRecommended ? 'border-primary/60 text-primary' : undefined}
+                          >
+                            {preset}
+                            {isRecommended ? ' · 建议' : ''}
+                          </QuickChip>
+                        );
+                      })}
                     </div>
                   </Field>
 
@@ -425,6 +492,20 @@ export function VaccineDetailDrawer({
                         placeholder="对照绿本选填"
                         onChange={(e) => setManufacturer(e.target.value)}
                       />
+                      {suggestedManufacturers.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {suggestedManufacturers.map((maker) => (
+                            <QuickChip
+                              key={maker}
+                              variant="outline"
+                              active={manufacturer === maker}
+                              onClick={() => setManufacturer(maker)}
+                            >
+                              {maker}
+                            </QuickChip>
+                          ))}
+                        </div>
+                      ) : null}
                     </Field>
                     <Field>
                       <FieldLabel htmlFor="vac-batch">疫苗批号（可选）</FieldLabel>

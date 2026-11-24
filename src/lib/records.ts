@@ -170,14 +170,26 @@ export interface MedicinePreset {
   dosage: string;
 }
 
+export interface SolidFoodPreset {
+  food: string;
+  amount: string;
+}
+
 export interface SmartDefaults {
   feeding: {
     last_milk_ml: number;
     frequent_milk_ml: number[];
     last_feeding_subtype: FeedingSubtype;
+    last_milk_subtype: 'formula' | 'breast';
+    last_breast_mode: FeedingMode;
+    last_breast_duration_min: number;
     last_breast_side: BreastSide | null;
     suggested_breast_side: BreastSide;
-    recent_solid_foods: string[];
+    recent_solids: SolidFoodPreset[];
+  };
+  sleep: {
+    suggested_nap_min: number;
+    suggested_night_min: number;
   };
   health: {
     last_temperature_c: number;

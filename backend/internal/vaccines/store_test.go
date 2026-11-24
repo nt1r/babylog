@@ -46,7 +46,7 @@ func TestStoreIdempotentSeedAndStateTransitions(t *testing.T) {
 	ctx := context.Background()
 
 	// 首次读取自动初始化 22 剂 NIP，二次读取幂等不重复。
-	ov1, err := store.GetOverview(ctx, profile.ID, profile.BirthDate, loc)
+	ov1, err := store.GetOverview(ctx, profile.ID, profile.BirthDate, "", loc)
 	if err != nil {
 		t.Fatalf("GetOverview #1: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestStoreIdempotentSeedAndStateTransitions(t *testing.T) {
 		t.Fatalf("expected 2026-02-28 on 2026-03-10 (-10d) to be due_soon, got %s", hepb2.AlertState)
 	}
 
-	ov2, err := store.GetOverview(ctx, profile.ID, profile.BirthDate, loc)
+	ov2, err := store.GetOverview(ctx, profile.ID, profile.BirthDate, "", loc)
 	if err != nil {
 		t.Fatalf("GetOverview #2: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestStoreBatchAtomicityRollback(t *testing.T) {
 	loc, _ := timeutil.LoadLocation("Asia/Shanghai")
 	ctx := context.Background()
 
-	ov, err := store.GetOverview(ctx, profile.ID, profile.BirthDate, loc)
+	ov, err := store.GetOverview(ctx, profile.ID, profile.BirthDate, "", loc)
 	if err != nil {
 		t.Fatalf("GetOverview: %v", err)
 	}
@@ -312,5 +312,156 @@ func TestStoreDeleteDoseRenumbersSiblingsAndDeleteTemplate(t *testing.T) {
 	}
 	if updatedFlu.AgeLabel != "6月龄起" {
 		t.Fatalf("expected flu AgeLabel preserved on same age_months update, got %q", updatedFlu.AgeLabel)
+	}
+}
+
+func TestStoreDefaultClinicAutoRememberExplicitPinAndBatchRollback(t *testing.T) {
+	now := time.Date(2026, 3, 10, 2, 0, 0, 0, time.UTC)
+	db, store, profile := setupTestStores(t, now)
+	loc, _ := timeutil.LoadLocation("Asia/Shanghai")
+	ctx := context.Background()
+
+	readClinic := func() string {
+		t.Helper()
+		var p baby.Profile
+		if err := db.Gorm().Where("id = ?", profile.ID).First(&p).Error; err != nil {
+			t.Fatalf("read back baby profile: %v", err)
+		}
+		return p.DefaultClinicName
+	}
+
+	ov, err := store.GetOverview(ctx, profile.ID, profile.BirthDate, readClinic(), loc)
+	if err != nil {
+		t.Fatalf("GetOverview: %v", err)
+	}
+	if ov.DefaultClinicName != "" {
+		t.Fatalf("expected initial default_clinic_name empty, got %q", ov.DefaultClinicName)
+	}
+
+	var birthHepB1, hepb2, polio1, dtap1 *vaccines.DoseView
+	for i := range ov.Doses {
+		d := &ov.Doses[i]
+		if d.TemplateCode == nil {
+			continue
+		}
+		switch {
+		case *d.TemplateCode == "hepb" && d.DoseNumber == 1:
+			birthHepB1 = d
+		case *d.TemplateCode == "hepb" && d.DoseNumber == 2:
+			hepb2 = d
+		case *d.TemplateCode == "polio" && d.DoseNumber == 1:
+			polio1 = d
+		case *d.TemplateCode == "dtap" && d.DoseNumber == 1:
+			dtap1 = d
+		}
+	}
+	if birthHepB1 == nil || hepb2 == nil || polio1 == nil || dtap1 == nil {
+		t.Fatalf("missing expected baseline doses")
+	}
+
+	// 1. 产院出生剂次（乙肝第 1 剂）填产院名称，不应污染默认社区门诊。
+	birthDate := profile.BirthDate
+	if _, err := store.UpdateDose(ctx, profile.ID, birthHepB1.ID, profile.BirthDate, loc, vaccines.UpdateDoseInput{
+		Status:       vaccines.StatusCompleted,
+		VaccinatedAt: &birthDate,
+		ClinicName:   "市妇幼保健院",
+	}); err != nil {
+		t.Fatalf("complete birth dose: %v", err)
+	}
+	if got := readClinic(); got != "" {
+		t.Fatalf("expected birth hospital dose not to pollute default_clinic_name, got %q", got)
+	}
+
+	// 2. 首次常规剂次填写社区医院时自动记住为默认门诊。
+	schedDate := "2026-03-12"
+	if _, err := store.UpdateDose(ctx, profile.ID, hepb2.ID, profile.BirthDate, loc, vaccines.UpdateDoseInput{
+		Status:        vaccines.StatusScheduled,
+		ScheduledDate: &schedDate,
+		ClinicName:    "阳光街道社区卫生服务中心",
+	}); err != nil {
+		t.Fatalf("schedule routine dose: %v", err)
+	}
+	if got := readClinic(); got != "阳光街道社区卫生服务中心" {
+		t.Fatalf("expected auto-remembered default_clinic_name, got %q", got)
+	}
+
+	// 3. 偶发去其他医院（SetDefaultClinic=false）不得覆盖既有默认门诊。
+	if _, err := store.UpdateDose(ctx, profile.ID, polio1.ID, profile.BirthDate, loc, vaccines.UpdateDoseInput{
+		Status:        vaccines.StatusScheduled,
+		ScheduledDate: &schedDate,
+		ClinicName:    "儿童医院",
+	}); err != nil {
+		t.Fatalf("schedule one-off clinic: %v", err)
+	}
+	if got := readClinic(); got != "阳光街道社区卫生服务中心" {
+		t.Fatalf("expected one-off clinic not to overwrite default, got %q", got)
+	}
+
+	// 4. 显式 SetDefaultClinic=true 覆写默认门诊并回读 baby_profiles 确认落库。
+	if _, err := store.UpdateDose(ctx, profile.ID, dtap1.ID, profile.BirthDate, loc, vaccines.UpdateDoseInput{
+		Status:           vaccines.StatusScheduled,
+		ScheduledDate:    &schedDate,
+		ClinicName:       "高新社区卫生服务中心",
+		SetDefaultClinic: true,
+	}); err != nil {
+		t.Fatalf("schedule with explicit pin: %v", err)
+	}
+	if got := readClinic(); got != "高新社区卫生服务中心" {
+		t.Fatalf("expected persisted default_clinic_name updated to 高新社区卫生服务中心, got %q", got)
+	}
+
+	// 5. 批量更新包含非法 ID 且携带 SetDefaultClinic=true 时，事务完整回滚（剂次与默认门诊均不改动）。
+	badClinic := "错误回滚医院"
+	_, err = store.BatchUpdate(ctx, profile.ID, profile.BirthDate, loc, vaccines.BatchUpdateInput{
+		Action:           vaccines.BatchActionSchedule,
+		DoseIDs:          []int64{polio1.ID, 999999},
+		ScheduledDate:    &schedDate,
+		ClinicName:       &badClinic,
+		SetDefaultClinic: true,
+	})
+	if !errors.Is(err, vaccines.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound on invalid batch ID, got %v", err)
+	}
+	if got := readClinic(); got != "高新社区卫生服务中心" {
+		t.Fatalf("expected default_clinic_name rolled back, got %q", got)
+	}
+	var polioPersisted vaccines.DoseRecord
+	if err := db.Gorm().Where("id = ?", polio1.ID).First(&polioPersisted).Error; err != nil {
+		t.Fatalf("read back polio1 after rollback: %v", err)
+	}
+	if polioPersisted.ClinicName != "儿童医院" {
+		t.Fatalf("expected polio1 clinic_name untouched after rollback, got %q", polioPersisted.ClinicName)
+	}
+
+	// 6. 独立验证合法常规剂次批量预约在空默认门诊时自动记住常去门诊。
+	db2, store2, profile2 := setupTestStores(t, now)
+	ov2, err := store2.GetOverview(ctx, profile2.ID, profile2.BirthDate, "", loc)
+	if err != nil {
+		t.Fatalf("GetOverview #2: %v", err)
+	}
+	var routineIDs []int64
+	for _, d := range ov2.Doses {
+		if d.AgeMonths == 2 {
+			routineIDs = append(routineIDs, d.ID)
+		}
+	}
+	if len(routineIDs) < 2 {
+		t.Fatalf("expected >=2 2-month routine doses, got %d", len(routineIDs))
+	}
+	batchClinic := "滨江社区卫生服务中心"
+	if _, err := store2.BatchUpdate(ctx, profile2.ID, profile2.BirthDate, loc, vaccines.BatchUpdateInput{
+		Action:        vaccines.BatchActionSchedule,
+		DoseIDs:       routineIDs,
+		ScheduledDate: &schedDate,
+		ClinicName:    &batchClinic,
+	}); err != nil {
+		t.Fatalf("valid batch schedule auto-remember: %v", err)
+	}
+	var profile2After baby.Profile
+	if err := db2.Gorm().Where("id = ?", profile2.ID).First(&profile2After).Error; err != nil {
+		t.Fatalf("read back profile2: %v", err)
+	}
+	if profile2After.DefaultClinicName != batchClinic {
+		t.Fatalf("expected batch schedule to auto-remember %q, got %q", batchClinic, profile2After.DefaultClinicName)
 	}
 }

@@ -103,8 +103,9 @@ func (s *Store) EnsureNIPSeeded(ctx context.Context, babyID int64) error {
 	})
 }
 
-// GetOverview 返回宝宝完整疫苗计划、进度摘要、下一步焦点及最近常用接种地点。
-func (s *Store) GetOverview(ctx context.Context, babyID int64, birthDate string, loc *time.Location) (*OverviewResponse, error) {
+// GetOverview 返回宝宝完整疫苗计划、进度摘要、下一步焦点、常去接种门诊及最近常用接种地点。
+// defaultClinicName 由外层中间件注入的宝宝档案透传，避免重复查询 baby_profiles 表。
+func (s *Store) GetOverview(ctx context.Context, babyID int64, birthDate string, defaultClinicName string, loc *time.Location) (*OverviewResponse, error) {
 	loc = resolveLocation(loc)
 	if err := s.EnsureNIPSeeded(ctx, babyID); err != nil {
 		return nil, err
@@ -130,12 +131,13 @@ func (s *Store) GetOverview(ctx context.Context, babyID int64, birthDate string,
 	}
 
 	return &OverviewResponse{
-		Today:         todayKey,
-		BirthDate:     birthDate,
-		Disclaimer:    medicalDisclaimer,
-		Summary:       buildSummary(views),
-		RecentClinics: clinics,
-		Doses:         views,
+		Today:             todayKey,
+		BirthDate:         birthDate,
+		Disclaimer:        medicalDisclaimer,
+		DefaultClinicName: strings.TrimSpace(defaultClinicName),
+		Summary:           buildSummary(views),
+		RecentClinics:     clinics,
+		Doses:             views,
 	}, nil
 }
 
@@ -375,6 +377,10 @@ func (s *Store) UpdateDose(ctx context.Context, babyID int64, id int64, birthDat
 		).Updates(&existing).Error; err != nil {
 			return err
 		}
+
+		if err := syncDefaultClinicTx(tx, babyID, norm.ClinicName, norm.SetDefaultClinic, !isBirthHospitalDose(existing), nowStr); err != nil {
+			return err
+		}
 		updated = existing
 		return nil
 	})
@@ -408,7 +414,11 @@ func (s *Store) BatchUpdate(ctx context.Context, babyID int64, birthDate string,
 			return ErrNotFound
 		}
 
+		hasNonBirthDose := false
 		for i := range rows {
+			if !isBirthHospitalDose(rows[i]) {
+				hasNonBirthDose = true
+			}
 			if norm.Action == BatchActionSchedule {
 				rows[i].Status = StatusScheduled
 				rows[i].ScheduledDate = norm.ScheduledDate
@@ -445,6 +455,11 @@ func (s *Store) BatchUpdate(ctx context.Context, babyID int64, birthDate string,
 				"note",
 				"updated_at",
 			).Updates(&rows[i]).Error; err != nil {
+				return err
+			}
+		}
+		if norm.ClinicName != nil && *norm.ClinicName != "" {
+			if err := syncDefaultClinicTx(tx, babyID, *norm.ClinicName, norm.SetDefaultClinic, hasNonBirthDose, nowStr); err != nil {
 				return err
 			}
 		}
@@ -534,6 +549,32 @@ func (s *Store) DeleteTemplate(ctx context.Context, babyID int64, templateCode s
 		}
 		return nil
 	})
+}
+
+// syncDefaultClinicTx 在疫苗写入事务内同步常去接种门诊：
+// 显式置顶（explicitPin）时直接覆写；否则仅在目标包含非产院出生剂次（常规社区剂次）且档案尚无默认门诊时自动补写，
+// 确保首次填写社区医院即生效，同时产院补录与后续偶发去其他医院不覆盖固定默认门诊。
+func syncDefaultClinicTx(tx *gorm.DB, babyID int64, clinicName string, explicitPin bool, allowAutoRemember bool, nowStr string) error {
+	if clinicName == "" {
+		return nil
+	}
+	if explicitPin {
+		return tx.Table("baby_profiles"). // cross-table: 同事务原子覆写宝宝常去门诊
+							Where("id = ?", babyID).
+							Updates(map[string]any{
+				"default_clinic_name": clinicName,
+				"updated_at":          nowStr,
+			}).Error
+	}
+	if !allowAutoRemember {
+		return nil
+	}
+	return tx.Table("baby_profiles"). // cross-table: 同事务原子补写首次常规门诊
+						Where("id = ? AND default_clinic_name = ''", babyID).
+						Updates(map[string]any{
+			"default_clinic_name": clinicName,
+			"updated_at":          nowStr,
+		}).Error
 }
 
 // readRecentClinics 按最近更新时间取前 20 条记录在内存中去重，既保留「最近使用优先」顺序又避免 SQLite DISTINCT 破坏排序。

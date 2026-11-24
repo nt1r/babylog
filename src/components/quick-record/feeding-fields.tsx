@@ -6,7 +6,7 @@ import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { FEEDING_SUBTYPE_OPTIONS } from '@/lib/categories';
 import { parseStrictInt } from '@/lib/number';
-import { ACCEPTANCE_LABELS, BREAST_SIDE_LABELS, type BreastSide } from '@/lib/records';
+import { ACCEPTANCE_LABELS, BREAST_SIDE_LABELS, type BreastSide, type SolidFoodPreset } from '@/lib/records';
 
 const BREAST_MODE_OPTIONS = [
   { value: 'direct', label: '亲喂' },
@@ -19,7 +19,7 @@ const SOLID_AMOUNT_PRESETS = ['几口', '半碗', '一碗'] as const;
 interface FeedingFieldsProps {
   readonly state: FeedingFormState;
   readonly frequentMilk: readonly number[];
-  readonly solidPresets: readonly string[];
+  readonly solidPresets: readonly SolidFoodPreset[];
   readonly lastBreastSide: BreastSide | null;
   readonly suggestedBreastSide: BreastSide;
   readonly onChange: (patch: Partial<FeedingFormState>) => void;
@@ -143,17 +143,32 @@ export function FeedingFields({
               id="solid-food-input"
               value={state.solidFood}
               placeholder="例如：高铁米粉、南瓜泥"
-              onChange={(event) => onChange({ solidFood: event.target.value })}
+              onChange={(event) => {
+                const nextFood = event.target.value;
+                const matched = !state.solidAmount.trim()
+                  ? solidPresets.find((item) => item.food === nextFood.trim() && item.amount)
+                  : undefined;
+                onChange({
+                  solidFood: nextFood,
+                  ...(matched ? { solidAmount: matched.amount } : {}),
+                });
+              }}
             />
             <div className="flex flex-wrap gap-1.5 pt-1">
-              {solidPresets.map((food) => (
+              {solidPresets.map((item) => (
                 <QuickChip
-                  key={food}
+                  key={item.food}
                   tone="feeding"
-                  active={state.solidFood === food}
-                  onClick={() => onChange({ solidFood: food })}
+                  active={state.solidFood === item.food}
+                  onClick={() =>
+                    onChange({
+                      solidFood: item.food,
+                      solidAmount: item.amount,
+                    })
+                  }
                 >
-                  {food}
+                  {item.food}
+                  {item.amount ? ` · ${item.amount}` : ''}
                 </QuickChip>
               ))}
             </div>

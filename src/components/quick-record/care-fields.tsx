@@ -44,6 +44,24 @@ export function CareFields({ state, otherPresets, onChange }: CareFieldsProps) {
 
           {state.diaperKind === 'poop' || state.diaperKind === 'both' ? (
             <div className="space-y-3 rounded-xl border border-border/70 bg-muted/20 p-3.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-medium text-muted-foreground">便便观察（可选）</p>
+                <QuickChip
+                  tone="care"
+                  variant="outline"
+                  active={state.stoolConsistency === 'soft' && state.stoolColor === 'yellow'}
+                  onClick={() => {
+                    const isNormal = state.stoolConsistency === 'soft' && state.stoolColor === 'yellow';
+                    onChange({
+                      stoolConsistency: isNormal ? '' : 'soft',
+                      stoolColor: isNormal ? '' : 'yellow',
+                    });
+                  }}
+                >
+                  正常（软便 · 黄色）
+                </QuickChip>
+              </div>
+
               <div className="space-y-1.5">
                 <p className="text-xs font-medium text-muted-foreground">便便性状（可选）</p>
                 <div className="flex flex-wrap gap-1.5">

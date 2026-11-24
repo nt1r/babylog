@@ -87,6 +87,24 @@ func formatAgeLabel(ageMonths int) string {
 	return fmt.Sprintf("%d月龄", ageMonths)
 }
 
+// isBirthHospitalDose 判断单剂记录是否属于产院出生疫苗（乙肝第 1 剂或卡介苗），
+// 用于避免补录产院门诊名称时自动覆盖宝宝常规社区接种门诊。
+func isBirthHospitalDose(rec DoseRecord) bool {
+	if rec.TemplateCode == nil {
+		return false
+	}
+	tpl, ok := lookupTemplate(*rec.TemplateCode)
+	if !ok {
+		return false
+	}
+	for i := range tpl.Doses {
+		if tpl.Doses[i].DoseNumber == rec.DoseNumber {
+			return tpl.Doses[i].IsBirthHospital
+		}
+	}
+	return false
+}
+
 // buildDoseView 组合数据库记录、内置知识库与实时派生字段。
 func buildDoseView(rec DoseRecord, birthDate string, todayKey string) DoseView {
 	defaultDue, err := addCalendarMonthsClamped(birthDate, rec.AgeMonths)

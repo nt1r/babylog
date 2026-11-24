@@ -7,25 +7,28 @@ import (
 )
 
 const (
-	MaxNoteLength      = 500
-	DefaultListLimit   = 20
-	MaxListLimit       = 100
-	MinMilkML          = 1
-	MaxMilkML          = 1000
-	MinBreastMin       = 1
-	MaxBreastMin       = 180
-	MinSleepMin        = 1
-	MaxSleepMin        = 24 * 60
-	MinTemperatureC    = 34.0
-	MaxTemperatureC    = 43.0
-	MinWeightKg        = 0.3
-	MaxWeightKg        = 40.0
-	MinHeightCm        = 20.0
-	MaxHeightCm        = 150.0
-	MinHeadCm          = 20.0
-	MaxHeadCm          = 70.0
-	DefaultStarterMilk = 90
-	DefaultStarterTemp = 36.6
+	MaxNoteLength           = 500
+	DefaultListLimit        = 20
+	MaxListLimit            = 100
+	MinMilkML               = 1
+	MaxMilkML               = 1000
+	MinBreastMin            = 1
+	MaxBreastMin            = 180
+	MinSleepMin             = 1
+	MaxSleepMin             = 24 * 60
+	MinTemperatureC         = 34.0
+	MaxTemperatureC         = 43.0
+	MinWeightKg             = 0.3
+	MaxWeightKg             = 40.0
+	MinHeightCm             = 20.0
+	MaxHeightCm             = 150.0
+	MinHeadCm               = 20.0
+	MaxHeadCm               = 70.0
+	DefaultStarterMilk      = 90
+	DefaultStarterBreastMin = 15
+	DefaultStarterNapMin    = 60
+	DefaultStarterNightMin  = 480
+	DefaultStarterTemp      = 36.6
 
 	// 四类记录的标准子类型常量，统一用于校验、列表筛选、汇总与智能默认值。
 	FeedingSubtypeBreast  = "breast"
@@ -234,14 +237,29 @@ type MedicinePreset struct {
 	Dosage string `json:"dosage"`
 }
 
+// SolidFoodPreset 表示智能默认值中的常用辅食名称与最近份量。
+type SolidFoodPreset struct {
+	Food   string `json:"food"`
+	Amount string `json:"amount"`
+}
+
 // FeedingDefaults 表示喂养快捷录入的智能默认值。
 type FeedingDefaults struct {
-	LastMilkML          int      `json:"last_milk_ml"`
-	FrequentMilkML      []int    `json:"frequent_milk_ml"`
-	LastFeedingSubtype  string   `json:"last_feeding_subtype"`
-	LastBreastSide      *string  `json:"last_breast_side"`
-	SuggestedBreastSide string   `json:"suggested_breast_side"`
-	RecentSolidFoods    []string `json:"recent_solid_foods"`
+	LastMilkML            int               `json:"last_milk_ml"`
+	FrequentMilkML        []int             `json:"frequent_milk_ml"`
+	LastFeedingSubtype    string            `json:"last_feeding_subtype"`
+	LastMilkSubtype       string            `json:"last_milk_subtype"`
+	LastBreastMode        string            `json:"last_breast_mode"`
+	LastBreastDurationMin int               `json:"last_breast_duration_min"`
+	LastBreastSide        *string           `json:"last_breast_side"`
+	SuggestedBreastSide   string            `json:"suggested_breast_side"`
+	RecentSolids          []SolidFoodPreset `json:"recent_solids"`
+}
+
+// SleepDefaults 表示睡眠快捷录入的习惯时长默认值。
+type SleepDefaults struct {
+	SuggestedNapMin   int `json:"suggested_nap_min"`
+	SuggestedNightMin int `json:"suggested_night_min"`
 }
 
 // HealthDefaults 表示健康快捷录入的智能默认值。
@@ -258,6 +276,7 @@ type CareDefaults struct {
 // SmartDefaults 汇总返回给前端预填与 1-Tap 按钮的习惯默认值。
 type SmartDefaults struct {
 	Feeding FeedingDefaults `json:"feeding"`
+	Sleep   SleepDefaults   `json:"sleep"`
 	Health  HealthDefaults  `json:"health"`
 	Care    CareDefaults    `json:"care"`
 }
