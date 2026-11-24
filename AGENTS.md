@@ -14,7 +14,7 @@
 
 - 后端根目录为 `backend/`；开发、静态检查、测试与发布全链路保持 `CGO_ENABLED=0`，静态检查覆盖所有构建标签（含 `embedwebui`），开发态与发布态内嵌资源互不污染，开发工具不写入主 `backend/go.mod`。
 - 前端包管理器固定为 `pnpm`，依赖版本保持精确固定；`src/routeTree.gen.ts` 由 `@tanstack/router-plugin` 自动生成并纳入版本控制以保证直接运行 `pnpm check`，禁止手动编辑。
-- 新增或修改涉及核心业务、复杂流程、关键算法或 Go 特有机制的代码时，须按 `CODING_STANDARDS.md` 同步新增、更新或清理中文注释，保持注释与实现一致。
+- 改动核心业务、复杂流程或 Go 特有机制代码时，按 `CODING_STANDARDS.md` 同步维护中文注释，保持注释与实现一致。
 
 ## 安全与隐私红线
 
