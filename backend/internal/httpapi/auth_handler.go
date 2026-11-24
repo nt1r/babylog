@@ -92,6 +92,8 @@ func readSessionCookie(r *http.Request) (string, bool) {
 	return cookie.Value, true
 }
 
+// setSessionCookie 下发会话 Cookie：
+// HttpOnly 防止前端脚本窃取，SameSite=Strict 防御跨站请求携带，Secure 在直连 TLS 时自动开启。
 func setSessionCookie(c *gin.Context, token string, maxAge int) {
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     auth.SessionCookieName,
@@ -110,7 +112,9 @@ func clearSessionCookie(c *gin.Context) {
 }
 
 // readLoginBody 严格解析并校验登录 JSON 请求体。
-// 复用 readJSONBytes 区分 415/413/400，再拒绝缺失字段、null 或非字符串类型，并原样保留密码空白字符。
+// 此处反序列化为 any 再手工断言 map[string]any 与 string（而非直接解到 struct），
+// 因为 Go 结构体反序列化会把缺失键或 JSON null 静默置为零值 ""，无法严格拒绝缺失字段或非字符串类型；
+// 同时保留密码原始空白字符不做 TrimSpace。
 func readLoginBody(c *gin.Context) (username, password string, errStatus int, errMsg string) {
 	body, status, msg := readJSONBytes(c, maxLoginBodyBytes, "请使用 JSON 格式提交登录信息")
 	if status != 0 {

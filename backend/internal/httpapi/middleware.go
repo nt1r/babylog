@@ -17,6 +17,7 @@ import (
 const ctxBabyIDKey = "babyID"
 
 // requireAuthMiddleware 校验有效管理员会话，未认证或会话已过期时统一返回 401 中文 JSON。
+// Gin 中间件通过 c.AbortWithStatusJSON 终止后续调用链并写回响应，校验通过则调用 c.Next() 放行。
 func requireAuthMiddleware(store *auth.Store, logger *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token, hasCookie := readSessionCookie(c.Request)
@@ -57,6 +58,7 @@ func requireBabyProfileMiddleware(babyStore *baby.Store, logger *slog.Logger) gi
 }
 
 // mustBabyID 从 Gin 上下文读取已通过 requireBabyProfileMiddleware 校验的宝宝 ID。
+// c.Get 返回类型为 any，需通过 Go 类型断言 `id.(int64)` 安全还原为 int64。
 func mustBabyID(c *gin.Context) (int64, bool) {
 	id, ok := c.Get(ctxBabyIDKey)
 	if !ok {
@@ -109,6 +111,7 @@ func enforceSameOrigin(r *http.Request) error {
 	return nil
 }
 
+// messageError 是基于 string 的轻量错误类型，使下方哨兵错误可以声明为不可变 const（普通 errors.New 只能声明为 var）。
 type messageError string
 
 func (e messageError) Error() string { return string(e) }
@@ -129,7 +132,8 @@ func requestLoggerMiddleware(logger *slog.Logger) gin.HandlerFunc {
 	}
 }
 
-// recoveryMiddleware 捕获处理链路中的未预期 panic，禁用 Gin 默认含原始请求头的 stderr 输出，
+// recoveryMiddleware 捕获处理链路中的未预期 panic：
+// 传入 io.Discard 禁用 Gin 默认会打印原始 HTTP 请求头（含 Cookie）的 stderr 输出，
 // 改为统一通过 slog 记录脱敏信息并返回中文 JSON 500 响应。
 func recoveryMiddleware(logger *slog.Logger) gin.HandlerFunc {
 	return gin.CustomRecoveryWithWriter(io.Discard, func(c *gin.Context, recovered any) {

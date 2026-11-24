@@ -45,6 +45,7 @@ export function createDefaultSleepForm(now: Date, initialSubtype?: string): Slee
   };
 }
 
+/** 从既有睡眠记录还原表单状态：编辑态保留原始起止时刻，“再记一笔”态保留原时长并将醒来时间对齐到当前时刻。 */
 export function sleepFormFromRecord(record: SleepRecord, now: Date, useOriginalTime: boolean): SleepFormState {
   if (useOriginalTime) {
     const st = splitLocalDateTime(parseISO(record.started_at));

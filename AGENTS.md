@@ -4,7 +4,7 @@
 
 ## 文档指针（按需读取）
 
-- **代码审查、编写前端交互/表单/列表或编写 Go 模块/测试** → 先读 `CODING_STANDARDS.md`
+- **新增或修改前后端代码、维护中文注释或代码审查** → 先读 `CODING_STANDARDS.md`
 - **架构设计、模块命名或核对业务术语** → 先读 `GLOSSARY.md`
 - **调整视觉样式、亮暗主题或分类色 Token** → 先读 `docs/design-system.md`
 - **在系统临时目录验证前端纯 TS 模块** → 先读 `docs/temp-verification.md`
@@ -14,6 +14,7 @@
 
 - 后端根目录为 `backend/`；开发、静态检查、测试与发布全链路保持 `CGO_ENABLED=0`，静态检查覆盖所有构建标签（含 `embedwebui`），开发态与发布态内嵌资源互不污染，开发工具不写入主 `backend/go.mod`。
 - 前端包管理器固定为 `pnpm`，依赖版本保持精确固定；`src/routeTree.gen.ts` 由 `@tanstack/router-plugin` 自动生成并纳入版本控制以保证直接运行 `pnpm check`，禁止手动编辑。
+- 改动核心业务、复杂流程或 Go 特有机制代码时，按 `CODING_STANDARDS.md` 同步维护中文注释，保持注释与实现一致。
 
 ## 安全与隐私红线
 

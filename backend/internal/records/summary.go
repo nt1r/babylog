@@ -70,6 +70,7 @@ func AccumulateHealthSummary(sum *HealthDailySummary, r HealthRecord) {
 	switch r.Subtype {
 	case HealthSubtypeTemperature:
 		if sum.LatestTempC == nil && r.TemperatureC != nil {
+			// 复制一份标量值再取地址，避免小计结构体与原始记录共享同一指针。
 			v := *r.TemperatureC
 			sum.LatestTempC = &v
 		}

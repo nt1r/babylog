@@ -13,6 +13,13 @@ export const Route = createFileRoute('/_app')({
   component: AuthenticatedLayout,
 });
 
+/**
+ * 已认证业务区布局守卫，按严格顺序执行四层门禁：
+ * 1. 会话恢复或宝宝档案首次加载中 → 渲染骨架屏，避免闪烁跳转；
+ * 2. 未登录 → 重定向至登录页并携带来源路径；
+ * 3. 档案请求失败 → 停留错误重试页（避免把网络故障误判为未建档而跳去建档页）；
+ * 4. 确认档案为 null（尚未建档）→ 强制进入首次建档流程。
+ */
 function AuthenticatedLayout() {
   const user = useAuthStore((state) => state.user);
   const restoring = useAuthStore((state) => state.restoring);

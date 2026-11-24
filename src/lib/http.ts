@@ -22,6 +22,7 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
+/** 统一封装后端 JSON 接口请求，处理取消透传、非认证接口 401 全局清态以及中文错误提取。 */
 export async function apiRequest<T>(url: string, options: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, signal } = options;
   let response: Response;
@@ -33,6 +34,7 @@ export async function apiRequest<T>(url: string, options: RequestOptions = {}): 
       signal,
     });
   } catch (error) {
+    // 主动取消的请求须原样抛出 AbortError，供 TanStack Query / AbortController 静默忽略而非提示网络错误。
     if (error instanceof DOMException && error.name === 'AbortError') {
       throw error;
     }
@@ -47,6 +49,7 @@ export async function apiRequest<T>(url: string, options: RequestOptions = {}): 
   }
 
   if (!response.ok) {
+    // 登录接口返回 401 代表凭据错误，由表单本地展示；其余业务接口 401 代表会话过期，触发全局退登。
     if (response.status === 401 && !url.startsWith('/api/auth/')) {
       unauthorizedHandler?.();
     }

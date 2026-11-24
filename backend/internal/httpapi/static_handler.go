@@ -208,6 +208,7 @@ func isNotFoundOrEscaped(err error) bool {
 	return strings.Contains(err.Error(), "escapes from parent")
 }
 
+// serveFromFS 从抽象只读文件系统（如生产单二进制内嵌的 embed.FS）读取并响应静态文件。
 func serveFromFS(c *gin.Context, fsys fs.FS, relPath string) (bool, error) {
 	file, err := fsys.Open(relPath)
 	if err != nil {
@@ -227,6 +228,8 @@ func serveFromFS(c *gin.Context, fsys fs.FS, relPath string) (bool, error) {
 	}
 
 	applyStaticHeaders(c, relPath)
+	// http.ServeContent 需要 io.ReadSeeker 以支持 Range 请求与条件缓存；
+	// embed.FS 打开的文件通常已实现该接口，通过接口断言优先零拷贝输出，否则兜底读入内存再包装。
 	if seeker, ok := file.(io.ReadSeeker); ok {
 		http.ServeContent(c.Writer, c.Request, info.Name(), info.ModTime(), seeker)
 		return true, nil

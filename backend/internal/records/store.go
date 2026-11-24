@@ -64,7 +64,8 @@ func isAllowedSubtypeFilter(subtype string, allowed []string) bool {
 	return subtype == "" || subtype == "all" || slices.Contains(allowed, subtype)
 }
 
-// rangeBoundsUTC 根据 range 参数计算本地自然日范围对应的 UTC 起止边界；若 range=="all" 则 hasRange=false。
+// rangeBoundsUTC 根据 range 参数计算本地自然日范围对应的 UTC 起止边界 [startUTC, endUTC)。
+// 7d / 30d 均包含“今天”在内（分别回溯 6 天与 29 天）；range 为空或 "all" 时返回 hasRange=false 表示不限时间。
 func (s *Store) rangeBoundsUTC(rangeKey string, loc *time.Location) (startUTC, endUTC string, hasRange bool, err error) {
 	todayStart, todayEnd := timeutil.LocalDayBounds(s.now(), loc)
 	switch rangeKey {
@@ -88,8 +89,9 @@ type utcRange struct {
 	endUTC   string
 }
 
-// mergedDateRangesUTC 将当前页命中的本地自然日键按升序合并为连续的 UTC 时间区间列表，
-// 既避免稀疏分页（如 range=all 跨越数月）全扫中间无关日期，也对连续多日保持单区间高效查询。
+// mergedDateRangesUTC 将当前页命中的本地自然日键（map[string]struct{} 是 Go 中零额外内存占用的 Set 惯用法）
+// 按升序合并为连续的 UTC 时间区间列表：
+// 既避免稀疏分页（如 range=all 跨越数月）全扫中间无关日期，也对连续多日合并为单区间减少 SQL OR 分支。
 func mergedDateRangesUTC(keys map[string]struct{}, loc *time.Location) []utcRange {
 	if len(keys) == 0 {
 		return nil
@@ -107,6 +109,7 @@ func mergedDateRangesUTC(keys map[string]struct{}, loc *time.Location) []utcRang
 			continue
 		}
 		dayEnd := dayStart.AddDate(0, 0, 1)
+		// 若当前日零点紧接上一区间的右边界，直接向右延伸合并，无需新建区间。
 		if n := len(ranges); n > 0 && dayStart.Equal(ranges[n-1].end) {
 			ranges[n-1].end = dayEnd
 			ranges[n-1].endUTC = timeutil.FormatUTC(dayEnd)
@@ -122,7 +125,9 @@ func mergedDateRangesUTC(keys map[string]struct{}, loc *time.Location) []utcRang
 	return ranges
 }
 
-// applyTimeRanges 将一个或多个参数化时间区间附加到查询上（overlap=true 用于睡眠区间交集查询）。
+// applyTimeRanges 将一个或多个参数化时间区间附加到查询上。
+// overlap=false 用于时刻型记录（recorded_at 落入 [start, end)）；
+// overlap=true 用于睡眠区间交集查询（ended_at > start AND started_at < end），确保跨夜睡眠两端自然日都能命中。
 func (s *Store) applyTimeRanges(q *gorm.DB, ranges []utcRange, overlap bool) *gorm.DB {
 	if len(ranges) == 0 {
 		return q
@@ -134,6 +139,8 @@ func (s *Store) applyTimeRanges(q *gorm.DB, ranges []utcRange, overlap bool) *go
 	if len(ranges) == 1 {
 		return q.Where(cond, ranges[0].startUTC, ranges[0].endUTC)
 	}
+	// 多区间通过独立子查询 group 串联 OR 再整体作为 q.Where(group) 传入，
+	// 让 GORM 生成带括号的 `AND ((...) OR (...))`，防止 OR 优先级破坏外层的 baby_id / subtype 条件。
 	group := s.db.Where(cond, ranges[0].startUTC, ranges[0].endUTC)
 	for _, r := range ranges[1:] {
 		group = group.Or(cond, r.startUTC, r.endUTC)
@@ -143,6 +150,8 @@ func (s *Store) applyTimeRanges(q *gorm.DB, ranges []utcRange, overlap bool) *go
 
 // ==================== Shared Persistence Helpers ====================
 
+// deleteRecord 是四类记录共用的泛型删除辅助函数（类型参数 T 决定目标表模型）；
+// 按 id + baby_id 双条件限定归属，未命中任何行时返回 [ErrNotFound]。
 func deleteRecord[T any](s *Store, ctx context.Context, babyID, id int64) error {
 	var model T
 	res := s.db.WithContext(ctx).Where("id = ? AND baby_id = ?", id, babyID).Delete(&model)
@@ -155,8 +164,10 @@ func deleteRecord[T any](s *Store, ctx context.Context, babyID, id int64) error 
 	return nil
 }
 
-// updateRecord 在单个事务内按 babyID+id 读取记录、应用字段变更并显式 Select 更新，
-// 确保跨子类型切换时将不再适用的可空列显式置为 NULL。
+// updateRecord 是四类记录共用的泛型更新模板（类型参数 T 为具体记录结构体）：
+// 在单个事务内完成「按 babyID+id 读取 → apply 回调写入新字段 → 显式 Select(cols) 落库」。
+// GORM 默认的 Updates(&struct) 会跳过 nil 指针字段，因此必须传入全量可编辑列清单 cols，
+// 保证跨子类型切换时（如母乳改配方奶）废弃可空列在 SQLite 中被显式置为 NULL。
 func updateRecord[T any](s *Store, ctx context.Context, babyID, id int64, cols []string, apply func(*T)) (*T, error) {
 	var rec T
 	txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -187,6 +198,7 @@ func (s *Store) prepareListFilter(f ListFilter, allowedSubtypes []string, invali
 	return f, startUTC, endUTC, hasRange, nil
 }
 
+// queryPage 统一执行筛选计数与分页切片查询，返回当前页记录列表与满足条件的总条数。
 func queryPage[T any](s *Store, ctx context.Context, babyID int64, f ListFilter, startUTC, endUTC string, hasRange, overlap bool, orderBy string) ([]T, int64, error) {
 	var model T
 	base := s.db.WithContext(ctx).Model(&model).Where("baby_id = ?", babyID)
@@ -206,6 +218,7 @@ func queryPage[T any](s *Store, ctx context.Context, babyID int64, f ListFilter,
 		return nil, 0, err
 	}
 
+	// 使用 make([]T, 0) 而非 nil 切片，确保空结果经 JSON 序列化后返回 `[]` 而非 `null`。
 	items := make([]T, 0)
 	if total == 0 || int64(f.Offset) >= total {
 		return items, total, nil
@@ -216,6 +229,7 @@ func queryPage[T any](s *Store, ctx context.Context, babyID int64, f ListFilter,
 	return items, total, nil
 }
 
+// pointListSpec 描述单类时刻型记录（喂养/护理/健康）在通用分页小计流程中的差异化配置与累加回调。
 type pointListSpec[T any, S any] struct {
 	allowedSubtypes []string
 	invalidMsg      string
@@ -224,19 +238,22 @@ type pointListSpec[T any, S any] struct {
 	accumulate      func(*S, T)
 }
 
-// listPointRecords 统一处理喂养、护理、健康三类时刻型记录的分页查询与按日完整小计聚合，
-// 二次小计查询仅扫描当前页涉及的合并日期区间，防止分页截断失真与稀疏跨月全表扫描。
+// listPointRecords 统一处理喂养、护理、健康三类时刻型记录的分页查询与按日完整小计聚合：
+// 先查当前分页，再按涉及的本地自然日合并区间反查全天记录聚合小计，
+// 保证每日小计不受分页边界截断影响，同时避免稀疏跨月场景全表扫描。
 func listPointRecords[T any, S any](s *Store, ctx context.Context, babyID int64, f ListFilter, spec pointListSpec[T, S]) (*ListResult[T, S], error) {
 	f, startUTC, endUTC, hasRange, err := s.prepareListFilter(f, spec.allowedSubtypes, spec.invalidMsg)
 	if err != nil {
 		return nil, err
 	}
 
+	// 1. 拉取当前分页记录。
 	items, total, err := queryPage[T](s, ctx, babyID, f, startUTC, endUTC, hasRange, false, "recorded_at DESC, id DESC")
 	if err != nil {
 		return nil, err
 	}
 
+	// 2. 提取当前页命中的所有本地自然日（YYYY-MM-DD）。
 	dateKeys := make(map[string]struct{})
 	for _, it := range items {
 		if ts, parseErr := timeutil.ParseTimestamp(spec.recordedAt(it)); parseErr == nil {
@@ -244,6 +261,7 @@ func listPointRecords[T any, S any](s *Store, ctx context.Context, babyID int64,
 		}
 	}
 
+	// 3. 反查这些自然日的全部同条件记录并逐条累加生成完整每日小计。
 	summaries := make(map[string]S, len(dateKeys))
 	if ranges := mergedDateRangesUTC(dateKeys, f.Loc); len(ranges) > 0 {
 		var model T
@@ -268,6 +286,7 @@ func listPointRecords[T any, S any](s *Store, ctx context.Context, babyID int64,
 			if _, wanted := dateKeys[key]; !wanted {
 				continue
 			}
+			// Go 的 map 值不可直接取地址修改（&summaries[key] 非法），需拷贝出值类型累加后再写回。
 			sum := summaries[key]
 			spec.accumulate(&sum, r)
 			summaries[key] = sum
@@ -644,6 +663,8 @@ func (s *Store) ReadWindow(ctx context.Context, babyID int64, start, end time.Ti
 }
 
 // ReadLatestHighlights 读取指定宝宝跨时间窗口的最近一次喂养、换尿布与体温标记。
+// 此处使用 Limit(1).Find(&rec) 并通过 rec.ID > 0 判断是否命中（而非 First），
+// 因为 GORM 的 Find 在无记录时返回 nil error 而非 ErrRecordNotFound，更适合多个可选高亮字段依次读取。
 func (s *Store) ReadLatestHighlights(ctx context.Context, babyID int64) (*LatestHighlights, error) {
 	hl := &LatestHighlights{}
 

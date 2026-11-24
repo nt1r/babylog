@@ -56,6 +56,8 @@ func (e *ValidationError) Error() string { return e.Message }
 var ErrNotFound = errors.New("记录不存在或已被删除")
 
 // FeedingRecord 对应 SQLite 中的 feeding_records 表。
+// 各子类型专属字段均使用指针类型（*string / *int），以区分“该子类型不适用（SQL NULL / JSON null）”与 Go 零值；
+// 其余记录模型（CareRecord、HealthRecord）遵循同一约定，后续不再重复说明。
 type FeedingRecord struct {
 	ID          int64   `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
 	BabyID      int64   `gorm:"column:baby_id;not null" json:"baby_id"`
@@ -217,7 +219,8 @@ type ListFilter struct {
 	Offset  int
 }
 
-// ListResult 统一封装记录分页列表与当前页涉及本地日期的完整每日小计。
+// ListResult 是 Go 泛型响应结构（类型参数 T 为记录模型，S 为每日小计结构），
+// 统一封装四类记录的分页列表与当前页涉及本地日期的完整每日小计，避免为每类记录重复定义分页信封。
 type ListResult[T any, S any] struct {
 	Items          []T          `json:"items"`
 	Total          int64        `json:"total"`

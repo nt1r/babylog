@@ -20,19 +20,21 @@ const (
 	MaxTrendDays = 90
 )
 
-// daySlots 定义全天照护节律柱状图的 5 个有序中文时段标签。
+// daySlots 定义全天照护节律柱状图的 5 个有序中文时段标签（`[...]` 表示由编译器推导固定长度数组）。
 var daySlots = [...]string{"清晨", "上午", "下午", "傍晚", "夜间"}
 
 var weekdayLabels = [...]string{"周日", "周一", "周二", "周三", "周四", "周五", "周六"}
 
 // FeedingSummary 汇总今日喂养 KPI 与上次喂养时刻。
-// 通过内嵌 records.FeedingDailySummary 复用单一汇总结构并保持 JSON 顶层字段不变。
+// 通过 Go 结构体嵌入（匿名字段）[records.FeedingDailySummary] 复用单一汇总结构：
+// 序列化为 JSON 时其内部字段会自动扁平提升到顶层，不产生额外嵌套层级。
 type FeedingSummary struct {
 	records.FeedingDailySummary
 	LastFeedingAt *string `json:"last_feeding_at"`
 }
 
-// SleepSummary 汇总今日睡眠 KPI（跨夜睡眠已按本地自然日切分），直接复用 records.SleepDailySummary。
+// SleepSummary 汇总今日睡眠 KPI（跨夜睡眠已按本地自然日切分）。
+// 使用 Go 类型别名（`=`）直接等价复用 [records.SleepDailySummary]，零拷贝且无需显式类型转换。
 type SleepSummary = records.SleepDailySummary
 
 // HealthSummary 汇总最近一次体温记录。
@@ -232,6 +234,8 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 		for k, mins := range parts {
 			sleepMinByDay[k] += mins
 		}
+		// 仅当入睡时刻本身落在当前统计窗口 [windowStart, todayEnd) 内时才计入照护节律，
+		// 避免从窗口前一天跨夜延续进来的睡眠被重复归入本窗口的入睡频次。
 		if !st.Before(windowStart) && st.Before(todayEnd) {
 			slotCounts[daySlotLabel(st, loc)]++
 		}
@@ -249,6 +253,8 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 		}
 	}
 
+	// 4. 按升序日期键组装连续每日数据点（无记录日期自动补 0）：
+	// 近 7 天以内横轴用“周一~周日”，超过 7 天用“月/日”（Go 参考格式 "1/2" 表示不补零的月/日）。
 	daily := make([]DailyTrendPoint, 0, len(keys))
 	for _, key := range keys {
 		dayTime, _ := time.ParseInLocation(timeutil.DateLayout, key, loc)

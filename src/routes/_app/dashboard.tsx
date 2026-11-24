@@ -166,6 +166,7 @@ function DashboardPage() {
   const deleteMutation = useDeleteRecordMutation();
   const [trendTab, setTrendTab] = useState<DashboardTrendTab>('feeding');
   const [quickBusyKey, setQuickBusyKey] = useState<OneTapKind | null>(null);
+  // 同步防重入锁：在 React 状态更新触发按钮禁用前的同一帧内拦截高频连点，防止发出重复写入请求。
   const oneTapLockRef = useRef(false);
   // 每分钟刷新一次本地时钟，确保「距上次喂奶/换尿布 X 分钟前」在数据无变更时也能实时跳动。
   const [now, setNow] = useState(() => new Date());
@@ -274,6 +275,7 @@ function DashboardPage() {
 
     try {
       const created = await saveMutation.mutateAsync(preset.buildRequest(recordedAt));
+      // 单次撤销守卫：防止用户在 Toast 消失前连续点击“撤销”，对已删除记录重复发 DELETE 误报 404。
       let undone = false;
       toast.success(preset.toastTitle, `记录时间 ${timeText}`, {
         action: {

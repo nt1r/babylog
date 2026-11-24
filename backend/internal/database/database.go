@@ -52,7 +52,9 @@ func (d *DB) Close() error {
 }
 
 // Open 初始化数据目录权限（0700）、SQLite 文件权限（0600）、WAL 连接参数，并执行内嵌 goose 迁移。
+// 任意后续初始化步骤失败时会自动关闭已打开的连接句柄，避免文件描述符泄漏。
 func Open(dataDir string) (*DB, error) {
+	// 1. 创建数据目录并显式 Chmod 0700（仅当前用户可读写进入），抵消进程 umask 或已有宽松权限影响。
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("创建数据目录失败: %w", err)
 	}
@@ -60,6 +62,7 @@ func Open(dataDir string) (*DB, error) {
 		return nil, fmt.Errorf("设置数据目录权限失败: %w", err)
 	}
 
+	// 2. 预先以 0600 权限创建/收紧 SQLite 文件，避免数据库以默认全局可读权限落盘。
 	dbPath := filepath.Join(dataDir, DatabaseFileName)
 	file, err := os.OpenFile(dbPath, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
 	if err != nil {
@@ -72,6 +75,7 @@ func Open(dataDir string) (*DB, error) {
 		return nil, fmt.Errorf("设置数据库文件权限失败: %w", err)
 	}
 
+	// 3. 通过纯 Go SQLite 驱动（glebarez/sqlite，零 CGO）建连，并静默 GORM 默认日志以防泄露业务数据。
 	dsn := buildDSN(dbPath)
 	gormDB, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
@@ -85,10 +89,11 @@ func Open(dataDir string) (*DB, error) {
 		return nil, fmt.Errorf("获取底层数据库连接失败: %w", err)
 	}
 
-	// SQLite 单进程写锁模型下固定单连接，彻底避免并发写入产生 SQLITE_BUSY。
+	// SQLite 单进程写锁模型下固定连接池上限为 1，串行化写入以彻底避免并发竞争导致 SQLITE_BUSY。
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
 
+	// 4. 校验 WAL 模式生效后执行内嵌 SQL 迁移。
 	if err := verifyJournalMode(sqlDB); err != nil {
 		_ = sqlDB.Close()
 		return nil, err
@@ -106,6 +111,7 @@ func Open(dataDir string) (*DB, error) {
 }
 
 // buildDSN 构造带连接级 PRAGMA 与 IMMEDIATE 事务锁的 SQLite URI，确保每次建连自动生效。
+// `_txlock=immediate` 让写事务在 BEGIN 阶段即申请写锁，配合 busy_timeout 避免读升写死锁。
 func buildDSN(dbPath string) string {
 	u := url.URL{
 		Scheme: "file",

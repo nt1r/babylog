@@ -17,6 +17,7 @@ func strPtr(v string) *string     { return &v }
 func intPtr(v int) *int           { return &v }
 func floatPtr(v float64) *float64 { return &v }
 
+// setupDashboardFixture 构建带固定时钟与独立临时 SQLite 的看板测试夹具，保证跨夜与多日趋势断言完全确定。
 func setupDashboardFixture(t *testing.T, now time.Time) (*records.Store, *Service, int64) {
 	t.Helper()
 
