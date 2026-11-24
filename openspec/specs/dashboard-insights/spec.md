@@ -63,18 +63,22 @@ The web application SHALL organize navigation into four flat sidebar groups (`�
 - **THEN** `/health` filters and displays only `temperature` and `medicine` records (`全部 / 体温 / 用药`), while `/growth` displays a top overview card (latest weight, height, head circumference with birth fallback indicator, and `已出 N 颗` teeth summary) above a reverse-chronological date-formatted list of `growth` and `teeth` records defaulting to `all`
 
 ### Requirement: Separated high-frequency Quick Record and date-only Growth entry drawers
-The web application SHALL focus the global Quick Record drawer on four high-frequency categories (`feeding`, `sleep`, `care`, and `health` limited to `temperature` and `medicine`) and provide a dedicated date-only Growth drawer (`growth` and `teeth`) invoked from `/growth`, the dashboard Growth card, and the mobile `+` button while on `/growth`.
+The web application SHALL focus the global Quick Record drawer on four high-frequency categories (`feeding`, `sleep`, `care`, and `health` limited to `temperature` and `medicine`) with habit-based prefill and low-friction shortcuts, and provide a dedicated date-only Growth drawer (`growth` and `teeth`) with latest measurement hints and dynamic next-tooth presets.
 
 #### Scenario: Create a historical growth record with date-only input
 - **WHEN** an authenticated administrator opens the Growth drawer from `/growth` or the dashboard Growth card, selects a past date `YYYY-MM-DD`, enters a weight or teething note, and submits
-- **THEN** the client saves the record via `/api/records/health` using local `12:00` for past dates (or the current local timestamp when today is selected) without showing high-frequency minute-offset chips, and refreshes both the growth overview and list
+- **THEN** the client displays the baby's latest recorded weight/height/head measurements as reference hints and dynamic next-tooth presets based on `teeth_count`, saves the record via `/api/records/health` using local `12:00` for past dates (or the current local timestamp when today is selected) without showing high-frequency minute-offset chips, and refreshes both the growth overview and list
+
+#### Scenario: Apply habit-based prefill and shortcuts in Quick Record and Health workspace
+- **WHEN** an authenticated administrator opens Quick Record for feeding, sleep, care, or health, or visits `/health`
+- **THEN** feeding prefills breastfeeding mode/duration and pairs solid food chips with recent portions, sleep prefills median-based duration with a `45 分钟` quick chip, diaper poop details offer a one-tap `正常（软便 · 黄色）` shortcut, and health offers medicine dosage quick chips, history-matched dosage autofill, and one-tap recent medicine quick-log on `/health`
 
 ### Requirement: Dashboard vaccine alerts, Health Observation KPI, and Growth & Immunity cards
-The web dashboard SHALL display a time-aware picture-book Hero card with Baby Profile summary, a persistent non-dismissible vaccine alert banner above the 2×2/4-column one-tap quick-record tiles when attention states exist, four reordered KPI cards (`今日喂养`, `今日睡眠`, `今日护理`, `健康观察`) in a 2×2/4-column grid plus an independent 48h post-vaccination temperature cue bar, `近 7 日照护趋势`, symmetric `疫苗接种计划` and `最新生长发育` cards below the charts, and omit the bottom quick-record cards.
+The web dashboard SHALL display a time-aware Hero card with Baby Profile summary, a conditional non-dismissible vaccine alert banner above the 2×2/4-column one-tap quick-record tiles (whose feeding tile adapts to the baby's latest feeding habit), four KPI cards (`今日喂养`, `今日睡眠`, `今日护理`, `健康观察`) plus an independent 48h post-vaccination temperature cue bar, `近 7 日照护趋势`, and symmetric `疫苗接种计划` and `最新生长发育` cards.
 
 #### Scenario: Surface Hero card, persistent vaccine alert banner, and symmetric Growth & Immunity cards
 - **WHEN** an authenticated administrator opens `/dashboard` while the baby has urgent booked appointments (`scheduled_overdue`, `scheduled_soon`), unconfirmed birth-hospital vaccines, or `overdue`/`due_soon` doses
-- **THEN** `/dashboard` displays the time-aware Hero card with Baby Profile link to `/growth`, renders a non-dismissible wrapping alert banner below the Hero card (prioritizing urgent booked appointments over birth confirmation) linking to `/vaccines`, renders 2×2/4-column one-tap tiles and KPI cards in `喂养 / 睡眠 / 护理 / 健康观察` order above `近 7 日照护趋势`, and displays symmetric `疫苗接种计划` and `最新生长发育` cards below the charts
+- **THEN** `/dashboard` displays the time-aware Hero card with Baby Profile link to `/growth`, renders a non-dismissible wrapping alert banner below the Hero card (prioritizing urgent booked appointments over birth confirmation) linking to `/vaccines`, renders 2×2/4-column one-tap tiles (adapting the feeding tile to formula, bottled breast milk, or direct breastfeeding with alternating side and recent duration) and KPI cards in `喂养 / 睡眠 / 护理 / 健康观察` order above `近 7 日照护趋势`, and displays symmetric `疫苗接种计划` and `最新生长发育` cards below the charts
 
 #### Scenario: Prioritize Health Observation KPI and independent post-vaccination 48h temperature cue
 - **WHEN** the baby has a temperature recorded within the last 48 hours, or has today's medicine without a recent 48-hour temperature, or completed a vaccine dose within the last 48 hours

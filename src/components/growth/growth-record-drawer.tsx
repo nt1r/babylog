@@ -2,9 +2,9 @@ import { AlertCircle, Ruler } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
 import { EntityDrawer } from '@/components/entity-drawer';
 import {
+  buildDynamicTeethPresets,
   createGrowthFormState,
   type GrowthFormState,
-  TEETH_PRESETS,
   validateAndBuildGrowthSubmission,
 } from '@/components/growth/growth-codec';
 import { Alert } from '@/components/ui/alert';
@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { toast } from '@/components/ui/toast';
 import { GROWTH_SUBTYPE_OPTIONS } from '@/lib/categories';
+import { useDashboardSummaryQuery } from '@/lib/dashboard';
 import { useSaveRecordMutation } from '@/lib/records';
 import { formatLocalDateKey } from '@/lib/time';
 import { useGrowthRecordStore } from '@/stores/growth-record';
@@ -27,6 +28,9 @@ export function GrowthRecordDrawer() {
   const setOpen = useGrowthRecordStore((state) => state.setOpen);
 
   const saveMutation = useSaveRecordMutation();
+  // 复用既有看板/生长缓存读取上次测量参考值与累计出牙数，避免额外轮询。
+  const summaryQuery = useDashboardSummaryQuery({ enabled: open, refetchInterval: false });
+  const growthSummary = summaryQuery.data?.growth;
 
   const [form, setForm] = useState<GrowthFormState>(() => createGrowthFormState(intent, new Date()));
   const [formError, setFormError] = useState('');
@@ -44,6 +48,18 @@ export function GrowthRecordDrawer() {
 
   const isEdit = intent.mode === 'edit';
   const todayMaxDate = formatLocalDateKey(new Date());
+  const teethCount = growthSummary?.teeth_count ?? 0;
+  const teethPresets = buildDynamicTeethPresets(teethCount);
+  const lastRefParts: string[] = [];
+  if (growthSummary?.latest_weight_kg != null) {
+    lastRefParts.push(`体重 ${growthSummary.latest_weight_kg} kg${growthSummary.weight_is_birth ? '（出生）' : ''}`);
+  }
+  if (growthSummary?.latest_height_cm != null) {
+    lastRefParts.push(`身高 ${growthSummary.latest_height_cm} cm${growthSummary.height_is_birth ? '（出生）' : ''}`);
+  }
+  if (growthSummary?.latest_head_cm != null) {
+    lastRefParts.push(`头围 ${growthSummary.latest_head_cm} cm`);
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -120,8 +136,13 @@ export function GrowthRecordDrawer() {
           </div>
 
           {form.subtype === 'growth' ? (
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               <p className="text-xs text-muted-foreground">体重、身高、头围至少填写一项即可保存</p>
+              {lastRefParts.length > 0 ? (
+                <p className="rounded-xl border border-border/70 bg-muted/30 px-3 py-2 text-xs text-muted-foreground tabular-nums">
+                  上次记录：{lastRefParts.join(' · ')}
+                </p>
+              ) : null}
               <div className="grid grid-cols-3 gap-2.5">
                 <Field>
                   <FieldLabel htmlFor="growth-drawer-weight">体重（kg）</FieldLabel>
@@ -130,7 +151,9 @@ export function GrowthRecordDrawer() {
                     type="number"
                     step="0.01"
                     inputMode="decimal"
-                    placeholder="6.8"
+                    placeholder={
+                      growthSummary?.latest_weight_kg != null ? `上次 ${growthSummary.latest_weight_kg}` : '6.8'
+                    }
                     className="tabular-nums"
                     value={form.weightKg}
                     onChange={(event) => updateForm({ weightKg: event.target.value })}
@@ -143,7 +166,9 @@ export function GrowthRecordDrawer() {
                     type="number"
                     step="0.1"
                     inputMode="decimal"
-                    placeholder="64.5"
+                    placeholder={
+                      growthSummary?.latest_height_cm != null ? `上次 ${growthSummary.latest_height_cm}` : '64.5'
+                    }
                     className="tabular-nums"
                     value={form.heightCm}
                     onChange={(event) => updateForm({ heightCm: event.target.value })}
@@ -156,7 +181,9 @@ export function GrowthRecordDrawer() {
                     type="number"
                     step="0.1"
                     inputMode="decimal"
-                    placeholder="41.0"
+                    placeholder={
+                      growthSummary?.latest_head_cm != null ? `上次 ${growthSummary.latest_head_cm}` : '41.0'
+                    }
                     className="tabular-nums"
                     value={form.headCm}
                     onChange={(event) => updateForm({ headCm: event.target.value })}
@@ -166,15 +193,20 @@ export function GrowthRecordDrawer() {
             </div>
           ) : (
             <Field>
-              <FieldLabel htmlFor="growth-drawer-teeth">萌出牙位 / 说明</FieldLabel>
+              <div className="flex items-center justify-between gap-2">
+                <FieldLabel htmlFor="growth-drawer-teeth">萌出牙位 / 说明</FieldLabel>
+                {teethCount > 0 ? (
+                  <span className="text-xs text-muted-foreground tabular-nums">已记录 {teethCount} 颗</span>
+                ) : null}
+              </div>
               <Input
                 id="growth-drawer-teeth"
                 value={form.toothNote}
-                placeholder="例如：下中切牙（第 1 颗）"
+                placeholder={`例如：${teethPresets[0] ?? '下中切牙（第 1 颗）'}`}
                 onChange={(event) => updateForm({ toothNote: event.target.value })}
               />
               <div className="flex flex-wrap gap-1.5 pt-1">
-                {TEETH_PRESETS.map((preset) => (
+                {teethPresets.map((preset) => (
                   <QuickChip
                     key={preset}
                     tone="health"

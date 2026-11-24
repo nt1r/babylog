@@ -13,7 +13,62 @@ const GROWTH_BOUNDS = {
   headMax: 70.0,
 } as const;
 
-export const TEETH_PRESETS = ['下中切牙（第 1 颗）', '下中切牙（第 2 颗）', '上中切牙', '侧切牙'] as const;
+// 婴幼儿 20 颗乳牙常见萌出顺序表（按颗次 1..20），用于根据累计已出牙数动态推荐下一颗预设。
+const DECIDUOUS_ERUPTION_STAGES: ReadonlyArray<{ readonly label: string; readonly count: number }> = [
+  { label: '下中切牙', count: 2 },
+  { label: '上中切牙', count: 2 },
+  { label: '上侧切牙', count: 2 },
+  { label: '下侧切牙', count: 2 },
+  { label: '第一乳磨牙', count: 4 },
+  { label: '乳尖牙', count: 4 },
+  { label: '第二乳磨牙', count: 4 },
+];
+
+function findEruptionStageIndex(toothIndex: number): number {
+  let cumulative = 0;
+  for (let i = 0; i < DECIDUOUS_ERUPTION_STAGES.length; i++) {
+    cumulative += DECIDUOUS_ERUPTION_STAGES[i].count;
+    if (toothIndex <= cumulative) {
+      return i;
+    }
+  }
+  return DECIDUOUS_ERUPTION_STAGES.length - 1;
+}
+
+/**
+ * 根据累计已记录的出牙颗数动态生成 4 个常用牙位预设：
+ * 首项优先给出按常规萌出顺序推算的下一颗（带「第 N 颗」序号），其余补齐相邻萌出阶段牙位。
+ */
+export function buildDynamicTeethPresets(teethCount: number): readonly string[] {
+  const safeCount = Number.isFinite(teethCount) && teethCount > 0 ? Math.floor(teethCount) : 0;
+  const nextNum = Math.min(20, safeCount + 1);
+  const stageIdx = findEruptionStageIndex(nextNum);
+
+  const presets: string[] = [];
+  const seen = new Set<string>();
+  const push = (text: string) => {
+    if (!seen.has(text)) {
+      seen.add(text);
+      presets.push(text);
+    }
+  };
+
+  push(`${DECIDUOUS_ERUPTION_STAGES[stageIdx].label}（第 ${nextNum} 颗）`);
+  if (nextNum < 20) {
+    const afterNext = nextNum + 1;
+    const afterStage = DECIDUOUS_ERUPTION_STAGES[findEruptionStageIndex(afterNext)];
+    push(`${afterStage.label}（第 ${afterNext} 颗）`);
+  }
+
+  for (let offset = 1; offset < DECIDUOUS_ERUPTION_STAGES.length && presets.length < 4; offset++) {
+    const candidate = DECIDUOUS_ERUPTION_STAGES[stageIdx + offset] ?? DECIDUOUS_ERUPTION_STAGES[stageIdx - offset];
+    if (candidate) {
+      push(candidate.label);
+    }
+  }
+
+  return presets.slice(0, 4);
+}
 
 export interface GrowthFormState {
   subtype: GrowthEntrySubtype;

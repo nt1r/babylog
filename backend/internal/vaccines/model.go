@@ -140,12 +140,13 @@ type Summary struct {
 
 // OverviewResponse 表示 GET /api/vaccines 的完整响应体。
 type OverviewResponse struct {
-	Today         string     `json:"today"`
-	BirthDate     string     `json:"birth_date"`
-	Disclaimer    string     `json:"disclaimer"`
-	Summary       Summary    `json:"summary"`
-	RecentClinics []string   `json:"recent_clinics"`
-	Doses         []DoseView `json:"doses"`
+	Today             string     `json:"today"`
+	BirthDate         string     `json:"birth_date"`
+	Disclaimer        string     `json:"disclaimer"`
+	DefaultClinicName string     `json:"default_clinic_name"`
+	Summary           Summary    `json:"summary"`
+	RecentClinics     []string   `json:"recent_clinics"`
+	Doses             []DoseView `json:"doses"`
 }
 
 // CatalogDoseItem 表示内置自费模板中各默认剂次的月龄与简要提示，用于前端展示与编辑预填。
@@ -198,29 +199,31 @@ type AddTemplateInput struct {
 
 // UpdateDoseInput 表示更新单剂疫苗状态、预约信息、接种记录、适龄月龄或预计日期的请求载荷。
 type UpdateDoseInput struct {
-	Status        string  `json:"status"`
-	AgeMonths     *int    `json:"age_months"`
-	PlannedDate   *string `json:"planned_date"`
-	ScheduledDate *string `json:"scheduled_date"`
-	ScheduledTime *string `json:"scheduled_time"`
-	ClinicName    string  `json:"clinic_name"`
-	VaccinatedAt  *string `json:"vaccinated_at"`
-	Site          string  `json:"site"`
-	Manufacturer  string  `json:"manufacturer"`
-	BatchNo       string  `json:"batch_no"`
-	Reaction      string  `json:"reaction"`
-	Note          string  `json:"note"`
+	Status           string  `json:"status"`
+	AgeMonths        *int    `json:"age_months"`
+	PlannedDate      *string `json:"planned_date"`
+	ScheduledDate    *string `json:"scheduled_date"`
+	ScheduledTime    *string `json:"scheduled_time"`
+	ClinicName       string  `json:"clinic_name"`
+	SetDefaultClinic bool    `json:"set_default_clinic"`
+	VaccinatedAt     *string `json:"vaccinated_at"`
+	Site             string  `json:"site"`
+	Manufacturer     string  `json:"manufacturer"`
+	BatchNo          string  `json:"batch_no"`
+	Reaction         string  `json:"reaction"`
+	Note             string  `json:"note"`
 }
 
 // BatchUpdateInput 表示同月龄批量预约或批量标记已接种的请求载荷。
 // ClinicName 与 Note 采用 Go 的 *string 指针三态惯用法：nil 表示请求未传（保留各剂原值），
 // 指向空字符串表示显式清空旧值，从而区分“不修改”与“清空”。
 type BatchUpdateInput struct {
-	Action        string  `json:"action"`
-	DoseIDs       []int64 `json:"dose_ids"`
-	ScheduledDate *string `json:"scheduled_date"`
-	ScheduledTime *string `json:"scheduled_time"`
-	VaccinatedAt  *string `json:"vaccinated_at"`
-	ClinicName    *string `json:"clinic_name"`
-	Note          *string `json:"note"`
+	Action           string  `json:"action"`
+	DoseIDs          []int64 `json:"dose_ids"`
+	ScheduledDate    *string `json:"scheduled_date"`
+	ScheduledTime    *string `json:"scheduled_time"`
+	VaccinatedAt     *string `json:"vaccinated_at"`
+	ClinicName       *string `json:"clinic_name"`
+	SetDefaultClinic bool    `json:"set_default_clinic"`
+	Note             *string `json:"note"`
 }

@@ -9,6 +9,7 @@ import (
 )
 
 func floatPtr(v float64) *float64 { return &v }
+func strPtr(v string) *string     { return &v }
 
 func TestValidateAndNormalize(t *testing.T) {
 	shanghai, _ := timeutil.LoadLocation("Asia/Shanghai")
@@ -45,6 +46,26 @@ func TestValidateAndNormalize(t *testing.T) {
 				Nickname:  "小宝",
 				BirthDate: "2026-01-01",
 				Gender:    "unknown",
+			},
+			want: "小宝",
+		},
+		{
+			name: "合法常去接种门诊并裁剪空白",
+			in: UpsertInput{
+				Nickname:          "小宝",
+				BirthDate:         "2026-01-01",
+				Gender:            "female",
+				DefaultClinicName: strPtr("  阳光街道社区卫生服务中心  "),
+			},
+			want: "小宝",
+		},
+		{
+			name: "空常去接种门诊允许清空",
+			in: UpsertInput{
+				Nickname:          "小宝",
+				BirthDate:         "2026-01-01",
+				Gender:            "female",
+				DefaultClinicName: strPtr("   "),
 			},
 			want: "小宝",
 		},
@@ -97,6 +118,15 @@ func TestValidateAndNormalize(t *testing.T) {
 		{
 			name: "越界身高",
 			in:   UpsertInput{Nickname: "小宝", BirthDate: "2026-07-15", Gender: "male", BirthHeightCm: floatPtr(120)},
+		},
+		{
+			name: "常去接种门诊超过80字符",
+			in: UpsertInput{
+				Nickname:          "小宝",
+				BirthDate:         "2026-07-15",
+				Gender:            "male",
+				DefaultClinicName: strPtr(strings.Repeat("医", MaxClinicNameLength+1)),
+			},
 		},
 	}
 

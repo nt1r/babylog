@@ -1,11 +1,13 @@
 import { parseISO, subMinutes } from 'date-fns';
 import type { CategoryBuildResult } from '@/components/quick-record/codecs/types';
-import type { SleepInput, SleepRecord, SleepSubtype } from '@/lib/records';
+import type { SleepInput, SleepRecord, SleepSubtype, SmartDefaults } from '@/lib/records';
 import { combineLocalDateTimeToISO, formatDurationMin, guessSleepSubtype, splitLocalDateTime } from '@/lib/time';
 
 const SLEEP_BOUNDS = {
   minMin: 1,
   maxMin: 24 * 60,
+  defaultNapMin: 60,
+  defaultNightMin: 480,
 } as const;
 
 export interface SleepFormState {
@@ -31,10 +33,14 @@ export function computeSleepDurationMin(
   return Math.round((new Date(et).getTime() - new Date(st).getTime()) / 60000);
 }
 
-export function createDefaultSleepForm(now: Date, initialSubtype?: string): SleepFormState {
+export function createDefaultSleepForm(now: Date, initialSubtype?: string, defaults?: SmartDefaults): SleepFormState {
   const subtype: SleepSubtype =
     initialSubtype === 'nap' || initialSubtype === 'night' ? initialSubtype : guessSleepSubtype(now);
-  const startParts = splitLocalDateTime(subMinutes(now, subtype === 'night' ? 480 : 60));
+  const defaultMin =
+    subtype === 'night'
+      ? (defaults?.sleep.suggested_night_min ?? SLEEP_BOUNDS.defaultNightMin)
+      : (defaults?.sleep.suggested_nap_min ?? SLEEP_BOUNDS.defaultNapMin);
+  const startParts = splitLocalDateTime(subMinutes(now, defaultMin));
   const endParts = splitLocalDateTime(now);
   return {
     subtype,

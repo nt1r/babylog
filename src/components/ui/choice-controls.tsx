@@ -110,6 +110,7 @@ export function ChoiceCardButton({ active, tone = 'primary', onClick, children, 
 
 interface QuickChipProps {
   readonly active?: boolean;
+  readonly disabled?: boolean;
   readonly tone?: ControlTone;
   readonly variant?: 'soft' | 'outline';
   readonly onClick: () => void;
@@ -123,6 +124,7 @@ interface QuickChipProps {
  */
 export function QuickChip({
   active,
+  disabled,
   tone = 'primary',
   variant = 'soft',
   onClick,
@@ -132,10 +134,11 @@ export function QuickChip({
   return (
     <button
       type="button"
+      disabled={disabled}
       aria-pressed={active}
       onClick={onClick}
       className={cn(
-        'inline-flex h-8 cursor-pointer items-center justify-center rounded-full border px-3 text-xs font-medium tabular-nums transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50 sm:h-7',
+        'inline-flex h-8 cursor-pointer items-center justify-center rounded-full border px-3 text-xs font-medium tabular-nums transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 sm:h-7',
         active
           ? CHIP_ACTIVE_TONE_CLASSES[tone]
           : variant === 'outline'

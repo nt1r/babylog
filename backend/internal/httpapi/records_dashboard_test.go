@@ -218,20 +218,68 @@ func TestBabyProfileLifecycleAndAuthGuards(t *testing.T) {
 		t.Fatalf("expected 409 on duplicate baby, got %d", dupResp.StatusCode)
 	}
 
-	// 4. 更新宝宝档案（200）并持久化。
+	// 4. 更新宝宝档案（200）并持久化：验证 default_clinic_name 的设置、省略保留、空串清空与超长（>80 字）400 拦截。
 	updResp := env.doJSON(t, http.MethodPut, "/api/baby?tz=Asia/Shanghai", map[string]any{
-		"nickname":        "大汤圆",
-		"birth_date":      "2026-07-15",
-		"gender":          "female",
-		"birth_weight_kg": 3.45,
+		"nickname":            "大汤圆",
+		"birth_date":          "2026-07-15",
+		"gender":              "female",
+		"birth_weight_kg":     3.45,
+		"default_clinic_name": "  阳光街道社区卫生服务中心  ",
 	}, true)
 	if updResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 updating baby, got %d", updResp.StatusCode)
 	}
 	updBody := decodeJSONMap(t, updResp)
 	updBaby, _ := updBody["baby"].(map[string]any)
-	if updBaby["nickname"] != "大汤圆" || updBaby["birth_weight_kg"] != 3.45 {
+	if updBaby["nickname"] != "大汤圆" || updBaby["birth_weight_kg"] != 3.45 || updBaby["default_clinic_name"] != "阳光街道社区卫生服务中心" {
 		t.Fatalf("unexpected updated baby: %#v", updBaby)
+	}
+
+	// 省略 default_clinic_name 时保留原值。
+	keepClinicResp := env.doJSON(t, http.MethodPut, "/api/baby?tz=Asia/Shanghai", map[string]any{
+		"nickname":   "大汤圆",
+		"birth_date": "2026-07-15",
+		"gender":     "female",
+	}, true)
+	if keepClinicResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 preserving default_clinic_name, got %d", keepClinicResp.StatusCode)
+	}
+	keepBaby, _ := decodeJSONMap(t, keepClinicResp)["baby"].(map[string]any)
+	if keepBaby["default_clinic_name"] != "阳光街道社区卫生服务中心" {
+		t.Fatalf("expected default_clinic_name preserved on omit, got %#v", keepBaby["default_clinic_name"])
+	}
+
+	// 传入空串显式清空并经 GET /api/baby 回读验证终态。
+	clearClinicResp := env.doJSON(t, http.MethodPut, "/api/baby?tz=Asia/Shanghai", map[string]any{
+		"nickname":            "大汤圆",
+		"birth_date":          "2026-07-15",
+		"gender":              "female",
+		"default_clinic_name": "",
+	}, true)
+	if clearClinicResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 clearing default_clinic_name, got %d", clearClinicResp.StatusCode)
+	}
+	_ = clearClinicResp.Body.Close()
+	afterClearResp := env.doJSON(t, http.MethodGet, "/api/baby", nil, true)
+	afterClearBaby, _ := decodeJSONMap(t, afterClearResp)["baby"].(map[string]any)
+	if afterClearBaby["default_clinic_name"] != "" {
+		t.Fatalf("expected empty default_clinic_name after clear, got %#v", afterClearBaby["default_clinic_name"])
+	}
+
+	// 超过 80 字符返回 400 中文错误。
+	overClinicResp := env.doJSON(t, http.MethodPut, "/api/baby?tz=Asia/Shanghai", map[string]any{
+		"nickname":            "大汤圆",
+		"birth_date":          "2026-07-15",
+		"gender":              "female",
+		"default_clinic_name": strings.Repeat("医", 81),
+	}, true)
+	if overClinicResp.StatusCode != http.StatusBadRequest {
+		_ = overClinicResp.Body.Close()
+		t.Fatalf("expected 400 for oversized default_clinic_name on PUT /api/baby, got %d", overClinicResp.StatusCode)
+	}
+	overErrBody := decodeJSONMap(t, overClinicResp)
+	if errMsg, _ := overErrBody["error"].(string); !strings.Contains(errMsg, "80") {
+		t.Fatalf("expected Chinese length error for PUT /api/baby, got %#v", overErrBody)
 	}
 }
 
@@ -382,6 +430,18 @@ func TestRecordsCRUDFilteringPaginationAndSmartDefaults(t *testing.T) {
 	}
 	_ = sleepDel.Body.Close()
 
+	// 追加保留的 45 分钟小睡与 570 分钟夜觉记录，用于验证 /api/records/defaults 的 sleep 习惯时长字段。
+	for _, sl := range []map[string]any{
+		{"subtype": "nap", "started_at": "2026-11-23T00:15:00Z", "ended_at": "2026-11-23T01:00:00Z"},
+		{"subtype": "night", "started_at": "2026-11-22T13:00:00Z", "ended_at": "2026-11-22T22:30:00Z"},
+	} {
+		sleepKeep := env.doJSON(t, http.MethodPost, "/api/records/sleep", sl, true)
+		if sleepKeep.StatusCode != http.StatusCreated {
+			t.Fatalf("create kept sleep %v expected 201, got %d", sl["subtype"], sleepKeep.StatusCode)
+		}
+		_ = sleepKeep.Body.Close()
+	}
+
 	// 4. Care CRUD
 	careCreate := env.doJSON(t, http.MethodPost, "/api/records/care", map[string]any{
 		"subtype":           "diaper",
@@ -453,14 +513,20 @@ func TestRecordsCRUDFilteringPaginationAndSmartDefaults(t *testing.T) {
 		t.Fatalf("decode defaults: %v", err)
 	}
 	_ = defResp.Body.Close()
-	if def.Feeding.LastMilkML != 150 {
-		t.Errorf("expected last_milk_ml=150, got %d", def.Feeding.LastMilkML)
+	if def.Feeding.LastMilkML != 150 || def.Feeding.LastMilkSubtype != records.FeedingSubtypeBreast {
+		t.Errorf("expected last_milk_ml=150 and last_milk_subtype=breast, got ml=%d subtype=%q", def.Feeding.LastMilkML, def.Feeding.LastMilkSubtype)
+	}
+	if def.Feeding.LastBreastMode != "direct" || def.Feeding.LastBreastDurationMin != 18 {
+		t.Errorf("unexpected breast mode/duration defaults: mode=%q dur=%d", def.Feeding.LastBreastMode, def.Feeding.LastBreastDurationMin)
 	}
 	if def.Feeding.LastBreastSide == nil || *def.Feeding.LastBreastSide != "left" || def.Feeding.SuggestedBreastSide != "right" {
 		t.Errorf("unexpected breast side defaults: last=%v suggested=%s", def.Feeding.LastBreastSide, def.Feeding.SuggestedBreastSide)
 	}
-	if len(def.Feeding.RecentSolidFoods) != 1 || def.Feeding.RecentSolidFoods[0] != "高铁米粉" {
-		t.Errorf("unexpected recent solid foods: %#v", def.Feeding.RecentSolidFoods)
+	if len(def.Feeding.RecentSolids) != 1 || def.Feeding.RecentSolids[0].Food != "高铁米粉" || def.Feeding.RecentSolids[0].Amount != "半碗" {
+		t.Errorf("unexpected paired recent solids: %#v", def.Feeding.RecentSolids)
+	}
+	if def.Sleep.SuggestedNapMin != 45 || def.Sleep.SuggestedNightMin != 570 {
+		t.Errorf("unexpected sleep defaults (expected nap=45, night=570): %+v", def.Sleep)
 	}
 	if def.Health.LastTemperatureC != 37.4 {
 		t.Errorf("expected last_temperature_c=37.4, got %v", def.Health.LastTemperatureC)

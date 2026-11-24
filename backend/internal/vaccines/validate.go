@@ -194,6 +194,7 @@ func validateUpdateInput(in UpdateDoseInput, birthDate, todayKey string) (Update
 		out.ScheduledDate = schedDate
 		out.ScheduledTime = schedTime
 		out.ClinicName = clinicName
+		out.SetDefaultClinic = in.SetDefaultClinic && clinicName != ""
 		return out, nil
 
 	case StatusCompleted:
@@ -219,6 +220,7 @@ func validateUpdateInput(in UpdateDoseInput, birthDate, todayKey string) (Update
 		}
 		out.VaccinatedAt = vacDate
 		out.ClinicName = clinicName
+		out.SetDefaultClinic = in.SetDefaultClinic && clinicName != ""
 		out.Site = site
 		out.Manufacturer = maker
 		out.BatchNo = batchNo
@@ -266,10 +268,11 @@ func validateBatchInput(in BatchUpdateInput, birthDate, todayKey string) (BatchU
 	}
 
 	out := BatchUpdateInput{
-		Action:     action,
-		DoseIDs:    uniqueIDs,
-		ClinicName: clinicName,
-		Note:       note,
+		Action:           action,
+		DoseIDs:          uniqueIDs,
+		ClinicName:       clinicName,
+		SetDefaultClinic: in.SetDefaultClinic && clinicName != nil && *clinicName != "",
+		Note:             note,
 	}
 
 	if action == BatchActionSchedule {

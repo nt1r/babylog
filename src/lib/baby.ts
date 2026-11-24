@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/http';
 import { parseOptionalStrictNumber } from '@/lib/number';
-import { DASHBOARD_QUERY_KEY, VACCINES_QUERY_KEY } from '@/lib/query-client';
+import { BABY_QUERY_KEY, DASHBOARD_QUERY_KEY, VACCINES_QUERY_KEY } from '@/lib/query-client';
 import { getBrowserTimeZone } from '@/lib/time';
 
 export type BabyGender = 'male' | 'female' | 'unknown';
@@ -13,6 +13,7 @@ export interface BabyProfile {
   gender: BabyGender;
   birth_weight_kg: number | null;
   birth_height_cm: number | null;
+  default_clinic_name: string;
   created_at: string;
   updated_at: string;
 }
@@ -23,13 +24,12 @@ interface BabyUpsertInput {
   gender: BabyGender;
   birth_weight_kg: number | null;
   birth_height_cm: number | null;
+  default_clinic_name?: string;
 }
 
 interface BabyResponse {
   baby: BabyProfile | null;
 }
-
-const BABY_QUERY_KEY = ['baby-profile'] as const;
 
 export const BABY_GENDER_LABELS: Record<BabyGender, string> = {
   male: '男宝',
@@ -42,6 +42,7 @@ export interface BabyFormValidationErrors {
   birthDate?: string;
   birthWeight?: string;
   birthHeight?: string;
+  defaultClinicName?: string;
 }
 
 /** 统一校验宝宝档案表单（供建档页与设置页复用，上下限与后端保持一致）。 */
@@ -51,6 +52,7 @@ export function validateBabyProfileForm(input: {
   gender: BabyGender;
   birthWeight: string;
   birthHeight: string;
+  defaultClinicName?: string;
   todayStr: string;
 }): { payload: BabyUpsertInput | null; errors: BabyFormValidationErrors } {
   const errors: BabyFormValidationErrors = {};
@@ -74,7 +76,17 @@ export function validateBabyProfileForm(input: {
     errors.birthHeight = '请输入 20 至 100 cm 之间的数值';
   }
 
-  if (errors.nickname || errors.birthDate || errors.birthWeight || errors.birthHeight) {
+  let normalizedClinic: string | undefined;
+  if (input.defaultClinicName !== undefined) {
+    const trimmedClinic = input.defaultClinicName.trim();
+    if (Array.from(trimmedClinic).length > 80) {
+      errors.defaultClinicName = '常去接种门诊最多 80 个字';
+    } else {
+      normalizedClinic = trimmedClinic;
+    }
+  }
+
+  if (errors.nickname || errors.birthDate || errors.birthWeight || errors.birthHeight || errors.defaultClinicName) {
     return { payload: null, errors };
   }
 
@@ -85,6 +97,7 @@ export function validateBabyProfileForm(input: {
       gender: input.gender,
       birth_weight_kg: weight === 'invalid' ? null : weight,
       birth_height_cm: height === 'invalid' ? null : height,
+      ...(normalizedClinic !== undefined ? { default_clinic_name: normalizedClinic } : {}),
     },
     errors: {},
   };

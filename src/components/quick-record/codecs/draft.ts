@@ -64,6 +64,7 @@ export function createQuickRecordDraft(
   const baseSleep = createDefaultSleepForm(
     now,
     intent.mode === 'create' && intent.category === 'sleep' ? initialSubtype : undefined,
+    defaults,
   );
   const baseCare = createDefaultCareForm(
     intent.mode === 'create' && intent.category === 'care' ? initialSubtype : undefined,
@@ -167,6 +168,7 @@ export function applySmartDefaultsToDraft(
   intent: QuickRecordIntent,
   defaults: SmartDefaults,
   defaultsUpdatedAt: number,
+  now: Date = new Date(),
 ): QuickRecordDraft {
   if (intent.mode !== 'create' || draft.userTouched || draft.defaultsAppliedAt === defaultsUpdatedAt) {
     return draft;
@@ -175,6 +177,7 @@ export function applySmartDefaultsToDraft(
     ...draft,
     defaultsAppliedAt: defaultsUpdatedAt,
     feeding: createDefaultFeedingForm(intent.category === 'feeding' ? intent.initialSubtype : undefined, defaults),
+    sleep: createDefaultSleepForm(now, intent.category === 'sleep' ? intent.initialSubtype : undefined, defaults),
     health: createDefaultHealthForm(intent.category === 'health' ? intent.initialSubtype : undefined, defaults),
   };
 }

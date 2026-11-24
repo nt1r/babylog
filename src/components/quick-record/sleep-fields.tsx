@@ -9,6 +9,7 @@ import { combineLocalDateTimeToISO, formatDurationMin, guessSleepSubtype, splitL
 
 const SLEEP_DURATION_PRESETS = [
   { label: '30 分钟', minutes: 30 },
+  { label: '45 分钟', minutes: 45 },
   { label: '1 小时', minutes: 60 },
   { label: '1.5 小时', minutes: 90 },
   { label: '2 小时', minutes: 120 },

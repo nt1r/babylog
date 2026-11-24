@@ -59,7 +59,16 @@ fi
 # 7. 前端业务模块未使用导出（死导出）检查
 node scripts/check-unused-exports.mjs
 
-# 8. OpenSpec 主规格与活动变更严格校验
+# 8. OpenSpec 主规格与活动变更严格校验（CI 环境强制要求安装 openspec，禁止静默跳过）
 if command -v openspec >/dev/null 2>&1; then
   openspec validate --all --strict
+elif [ "${CI:-}" = "true" ]; then
+  echo 'openspec CLI is required in CI to validate OpenSpec specs' >&2
+  exit 1
+fi
+
+# 9. Go 后端跨表直接访问门禁（使用 .Table("...") 须同行标注 `// cross-table:` 说明事务意图，防止静默越界或重复查库）
+if grep -rnE --include='*.go' --exclude='*_test.go' '\.Table\("' backend/internal/ | grep -v '// cross-table:'; then
+  echo 'Cross-table GORM .Table("...") access requires an inline // cross-table: justification comment' >&2
+  exit 1
 fi

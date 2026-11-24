@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/http';
-import { VACCINE_CATALOG_QUERY_KEY, VACCINES_QUERY_KEY } from '@/lib/query-client';
+import { BABY_QUERY_KEY, VACCINE_CATALOG_QUERY_KEY, VACCINES_QUERY_KEY } from '@/lib/query-client';
 import { getBrowserTimeZone } from '@/lib/time';
 
 export type VaccineCategory = 'nip' | 'optional';
@@ -77,6 +77,7 @@ export interface VaccineOverviewResponse {
   today: string;
   birth_date: string;
   disclaimer: string;
+  default_clinic_name: string;
   summary: VaccineSummary;
   recent_clinics: string[];
   doses: VaccineDose[];
@@ -125,6 +126,7 @@ interface UpdateVaccineDoseInput {
   scheduled_date: string | null;
   scheduled_time: string | null;
   clinic_name: string;
+  set_default_clinic?: boolean;
   vaccinated_at: string | null;
   site: string;
   manufacturer: string;
@@ -140,6 +142,7 @@ interface BatchVaccineInput {
   scheduled_time?: string | null;
   vaccinated_at?: string | null;
   clinic_name?: string;
+  set_default_clinic?: boolean;
   note?: string;
 }
 
@@ -149,6 +152,100 @@ export type VaccineCategoryFilter = 'all' | VaccineCategory;
 export const VACCINE_SITE_PRESETS = ['左上臂', '右上臂', '左大腿前外侧', '右大腿前外侧', '口服'] as const;
 
 export const VACCINE_REACTION_PRESETS = ['无异常', '针眼微红/轻微硬结', '低热（<38.5℃）', '轻度哭闹/嗜睡'] as const;
+
+const OPPOSITE_INJECTION_SITE: Readonly<Record<string, string>> = {
+  左上臂: '右上臂',
+  右上臂: '左上臂',
+  左大腿前外侧: '右大腿前外侧',
+  右大腿前外侧: '左大腿前外侧',
+};
+
+/** 解析首选预填接种地点：优先使用固定的常去接种门诊，其次回落至最近一次使用的门诊。 */
+export function resolvePreferredClinic(defaultClinicName: string, recentClinics: readonly string[]): string {
+  const pinned = defaultClinicName.trim();
+  if (pinned) return pinned;
+  return recentClinics[0]?.trim() ?? '';
+}
+
+/** 合并常去门诊与历史最近门诊（默认门诊置顶且去重），供快捷胶囊渲染。 */
+export function buildClinicSuggestions(defaultClinicName: string, recentClinics: readonly string[]): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  const pinned = defaultClinicName.trim();
+  if (pinned) {
+    seen.add(pinned);
+    result.push(pinned);
+  }
+  for (const clinic of recentClinics) {
+    const trimmed = clinic.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    result.push(trimmed);
+  }
+  return result;
+}
+
+/** 从同种疫苗历史已接种剂次中提取曾用品牌/厂家（按最近接种优先去重，最多 3 个），减少多剂次重复录入。 */
+export function getSuggestedManufacturers(
+  dose: Pick<VaccineDose, 'id' | 'template_code' | 'vaccine_name'>,
+  allDoses: readonly VaccineDose[],
+): string[] {
+  const siblings = allDoses
+    .filter((d) => {
+      if (d.id === dose.id || !d.manufacturer.trim()) return false;
+      if (dose.template_code) {
+        return d.template_code === dose.template_code;
+      }
+      return d.template_code === null && d.vaccine_name === dose.vaccine_name;
+    })
+    .sort((a, b) => (b.vaccinated_at ?? '').localeCompare(a.vaccinated_at ?? '') || b.id - a.id);
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of siblings) {
+    const maker = item.manufacturer.trim();
+    if (!maker || seen.has(maker)) continue;
+    seen.add(maker);
+    out.push(maker);
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
+/** 检查同日是否已有其他已接种剂次记录了注射部位，并推导建议的左右交替部位。 */
+export function getSameDaySiteSuggestion(
+  doseId: number,
+  vaccinatedAt: string,
+  allDoses: readonly VaccineDose[],
+): { usedSites: string[]; recommendedSite: string | null } {
+  if (!vaccinatedAt) {
+    return { usedSites: [], recommendedSite: null };
+  }
+  const sameDayDoses = allDoses
+    .filter((d) => d.id !== doseId && d.status === 'completed' && d.vaccinated_at === vaccinatedAt && d.site.trim())
+    .sort((a, b) => b.id - a.id);
+
+  const usedSites: string[] = [];
+  const seen = new Set<string>();
+  for (const d of sameDayDoses) {
+    const site = d.site.trim();
+    if (!seen.has(site)) {
+      seen.add(site);
+      usedSites.push(site);
+    }
+  }
+
+  let recommendedSite: string | null = null;
+  for (const site of usedSites) {
+    const opposite = OPPOSITE_INJECTION_SITE[site];
+    if (opposite && !seen.has(opposite)) {
+      recommendedSite = opposite;
+      break;
+    }
+  }
+
+  return { usedSites, recommendedSite };
+}
 
 interface AlertBadgeMeta {
   readonly label: string;
@@ -475,6 +572,7 @@ export function useUpdateVaccineDoseMutation() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: VACCINES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: BABY_QUERY_KEY });
     },
   });
 }
@@ -491,6 +589,23 @@ export function useBatchVaccineMutation() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: VACCINES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: BABY_QUERY_KEY });
+    },
+  });
+}
+
+export function useUpdateDefaultClinicMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (clinicName: string) => {
+      return apiRequest<{ default_clinic_name: string }>('/api/vaccines/default-clinic', {
+        method: 'PUT',
+        body: { clinic_name: clinicName },
+      });
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: VACCINES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: BABY_QUERY_KEY });
     },
   });
 }

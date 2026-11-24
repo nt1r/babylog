@@ -1,11 +1,25 @@
-import { ArrowRight, Baby, CalendarClock, CheckCircle2, MapPin, ShieldAlert, Syringe } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import {
+  ArrowRight,
+  Baby,
+  CalendarClock,
+  CheckCheck,
+  CheckCircle2,
+  MapPin,
+  PencilIcon,
+  Pin,
+  ShieldAlert,
+  Syringe,
+  X,
+} from 'lucide-react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { QuickChip } from '@/components/ui/choice-controls';
 import { DatePicker } from '@/components/ui/date-picker';
+import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { Spinner } from '@/components/ui/spinner';
 import { VaccineCalendar } from '@/components/vaccines/vaccine-calendar';
@@ -29,10 +43,18 @@ interface VaccineOverviewProps {
   readonly babyNickname?: string;
   readonly birthConfirmDismissed: boolean;
   readonly confirmingBirth: boolean;
+  readonly savingDefaultClinic: boolean;
   readonly onConfirmBirthDoses: (items: readonly BirthConfirmItem[]) => void;
   readonly onDismissBirthConfirm: () => void;
+  readonly onSaveDefaultClinic: (clinicName: string) => Promise<boolean>;
   readonly onOpenDose: (dose: VaccineDose) => void;
   readonly onOpenBatchScheduleFocus: (doseIds: number[], label: string, defaultDate: string) => void;
+  readonly onOpenBatchCompleteFocus: (
+    doseIds: number[],
+    label: string,
+    defaultDate: string,
+    defaultClinic?: string,
+  ) => void;
 }
 
 /** 根据出生日期推导卡介苗默认接种日（常规为出生次日，若今天即出生当天则取出生当天）。 */
@@ -53,13 +75,32 @@ export function VaccineOverview({
   babyNickname,
   birthConfirmDismissed,
   confirmingBirth,
+  savingDefaultClinic,
   onConfirmBirthDoses,
   onDismissBirthConfirm,
+  onSaveDefaultClinic,
   onOpenDose,
   onOpenBatchScheduleFocus,
+  onOpenBatchCompleteFocus,
 }: VaccineOverviewProps) {
   const { summary, doses, today } = overview;
   const focus = summary.next_focus;
+  const [editingClinic, setEditingClinic] = useState(false);
+  const [clinicDraft, setClinicDraft] = useState('');
+
+  function startEditDefaultClinic() {
+    setClinicDraft(overview.default_clinic_name);
+    setEditingClinic(true);
+  }
+
+  async function handleSubmitDefaultClinic(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (savingDefaultClinic) return;
+    const ok = await onSaveDefaultClinic(clinicDraft.trim());
+    if (ok) {
+      setEditingClinic(false);
+    }
+  }
   const nipPercent = summary.nip_total > 0 ? Math.round((summary.nip_completed / summary.nip_total) * 100) : 0;
   const optionalPercent =
     summary.optional_total > 0 ? Math.round((summary.optional_completed / summary.optional_total) * 100) : 0;
@@ -223,6 +264,7 @@ export function VaccineOverview({
           <VaccineCalendar
             doses={doses}
             today={today}
+            defaultClinicName={overview.default_clinic_name}
             nextFocus={focus}
             babyNickname={babyNickname}
             onSelectDose={onOpenDose}
@@ -283,8 +325,30 @@ export function VaccineOverview({
                     </p>
                   ) : null}
 
-                  <div className="pt-0.5">
-                    {focus.dose_ids.length > 1 && !focus.kind.startsWith('scheduled') ? (
+                  <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                    {focus.dose_ids.length > 1 && focus.kind.startsWith('scheduled') ? (
+                      <>
+                        <Button
+                          size="sm"
+                          onClick={() =>
+                            onOpenBatchCompleteFocus(
+                              focus.dose_ids,
+                              `${focus.age_label}同期疫苗`,
+                              focus.target_date <= today ? focus.target_date : today,
+                              focus.clinic_name || undefined,
+                            )
+                          }
+                        >
+                          <CheckCheck className="size-3.5" />
+                          一键已接种（{focus.dose_ids.length} 剂）
+                        </Button>
+                        {leadFocusDose ? (
+                          <Button size="sm" variant="outline" onClick={() => onOpenDose(leadFocusDose)}>
+                            查看详情
+                          </Button>
+                        ) : null}
+                      </>
+                    ) : focus.dose_ids.length > 1 && !focus.kind.startsWith('scheduled') ? (
                       <Button
                         size="sm"
                         onClick={() =>
@@ -368,6 +432,109 @@ export function VaccineOverview({
                 </p>
                 <p className="text-xs text-muted-foreground">待补种</p>
               </div>
+            </div>
+
+            {/* 常去接种门诊快速查看与行内设置：预约/打卡与导出日历均自动带出 */}
+            <div className="rounded-xl border border-border/75 bg-muted/25 px-3 py-2.5">
+              {editingClinic ? (
+                <form onSubmit={(e) => void handleSubmitDefaultClinic(e)} className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
+                      <Pin className="size-3.5 text-primary" />
+                      设置常去接种门诊
+                    </span>
+                    <button
+                      type="button"
+                      aria-label="取消编辑常去门诊"
+                      disabled={savingDefaultClinic}
+                      onClick={() => setEditingClinic(false)}
+                      className="inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <Input
+                      value={clinicDraft}
+                      maxLength={80}
+                      disabled={savingDefaultClinic}
+                      placeholder="如 XX 街道社区卫生服务中心（留空清除）"
+                      className="h-9 pr-8 text-base md:h-8 md:text-xs"
+                      onChange={(e) => setClinicDraft(e.target.value)}
+                    />
+                    {clinicDraft ? (
+                      <button
+                        type="button"
+                        aria-label="清空常去门诊"
+                        disabled={savingDefaultClinic}
+                        onClick={() => setClinicDraft('')}
+                        className="absolute top-1/2 right-1.5 flex size-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    ) : null}
+                  </div>
+                  {overview.recent_clinics.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {overview.recent_clinics.map((clinic) => (
+                        <QuickChip
+                          key={clinic}
+                          variant="outline"
+                          disabled={savingDefaultClinic}
+                          active={clinicDraft === clinic}
+                          onClick={() => setClinicDraft(clinic)}
+                        >
+                          {clinic}
+                        </QuickChip>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="flex justify-end gap-1.5">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={savingDefaultClinic}
+                      className="h-7 px-2 text-xs"
+                      onClick={() => setEditingClinic(false)}
+                    >
+                      取消
+                    </Button>
+                    <Button type="submit" size="sm" disabled={savingDefaultClinic} className="h-7 px-2.5 text-xs">
+                      {savingDefaultClinic ? (
+                        <Spinner className="size-3" aria-hidden="true" role="presentation" />
+                      ) : null}
+                      {savingDefaultClinic ? '保存中…' : '保存'}
+                    </Button>
+                  </div>
+                </form>
+              ) : (
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-1.5 text-xs">
+                    <Pin className="size-3.5 shrink-0 text-primary" />
+                    <span className="shrink-0 text-muted-foreground">常去门诊</span>
+                    <span
+                      className={cn(
+                        'truncate font-medium',
+                        overview.default_clinic_name ? 'text-foreground' : 'text-muted-foreground',
+                      )}
+                      title={overview.default_clinic_name || undefined}
+                    >
+                      {overview.default_clinic_name || '首次预约后自动记住'}
+                    </span>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 shrink-0 px-2 text-xs text-muted-foreground hover:text-foreground"
+                    onClick={startEditDefaultClinic}
+                  >
+                    <PencilIcon className="size-3" />
+                    {overview.default_clinic_name ? '修改' : '设置'}
+                  </Button>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>

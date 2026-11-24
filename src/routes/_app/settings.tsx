@@ -88,6 +88,7 @@ function SettingsPage() {
   const [gender, setGender] = useState<BabyGender>('unknown');
   const [birthWeight, setBirthWeight] = useState('');
   const [birthHeight, setBirthHeight] = useState('');
+  const [defaultClinicName, setDefaultClinicName] = useState('');
   const [dirty, setDirty] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<BabyFormValidationErrors>({});
 
@@ -99,6 +100,7 @@ function SettingsPage() {
     setGender(baby.gender);
     setBirthWeight(baby.birth_weight_kg !== null ? String(baby.birth_weight_kg) : '');
     setBirthHeight(baby.birth_height_cm !== null ? String(baby.birth_height_cm) : '');
+    setDefaultClinicName(baby.default_clinic_name ?? '');
   }, [baby, dirty]);
 
   async function handleSaveBaby(event: FormEvent<HTMLFormElement>) {
@@ -111,6 +113,7 @@ function SettingsPage() {
       gender,
       birthWeight,
       birthHeight,
+      defaultClinicName,
       todayStr,
     });
     if (!payload) {
@@ -252,6 +255,25 @@ function SettingsPage() {
                     }}
                   />
                   <FieldError>{fieldErrors.birthHeight}</FieldError>
+                </Field>
+
+                <Field invalid={Boolean(fieldErrors.defaultClinicName)} className="sm:col-span-2">
+                  <FieldLabel htmlFor="settings-default-clinic">常去接种门诊（可选）</FieldLabel>
+                  <Input
+                    id="settings-default-clinic"
+                    value={defaultClinicName}
+                    maxLength={80}
+                    placeholder="如 XX 街道社区卫生服务中心（疫苗预约/打卡时自动带出）"
+                    aria-invalid={Boolean(fieldErrors.defaultClinicName)}
+                    onChange={(event) => {
+                      setDirty(true);
+                      setDefaultClinicName(event.target.value);
+                      if (fieldErrors.defaultClinicName) {
+                        setFieldErrors((prev) => ({ ...prev, defaultClinicName: undefined }));
+                      }
+                    }}
+                  />
+                  <FieldError>{fieldErrors.defaultClinicName}</FieldError>
                 </Field>
               </FieldGroup>
 

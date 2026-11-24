@@ -85,7 +85,7 @@ func NewRouter(opts Options) *gin.Engine {
 			}
 
 			if opts.BabyStore != nil && opts.VaccineStore != nil {
-				vacH := newVaccinesHandler(opts.VaccineStore, logger)
+				vacH := newVaccinesHandler(opts.VaccineStore, opts.BabyStore, logger)
 				vacGroup := protected.Group("/vaccines", requireBabyProfileMiddleware(opts.BabyStore, logger))
 				vacH.registerRoutes(vacGroup)
 			}

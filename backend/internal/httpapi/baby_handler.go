@@ -30,6 +30,25 @@ func (h *babyHandler) getProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"baby": profile})
 }
 
+// handleBabyStoreError 统一将 baby 领域层校验与查询错误映射为中文 JSON HTTP 响应，供档案与默认门诊处理器复用。
+func handleBabyStoreError(c *gin.Context, logger *slog.Logger, op string, err error) {
+	var valErr *baby.ValidationError
+	if errors.As(err, &valErr) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": valErr.Error()})
+		return
+	}
+	if errors.Is(err, baby.ErrAlreadyExists) {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	if errors.Is(err, baby.ErrNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	logger.Error(op+" failed", "error", err)
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
+}
+
 // createProfile 处理 POST /api/baby；单宝宝模式下若已存在档案则返回 409 Conflict 拒绝重复建档。
 func (h *babyHandler) createProfile(c *gin.Context) {
 	loc, ok := parseTimezoneQuery(c)
@@ -45,17 +64,7 @@ func (h *babyHandler) createProfile(c *gin.Context) {
 
 	profile, err := h.store.Create(c.Request.Context(), input, loc)
 	if err != nil {
-		var valErr *baby.ValidationError
-		if errors.As(err, &valErr) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": valErr.Error()})
-			return
-		}
-		if errors.Is(err, baby.ErrAlreadyExists) {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-			return
-		}
-		h.logger.Error("createBabyProfile failed", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
+		handleBabyStoreError(c, h.logger, "createBabyProfile", err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"baby": profile})
@@ -76,17 +85,7 @@ func (h *babyHandler) updateProfile(c *gin.Context) {
 
 	profile, err := h.store.Update(c.Request.Context(), input, loc)
 	if err != nil {
-		var valErr *baby.ValidationError
-		if errors.As(err, &valErr) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": valErr.Error()})
-			return
-		}
-		if errors.Is(err, baby.ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
-		}
-		h.logger.Error("updateBabyProfile failed", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
+		handleBabyStoreError(c, h.logger, "updateBabyProfile", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"baby": profile})

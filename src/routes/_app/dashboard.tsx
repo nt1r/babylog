@@ -33,6 +33,7 @@ import { toast } from '@/components/ui/toast';
 import { useBabyProfileQuery } from '@/lib/baby';
 import { RECORD_CATEGORY_META, type RecordCategory } from '@/lib/categories';
 import {
+  buildAdaptiveFeedingOneTap,
   buildDashboardKpiCards,
   type DashboardTrends,
   type DashboardTrendTab,
@@ -193,7 +194,12 @@ function DashboardPage() {
   const trends = trendsQuery.data;
   const vaccines = vaccinesQuery.data;
   const defaultsReady = !defaultsQuery.isLoading;
-  const lastMilkML = defaultsQuery.data?.feeding.last_milk_ml ?? FEEDING_BOUNDS.milkDefault;
+  const adaptiveFeedingOneTap = buildAdaptiveFeedingOneTap(
+    defaultsQuery.data,
+    defaultsReady,
+    FEEDING_BOUNDS.milkDefault,
+    FEEDING_BOUNDS.breastDefault,
+  );
 
   const todayLabel = format(now, 'M月d日 · EEEE', { locale: zhCN });
   const trendView = selectTrendView(trends, trendTab);
@@ -205,18 +211,15 @@ function DashboardPage() {
     {
       kind: 'formula',
       category: 'feeding',
-      title: '再来一顿',
-      hint: defaultsReady ? `${lastMilkML} ml 配方奶` : '加载惯用奶量…',
+      title: adaptiveFeedingOneTap.title,
+      hint: adaptiveFeedingOneTap.hint,
       icon: Milk,
       tileClass: 'border-feeding/35 bg-card hover:border-feeding/70 hover:bg-feeding-soft/25',
       iconClass: 'bg-feeding-soft text-feeding-soft-foreground',
       disabled: !defaultsReady,
-      toastTitle: `已记录 · ${lastMilkML} ml 配方奶`,
+      toastTitle: adaptiveFeedingOneTap.toastTitle,
       undoToastTitle: '已撤销刚才的喂养记录',
-      buildRequest: (recordedAt) => ({
-        category: 'feeding',
-        payload: { subtype: 'formula', amount_ml: lastMilkML, recorded_at: recordedAt, note: '' },
-      }),
+      buildRequest: adaptiveFeedingOneTap.buildRequest,
     },
     {
       kind: 'pee',

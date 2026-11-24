@@ -8,6 +8,7 @@ import type {
   FeedingSubtype,
   SmartDefaults,
   SolidAcceptance,
+  SolidFoodPreset,
 } from '@/lib/records';
 import { combineLocalDateTimeToISO } from '@/lib/time';
 
@@ -24,7 +25,13 @@ export const FEEDING_BOUNDS = {
 } as const;
 
 const MILK_FREQUENT_FALLBACKS = [60, 90, 120] as const;
-const SOLID_FOOD_FALLBACKS = ['高铁米粉', '南瓜泥', '苹果泥', '蛋黄', '蔬菜粥'] as const;
+const SOLID_FOOD_FALLBACKS: readonly SolidFoodPreset[] = [
+  { food: '高铁米粉', amount: '' },
+  { food: '南瓜泥', amount: '' },
+  { food: '苹果泥', amount: '' },
+  { food: '蛋黄', amount: '' },
+  { food: '蔬菜粥', amount: '' },
+];
 
 export interface FeedingFormState {
   subtype: FeedingSubtype;
@@ -46,16 +53,14 @@ interface FeedingBuildContext {
 
 export function resolveFeedingPresets(defaults?: SmartDefaults): {
   frequentMilk: readonly number[];
-  solidPresets: readonly string[];
+  solidPresets: readonly SolidFoodPreset[];
   lastBreastSide: BreastSide | null;
   suggestedBreastSide: BreastSide;
 } {
   return {
     frequentMilk: defaults?.feeding.frequent_milk_ml ?? MILK_FREQUENT_FALLBACKS,
     solidPresets:
-      defaults && defaults.feeding.recent_solid_foods.length > 0
-        ? defaults.feeding.recent_solid_foods
-        : SOLID_FOOD_FALLBACKS,
+      defaults && defaults.feeding.recent_solids.length > 0 ? defaults.feeding.recent_solids : SOLID_FOOD_FALLBACKS,
     lastBreastSide: defaults?.feeding.last_breast_side ?? null,
     suggestedBreastSide: defaults?.feeding.suggested_breast_side ?? 'left',
   };
@@ -69,10 +74,10 @@ export function createDefaultFeedingForm(initialSubtype?: string, defaults?: Sma
 
   return {
     subtype,
-    feedingMode: 'direct',
+    feedingMode: defaults?.feeding.last_breast_mode ?? 'direct',
     breastSide: defaults?.feeding.suggested_breast_side ?? 'left',
     amountMLText: String(defaults?.feeding.last_milk_ml ?? FEEDING_BOUNDS.milkDefault),
-    breastMinText: String(FEEDING_BOUNDS.breastDefault),
+    breastMinText: String(defaults?.feeding.last_breast_duration_min ?? FEEDING_BOUNDS.breastDefault),
     solidFood: '',
     solidAmount: '',
     acceptance: '',

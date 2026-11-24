@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -307,5 +308,111 @@ func TestVaccinesEndToEndLifecycle(t *testing.T) {
 	ov = fetchOverview(t, env)
 	if findDoseByID(ov.Doses, nipDoseID) == nil {
 		t.Fatalf("expected protected NIP dose to remain in DB")
+	}
+}
+
+func TestDefaultClinicEndpointsAndAutoRemember(t *testing.T) {
+	env := setupFullTestServer(t, func() time.Time { return fixedNow })
+	env.createDefaultBaby(t)
+
+	// 1. 首次获取疫苗总览与宝宝档案：默认常去门诊均为空字符串。
+	ov := fetchOverview(t, env)
+	if ov.DefaultClinicName != "" {
+		t.Fatalf("expected initial default_clinic_name empty, got %q", ov.DefaultClinicName)
+	}
+
+	// 2. 通过 PUT /api/vaccines/default-clinic 显式设置、拒绝超长名称与清空，并验证与 GET /api/baby 同步。
+	resp := env.doJSON(t, http.MethodPut, "/api/vaccines/default-clinic", map[string]any{
+		"clinic_name": "  阳光街道社区卫生服务中心  ",
+	}, true)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 setting default clinic, got %d", resp.StatusCode)
+	}
+	setBody := decodeJSONMap(t, resp)
+	if setBody["default_clinic_name"] != "阳光街道社区卫生服务中心" {
+		t.Fatalf("unexpected default clinic response: %#v", setBody)
+	}
+
+	ov = fetchOverview(t, env)
+	if ov.DefaultClinicName != "阳光街道社区卫生服务中心" {
+		t.Fatalf("expected overview default_clinic_name updated, got %q", ov.DefaultClinicName)
+	}
+
+	babyResp := env.doJSON(t, http.MethodGet, "/api/baby", nil, true)
+	if babyResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 GET /api/baby, got %d", babyResp.StatusCode)
+	}
+	babyObj, _ := decodeJSONMap(t, babyResp)["baby"].(map[string]any)
+	if babyObj["default_clinic_name"] != "阳光街道社区卫生服务中心" {
+		t.Fatalf("expected GET /api/baby default_clinic_name synced, got %#v", babyObj["default_clinic_name"])
+	}
+
+	// PUT /api/baby 省略 default_clinic_name 保留原值；传入超长返回 400。
+	updPreserve := env.doJSON(t, http.MethodPut, "/api/baby?tz=Asia/Shanghai", map[string]any{
+		"nickname":   "小汤圆",
+		"birth_date": "2026-07-15",
+		"gender":     "female",
+	}, true)
+	if updPreserve.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 PUT /api/baby preserve clinic, got %d", updPreserve.StatusCode)
+	}
+	updPreserveBaby, _ := decodeJSONMap(t, updPreserve)["baby"].(map[string]any)
+	if updPreserveBaby["default_clinic_name"] != "阳光街道社区卫生服务中心" {
+		t.Fatalf("expected PUT /api/baby omitting default_clinic_name to preserve it, got %#v", updPreserveBaby["default_clinic_name"])
+	}
+
+	overResp := env.doJSON(t, http.MethodPut, "/api/vaccines/default-clinic", map[string]any{
+		"clinic_name": strings.Repeat("院", 81),
+	}, true)
+	_ = overResp.Body.Close()
+	if overResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for oversized default clinic, got %d", overResp.StatusCode)
+	}
+
+	// 清空默认门诊后，常规剂次预约应自动记住新门诊；显式 set_default_clinic=true 可覆写。
+	clearResp := env.doJSON(t, http.MethodPut, "/api/vaccines/default-clinic", map[string]any{
+		"clinic_name": "",
+	}, true)
+	if clearResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 clearing default clinic, got %d", clearResp.StatusCode)
+	}
+	_ = clearResp.Body.Close()
+
+	var routineDoseID int64
+	for _, d := range ov.Doses {
+		if d.AgeMonths >= 1 {
+			routineDoseID = d.ID
+			break
+		}
+	}
+	resp = env.doJSON(t, http.MethodPut, fmt.Sprintf("/api/vaccines/%d?tz=Asia/Shanghai", routineDoseID), map[string]any{
+		"status":         "scheduled",
+		"scheduled_date": "2026-11-28",
+		"clinic_name":    "城北社区卫生服务中心",
+	}, true)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 scheduling routine dose, got %d", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+
+	ov = fetchOverview(t, env)
+	if ov.DefaultClinicName != "城北社区卫生服务中心" {
+		t.Fatalf("expected auto-remembered default_clinic_name 城北社区卫生服务中心, got %q", ov.DefaultClinicName)
+	}
+
+	resp = env.doJSON(t, http.MethodPut, fmt.Sprintf("/api/vaccines/%d?tz=Asia/Shanghai", routineDoseID), map[string]any{
+		"status":             "scheduled",
+		"scheduled_date":     "2026-11-29",
+		"clinic_name":        "城南社区卫生服务中心",
+		"set_default_clinic": true,
+	}, true)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 explicit pin on dose update, got %d", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+
+	ov = fetchOverview(t, env)
+	if ov.DefaultClinicName != "城南社区卫生服务中心" {
+		t.Fatalf("expected explicitly pinned default_clinic_name 城南社区卫生服务中心, got %q", ov.DefaultClinicName)
 	}
 }
