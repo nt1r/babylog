@@ -7,7 +7,7 @@
     --card-radius: 1.5rem;
   }
 
-  /* 浅色主题：温暖鼠尾草绿与暖米白绘本基调 */
+  /* 浅色主题：温暖鼠尾草绿与暖米白绘本基调（:not(.dark):not([data-theme="dark"]) 防止暗色态变量回退泄漏） */
   :root:not(.dark):not([data-theme="dark"]),
   .light,
   [data-theme="light"] {

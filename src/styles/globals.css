@@ -4,6 +4,7 @@
 @import "@fontsource-variable/geist";
 @import "./tokens.css";
 
+/* 绑定 Tailwind v4 dark: 变体到 .dark 祖先类，配合主题 Store 实现手动/系统暗色切换 */
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {

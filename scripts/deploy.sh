@@ -117,6 +117,7 @@ printf '==> [2/4] 同步代码至 %s:%s ...\n' "$DEPLOY_HOST" "$DEPLOY_DIR"
 # 采用白名单打包构建与运行所需的源码文件，避免把 .env*、data/、.git/、本地临时文件同步到服务器，
 # 同时避免 BSD tar 的 --exclude 模式误伤 src/scripts 等嵌套子目录；
 # COPYFILE_DISABLE=1 防止 macOS 生成 ._* 扩展属性文件。
+# 远端先解压至临时暂存目录（GNU tar 忽略 macOS PAX 扩展头告警），再清空旧代码（严格保留 data/ 与 .env）后覆盖。
 COPYFILE_DISABLE=1 tar \
   --exclude='node_modules' \
   --exclude='.DS_Store' \
@@ -167,6 +168,7 @@ export BABYLOG_COMMIT="$3"
 export BABYLOG_BUILD_DATE="$4"
 cd "$DEPLOY_DIR"
 
+# 叠加 compose.build.yaml 在服务端源码构建本地镜像（覆盖默认拉取预构建镜像）。
 if [ -n "$BUILD_FLAG" ]; then
   docker compose -f compose.yaml -f compose.build.yaml build "$BUILD_FLAG"
 else

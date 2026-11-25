@@ -14,7 +14,7 @@
 ## 工程硬边界
 
 - 后端根目录为 `backend/`；开发、静态检查、测试与发布全链路保持 `CGO_ENABLED=0`，静态检查覆盖所有构建标签（含 `embedwebui`），开发态与发布态内嵌资源互不污染，开发工具不写入主 `backend/go.mod`。
-- 前端包管理器固定为 `pnpm`，依赖版本保持精确固定；若当前 shell 的 `node -v` 与 `.node-version` 不一致，先经本机版本管理器切换（如 `nvs`：`. "${NVS_HOME:-$HOME/.nvs}/nvs.sh" && nvs use "$(cat .node-version)"`）；新增或修改路由后运行 `pnpm build:web` 重新生成 `src/routeTree.gen.ts` 并纳入版本控制（保证直接运行 `pnpm check`），避免手动编辑。
+- 前端包管理器固定为 `pnpm`，依赖版本保持精确固定；若当前 shell 的 `node -v` 与 `.node-version` 不一致，先经本机版本管理器（如 `nvs`）切换；新增或修改路由后运行 `pnpm build:web` 重新生成 `src/routeTree.gen.ts` 并纳入版本控制（保证直接运行 `pnpm check`），避免手动编辑。
 
 ## 安全与隐私红线
 

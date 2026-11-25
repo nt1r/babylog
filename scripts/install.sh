@@ -181,6 +181,8 @@ download_file() {
   fi
 }
 
+# curl | sh 管道执行时 stdin 被脚本流占用，交互读写必须显式走 /dev/tty，
+# 且提示语定向到 >/dev/tty 以避免污染命令替换 $(...) 捕获的返回值。
 has_tty() {
   [ -r /dev/tty ] && [ -w /dev/tty ]
 }
@@ -256,6 +258,7 @@ load_existing_env() {
   done < "$ENV_FILE"
 }
 
+# 通过同目录临时文件 + 600 权限 + mv 原子替换 .env，避免中断留下半截配置或权限过宽。
 write_env_file() {
   ENV_FILE="$1"
   TMP_ENV="${ENV_FILE}.tmp.$$"
@@ -269,6 +272,7 @@ EOF
   mv "$TMP_ENV" "$ENV_FILE"
 }
 
+# 校验下载内容后再写入；升级场景先保留 .bak 备份，供后续拉取镜像失败时自动回滚。
 fetch_compose_yaml() {
   TARGET_DIR="$1"
   VERSION_TAG="$2"
@@ -302,6 +306,7 @@ fetch_compose_yaml() {
   mv "$TMP_COMPOSE" "${TARGET_DIR}/compose.yaml"
 }
 
+# 探测数据卷内是否已有 SQLite 数据库，仅首次全新部署时交互创建管理员，避免升级覆盖既有账号。
 init_admin_if_needed() {
   if docker compose run --rm -T --no-deps --entrypoint sh babylog -c 'test -f /data/babylog.sqlite' >/dev/null 2>&1; then
     printf '==> 检测到数据卷中已有数据库，跳过管理员初始化\n'

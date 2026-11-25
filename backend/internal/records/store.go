@@ -183,7 +183,7 @@ func (s *Store) applyTimeRanges(q *gorm.DB, ranges []utcRange, overlap bool) *go
 	return q.Where(group)
 }
 
-// ==================== Shared Persistence Helpers ====================
+// --- 共用持久化辅助方法 ---
 
 // deleteRecord 是四类记录共用的泛型删除辅助函数（类型参数 T 决定目标表模型）；
 // 按 id + baby_id 双条件限定归属，未命中任何行时返回 [ErrNotFound]。
@@ -221,6 +221,8 @@ func updateRecord[T any](s *Store, ctx context.Context, babyID, id int64, cols [
 	return &rec, nil
 }
 
+// prepareListFilter 统一归一化分页参数、校验子类型筛选并解析时间范围对应的 UTC 边界，
+// 依次返回归一化后的 ListFilter、子类型切片、起止 UTC 边界、是否启用范围筛选及校验错误。
 func (s *Store) prepareListFilter(f ListFilter, allowedSubtypes []string, allowMulti bool, invalidMsg string) (ListFilter, []string, string, string, bool, error) {
 	f = normalizeFilter(f)
 	subtypes, err := parseSubtypeFilters(f.Subtype, allowedSubtypes, allowMulti, invalidMsg)
@@ -334,13 +336,14 @@ func listPointRecords[T any, S any](s *Store, ctx context.Context, babyID int64,
 	}, nil
 }
 
-// ==================== Feeding ====================
+// --- 喂养记录 ---
 
 var feedingUpdateCols = []string{
 	"subtype", "feeding_mode", "breast_side", "amount_ml", "duration_min",
 	"solid_food", "solid_amount", "acceptance", "recorded_at", "note", "updated_at",
 }
 
+// CreateFeeding 校验并持久化一条喂养记录，校验不通过返回 [*ValidationError]。
 func (s *Store) CreateFeeding(ctx context.Context, babyID int64, in FeedingInput) (*FeedingRecord, error) {
 	now := s.now()
 	clean, err := ValidateFeeding(in, now)
@@ -369,6 +372,8 @@ func (s *Store) CreateFeeding(ctx context.Context, babyID int64, in FeedingInput
 	return &rec, nil
 }
 
+// UpdateFeeding 校验并在事务内更新指定喂养记录（跨子类型切换时清空废弃可空列），
+// 校验失败返回 [*ValidationError]，记录不存在或不属于当前宝宝返回 [ErrNotFound]。
 func (s *Store) UpdateFeeding(ctx context.Context, babyID, id int64, in FeedingInput) (*FeedingRecord, error) {
 	now := s.now()
 	clean, err := ValidateFeeding(in, now)
@@ -390,6 +395,7 @@ func (s *Store) UpdateFeeding(ctx context.Context, babyID, id int64, in FeedingI
 	})
 }
 
+// DeleteFeeding 删除指定宝宝的喂养记录，未命中时返回 [ErrNotFound]。
 func (s *Store) DeleteFeeding(ctx context.Context, babyID, id int64) error {
 	return deleteRecord[FeedingRecord](s, ctx, babyID, id)
 }
@@ -404,12 +410,13 @@ func (s *Store) ListFeeding(ctx context.Context, babyID int64, f ListFilter) (*L
 	})
 }
 
-// ==================== Sleep ====================
+// --- 睡眠记录 ---
 
 var sleepUpdateCols = []string{
 	"subtype", "started_at", "ended_at", "duration_min", "note", "updated_at",
 }
 
+// CreateSleep 校验并持久化一条睡眠记录（自动计算时长），校验不通过返回 [*ValidationError]。
 func (s *Store) CreateSleep(ctx context.Context, babyID int64, in SleepInput) (*SleepRecord, error) {
 	now := s.now()
 	clean, durationMin, err := ValidateSleep(in, now)
@@ -433,6 +440,8 @@ func (s *Store) CreateSleep(ctx context.Context, babyID int64, in SleepInput) (*
 	return &rec, nil
 }
 
+// UpdateSleep 校验并在事务内更新指定睡眠记录与时长，
+// 校验失败返回 [*ValidationError]，未命中时返回 [ErrNotFound]。
 func (s *Store) UpdateSleep(ctx context.Context, babyID, id int64, in SleepInput) (*SleepRecord, error) {
 	now := s.now()
 	clean, durationMin, err := ValidateSleep(in, now)
@@ -449,6 +458,7 @@ func (s *Store) UpdateSleep(ctx context.Context, babyID, id int64, in SleepInput
 	})
 }
 
+// DeleteSleep 删除指定宝宝的睡眠记录，未命中时返回 [ErrNotFound]。
 func (s *Store) DeleteSleep(ctx context.Context, babyID, id int64) error {
 	return deleteRecord[SleepRecord](s, ctx, babyID, id)
 }
@@ -518,13 +528,14 @@ func (s *Store) ListSleep(ctx context.Context, babyID int64, f ListFilter) (*Lis
 	}, nil
 }
 
-// ==================== Care ====================
+// --- 日常护理记录 ---
 
 var careUpdateCols = []string{
 	"subtype", "diaper_kind", "stool_consistency", "stool_color", "care_title",
 	"recorded_at", "note", "updated_at",
 }
 
+// CreateCare 校验并持久化一条日常护理记录，校验不通过返回 [*ValidationError]。
 func (s *Store) CreateCare(ctx context.Context, babyID int64, in CareInput) (*CareRecord, error) {
 	now := s.now()
 	clean, err := ValidateCare(in, now)
@@ -550,6 +561,8 @@ func (s *Store) CreateCare(ctx context.Context, babyID int64, in CareInput) (*Ca
 	return &rec, nil
 }
 
+// UpdateCare 校验并在事务内更新指定护理记录（跨子类型切换时清空废弃可空列），
+// 校验失败返回 [*ValidationError]，未命中时返回 [ErrNotFound]。
 func (s *Store) UpdateCare(ctx context.Context, babyID, id int64, in CareInput) (*CareRecord, error) {
 	now := s.now()
 	clean, err := ValidateCare(in, now)
@@ -568,6 +581,7 @@ func (s *Store) UpdateCare(ctx context.Context, babyID, id int64, in CareInput) 
 	})
 }
 
+// DeleteCare 删除指定宝宝的护理记录，未命中时返回 [ErrNotFound]。
 func (s *Store) DeleteCare(ctx context.Context, babyID, id int64) error {
 	return deleteRecord[CareRecord](s, ctx, babyID, id)
 }
@@ -582,7 +596,7 @@ func (s *Store) ListCare(ctx context.Context, babyID int64, f ListFilter) (*List
 	})
 }
 
-// ==================== Health ====================
+// --- 健康与生长记录 ---
 
 var healthUpdateCols = []string{
 	"subtype", "temperature_c", "medicine_name", "medicine_dosage",
@@ -590,6 +604,7 @@ var healthUpdateCols = []string{
 	"recorded_at", "note", "updated_at",
 }
 
+// CreateHealth 校验并持久化一条健康或生长记录，校验不通过返回 [*ValidationError]。
 func (s *Store) CreateHealth(ctx context.Context, babyID int64, in HealthInput) (*HealthRecord, error) {
 	now := s.now()
 	clean, err := ValidateHealth(in, now)
@@ -618,6 +633,8 @@ func (s *Store) CreateHealth(ctx context.Context, babyID int64, in HealthInput) 
 	return &rec, nil
 }
 
+// UpdateHealth 校验并在事务内更新指定健康或生长记录（跨子类型切换时清空废弃可空列），
+// 校验失败返回 [*ValidationError]，未命中时返回 [ErrNotFound]。
 func (s *Store) UpdateHealth(ctx context.Context, babyID, id int64, in HealthInput) (*HealthRecord, error) {
 	now := s.now()
 	clean, err := ValidateHealth(in, now)
@@ -639,11 +656,12 @@ func (s *Store) UpdateHealth(ctx context.Context, babyID, id int64, in HealthInp
 	})
 }
 
+// DeleteHealth 删除指定宝宝的健康或生长记录，未命中时返回 [ErrNotFound]。
 func (s *Store) DeleteHealth(ctx context.Context, babyID, id int64) error {
 	return deleteRecord[HealthRecord](s, ctx, babyID, id)
 }
 
-// ListHealth 返回筛选分页后的健康记录及当前页涉及本地日期的完整每日小计。
+// ListHealth 返回筛选分页后的健康与生长记录及当前页涉及本地日期的完整每日小计。
 // 支持逗号分隔多子类型筛选（如 "temperature,medicine"、"growth,teeth"），同时向后兼容单子类型与 "all"。
 func (s *Store) ListHealth(ctx context.Context, babyID int64, f ListFilter) (*ListResult[HealthRecord, HealthDailySummary], error) {
 	return listPointRecords(s, ctx, babyID, f, pointListSpec[HealthRecord, HealthDailySummary]{
@@ -656,7 +674,7 @@ func (s *Store) ListHealth(ctx context.Context, babyID int64, f ListFilter) (*Li
 	})
 }
 
-// ==================== Window & Highlights Reads ====================
+// --- 时间窗口快照与最近标记读取 ---
 
 // ReadWindow 读取指定宝宝在 [start, end) 时间窗口内的日常记录快照，
 // 供首页看板等聚合模块使用，避免外部模块直接耦合记录表结构与 SQL 谓词。
@@ -698,6 +716,7 @@ func (s *Store) ReadWindow(ctx context.Context, babyID int64, start, end time.Ti
 type growthMetricKind uint8
 
 const (
+	// 使用 Go 的 iota + 1 从 1 起递增，跳过零值 0 以防未初始化枚举变量误命中有效维度分支。
 	growthMetricWeight growthMetricKind = iota + 1
 	growthMetricHeight
 	growthMetricHead
@@ -803,6 +822,8 @@ func (s *Store) ReadLatestHighlights(ctx context.Context, babyID int64) (*Latest
 		hl.Growth.HeadRecordedAt = &ts
 	}
 
+	// 累计出牙数按 subtype = 'teeth' 的记录条数统计（不解析备注文本），
+	// 且仅在存在出牙记录时再查最近一条，避免无记录时的多余查询。
 	var teethCount int64
 	if err := s.db.WithContext(ctx).
 		Model(&HealthRecord{}).

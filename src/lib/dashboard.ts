@@ -565,6 +565,7 @@ interface DashboardSummaryQueryOptions {
   readonly refetchInterval?: number | false;
 }
 
+/** 首页今日汇总查询：默认每 60 秒轮询刷新，非首页或低频场景应显式传 refetchInterval: false。 */
 export function useDashboardSummaryQuery(options?: DashboardSummaryQueryOptions) {
   return useQuery({
     queryKey: [...DASHBOARD_QUERY_KEY, 'summary'],

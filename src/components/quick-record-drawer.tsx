@@ -28,6 +28,7 @@ import { useSaveRecordMutation, useSmartDefaultsQuery } from '@/lib/records';
 import { cn } from '@/lib/utils';
 import { useQuickRecordStore } from '@/stores/quick-record';
 
+/** 四类日常记录统一快捷录入与编辑抽屉（含智能默认值双守卫与提交中防误关保护）。 */
 export function QuickRecordDrawer() {
   const open = useQuickRecordStore((state) => state.open);
   const intent = useQuickRecordStore((state) => state.intent);
@@ -42,6 +43,7 @@ export function QuickRecordDrawer() {
   const [draft, setDraft] = useState<QuickRecordDraft>(() => createQuickRecordDraft(intent, undefined, new Date()));
   const [formError, setFormError] = useState('');
 
+  // 通过 Ref 读取最新默认值快照，使初始化 useEffect 仅依赖 [open, intent]，防止后台 Query 刷新冲掉未保存编辑。
   const defaultsSnapRef = useRef({ defaults, updatedAt: defaultsUpdatedAt, isFetching: defaultsFetching });
   defaultsSnapRef.current = { defaults, updatedAt: defaultsUpdatedAt, isFetching: defaultsFetching };
 

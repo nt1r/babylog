@@ -76,6 +76,7 @@ function ToastList() {
                 size="xs"
                 className="shrink-0"
                 onClick={() => {
+                  // 点击动作按钮前先关闭本条 Toast，防止撤销等一次性回调被连点重入。
                   toastManager.close(item.id);
                   void action.onClick();
                 }}
@@ -122,6 +123,7 @@ function addToast(
     title,
     description,
     type,
+    // 带交互动作（如撤销/立即更新）默认延长至 5 秒，留足点击反应时间。
     timeout: options?.timeout ?? (options?.action ? 5000 : undefined),
     data: options?.action ? ({ action: options.action } satisfies ToastData) : undefined,
   });

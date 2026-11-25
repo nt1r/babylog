@@ -7,7 +7,7 @@
 interface VaccineCalendarEventInput {
   readonly uidSeed: string;
   readonly summary: string;
-  readonly date: string; // YYYY-MM-DD
+  readonly date: string; // 本地日期 YYYY-MM-DD
   readonly time?: string; // 可选 HH:MM（本地时间）
   readonly location?: string;
   readonly description?: string;
@@ -33,6 +33,7 @@ interface ExportVaccineVisitParams {
 
 const utf8Encoder = new TextEncoder();
 
+// 按 RFC 5545 文本转义规则处理特殊字符：必须先转义反斜杠，避免二次转义后续生成的 \n / \; / \,。
 function escapeIcsText(input: string): string {
   return input
     .replace(/\\/g, '\\\\')
@@ -119,10 +120,12 @@ function buildVaccineVisitIcs(input: VaccineCalendarEventInput, now: Date = new 
 
   const hasValidTime = Boolean(input.time && /^([01]\d|2[0-3]):[0-5]\d$/.test(input.time));
   if (hasValidTime && input.time) {
+    // 带明确时刻使用无 Z 后缀的浮动本地时间，确保导入设备按当地墙钟时间触发闹钟。
     const { dtStart, dtEnd } = addOneHourLocal(input.date, input.time);
     lines.push(`DTSTART:${dtStart}`);
     lines.push(`DTEND:${dtEnd}`);
   } else {
+    // 全天事件按 RFC 5545 排他性约定，DTEND 必须指向次日日期键。
     lines.push(`DTSTART;VALUE=DATE:${compactDate}`);
     lines.push(`DTEND;VALUE=DATE:${nextDateKey(input.date)}`);
   }
@@ -169,7 +172,7 @@ function buildVaccineVisitIcs(input: VaccineCalendarEventInput, now: Date = new 
   return `${lines.map((line) => foldIcsLine(line)).join('\r\n')}\r\n`;
 }
 
-/** 统一组装单剂或多剂疫苗的日历事件描述（含接种前注意事项与风险提示），供导出与纯函数测试共用。 */
+/** 统一组装单剂或多剂疫苗的日历事件描述（含接种前注意事项与风险提示）。 */
 function buildVaccineVisitIcsFromDoses(params: ExportVaccineVisitParams, now: Date = new Date()): string {
   const titlePrefix = params.babyNickname ? `${params.babyNickname}疫苗接种` : '宝宝疫苗接种';
   const names = params.doses.map((d) => {

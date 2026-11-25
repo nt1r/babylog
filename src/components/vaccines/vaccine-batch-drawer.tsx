@@ -261,6 +261,7 @@ export function VaccineBatchDrawer({
                 setClinicName(nextValue);
                 setClinicAutoFilled(false);
                 const trimmed = nextValue.trim();
+                // 门诊清空或切回当前默认门诊（置顶复选框隐藏）时同步复位勾选态，防止后续改填其他门诊时残留误置顶。
                 if (!trimmed || trimmed === defaultClinicRef.current.trim()) {
                   setPinAsDefault(false);
                 }

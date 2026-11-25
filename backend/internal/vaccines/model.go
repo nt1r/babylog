@@ -24,23 +24,26 @@ const (
 	AlertDueSoon          = "due_soon"
 	AlertOverdue          = "overdue"
 
-	// 提醒窗口常量（天）：距预计接种日 ±14 天内为近期可接种，超过 14 天为待补种/待补录；
-	// 已预约剂次距预约日 0~7 天内为即将接种。
+	// 提醒窗口常量（天）：待接种剂次在预计接种日前后 14 天内为近期可接种（due_soon），
+	// 超过预计接种日 14 天以上（daysUntil < -14）为待补种/待补录（overdue），提前超过 14 天为未到龄（upcoming）；
+	// 已预约剂次距预约日 0~7 天内为即将接种（scheduled_soon），过日为已预约过期（scheduled_overdue）。
 	PendingDueSoonWindowDays = 14
 	ScheduledSoonWindowDays  = 7
 
-	// 批量操作单次最多允许的剂次数与字段长度上限。
-	MaxBatchDoseCount   = 30
-	MaxNameLength       = 60
-	MaxClinicLength     = 80
-	MaxSiteLength       = 32
-	MaxMakerLength      = 60
-	MaxBatchNoLength    = 60
-	MaxReactionLength   = 200
-	MaxNoteLength       = 500
-	MaxAgeMonths        = 144
-	MaxTotalDoses       = 10
-	RecentClinicsLimit  = 3
+	// 批量操作剂次上限、字段长度上限与排期边界常量。
+	MaxBatchDoseCount  = 30
+	MaxNameLength      = 60
+	MaxClinicLength    = 80
+	MaxSiteLength      = 32
+	MaxMakerLength     = 60
+	MaxBatchNoLength   = 60
+	MaxReactionLength  = 200
+	MaxNoteLength      = 500
+	MaxAgeMonths       = 144
+	MaxTotalDoses      = 10
+	RecentClinicsLimit = 3
+
+	// 批量接口允许的操作类型：预约 / 标记已接种。
 	BatchActionSchedule = "schedule"
 	BatchActionComplete = "complete"
 )
@@ -50,6 +53,7 @@ type ValidationError struct {
 	Message string
 }
 
+// Error 实现内置 error 接口，返回可直接展示给前端的中文校验提示。
 func (e *ValidationError) Error() string { return e.Message }
 
 // ErrNotFound 表示目标疫苗剂次或模板不存在，映射为 HTTP 404。
@@ -92,8 +96,7 @@ func (DoseRecord) TableName() string { return "vaccine_doses" }
 
 // DoseView 为返回给前端的单剂完整视图：
 // 通过 Go 结构体匿名嵌入 [DoseRecord]，使数据库基础字段直接展平到 JSON 顶层，
-// 同时附加内置科普风险信息与按本地时区实时派生的日期/提醒状态；
-// IsBirthHospital 标注 `json:"-"` 避免下发给前端，仅用于服务端聚合产院快捷确认状态。
+// 同时附加内置科普风险信息与按本地时区实时派生的日期/提醒状态。
 type DoseView struct {
 	DoseRecord
 	ShortName         string   `json:"short_name"`
@@ -101,7 +104,7 @@ type DoseView struct {
 	EffectiveDate     string   `json:"effective_date"`
 	AlertState        string   `json:"alert_state"`
 	DaysUntil         int      `json:"days_until"`
-	IsBirthHospital   bool     `json:"-"` // 仅用于服务端聚合产院快捷确认，不暴露给前端
+	IsBirthHospital   bool     `json:"-"` // 仅用于服务端聚合产院快捷确认，不下发给前端
 	Deletable         bool     `json:"deletable"`
 	Prevents          string   `json:"prevents"`
 	Route             string   `json:"route"`
@@ -191,7 +194,7 @@ type CreateCustomInput struct {
 }
 
 // AddTemplateInput 表示从内置自费模板库加入疫苗的请求载荷；
-// Doses 为空时采用模板默认排期，非空时按用户定制的剂次与月龄顺序创建。
+// Doses 为空时采用模板默认排期，非空时按家长定制的剂次与月龄顺序创建。
 type AddTemplateInput struct {
 	TemplateCode string          `json:"template_code"`
 	Doses        []DosePlanInput `json:"doses"`

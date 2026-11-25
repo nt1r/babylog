@@ -84,6 +84,7 @@ func TestValidateAndNormalize(t *testing.T) {
 			if got.Nickname != tc.wantName {
 				t.Fatalf("expected nickname %q, got %q", tc.wantName, got.Nickname)
 			}
+			// 核验 DefaultClinicName 的 *string 三态契约：nil 保留原值、"" 显式清空、非空裁剪更新。
 			if tc.wantClinic == nil {
 				if got.DefaultClinicName != nil {
 					t.Fatalf("expected nil DefaultClinicName, got %q", *got.DefaultClinicName)

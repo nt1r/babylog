@@ -106,10 +106,12 @@ const HIDDEN_NAV_ITEMS: readonly NavItem[] = [
 
 const ALL_NAV_ITEMS: readonly NavItem[] = NAV_GROUPS.flatMap((group) => group.items);
 
-// 移动端底部导航保留最高频的 4 个入口（搭配中央快速记一笔）
 const MOBILE_NAV_IDS = new Set(['dashboard', 'feeding', 'sleep', 'care']);
+
+/** 移动端底部导航栏展示的 4 个高频核心入口（搭配中央快速记一笔按钮）。 */
 export const MOBILE_NAV_ITEMS: readonly NavItem[] = ALL_NAV_ITEMS.filter((item) => MOBILE_NAV_IDS.has(item.id));
 
+/** 按路径精确或前缀匹配导航元数据（同时覆盖 HIDDEN_NAV_ITEMS 中的保留路由）。 */
 export function findNavItemByPath(pathname: string): NavItem | undefined {
   return [...ALL_NAV_ITEMS, ...HIDDEN_NAV_ITEMS].find(
     (item) => pathname === item.url || pathname.startsWith(`${item.url}/`),

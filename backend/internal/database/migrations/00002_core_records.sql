@@ -1,4 +1,7 @@
 -- +goose Up
+-- 宝宝档案与四大日常记录表：
+-- 时间戳列（recorded_at / started_at / ended_at / created_at / updated_at）统一存储 UTC RFC3339 文本（字典序与时间先后等价），
+-- birth_date 存储本地自然日 YYYY-MM-DD；四类记录采用单表多子类型（STI）+ 可空专属列设计。
 CREATE TABLE IF NOT EXISTS baby_profiles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nickname TEXT NOT NULL,
@@ -42,6 +45,7 @@ CREATE TABLE IF NOT EXISTS sleep_records (
     updated_at TEXT NOT NULL
 );
 
+-- 双时间索引：started_at 支撑列表倒序分页，ended_at 支撑跨夜睡眠重叠窗口查询（ended_at > start AND started_at < end）。
 CREATE INDEX IF NOT EXISTS idx_sleep_baby_started ON sleep_records(baby_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sleep_baby_ended ON sleep_records(baby_id, ended_at DESC);
 
@@ -62,6 +66,7 @@ CREATE TABLE IF NOT EXISTS care_records (
 CREATE INDEX IF NOT EXISTS idx_care_baby_recorded ON care_records(baby_id, recorded_at DESC);
 CREATE INDEX IF NOT EXISTS idx_care_baby_subtype_recorded ON care_records(baby_id, subtype, recorded_at DESC);
 
+-- 同时承载健康观察（temperature / medicine，/health）与生长发育（growth / teeth，/growth）两个工作区数据。
 CREATE TABLE IF NOT EXISTS health_records (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     baby_id INTEGER NOT NULL REFERENCES baby_profiles(id) ON DELETE CASCADE,

@@ -303,7 +303,6 @@ func optionalTemplates() []vaccineTemplate {
 	return out
 }
 
-// lookupTemplate 根据模板编码查找内置疫苗模板。
 func lookupTemplate(code string) (vaccineTemplate, bool) {
 	tpl, ok := catalogByCode[code]
 	return tpl, ok

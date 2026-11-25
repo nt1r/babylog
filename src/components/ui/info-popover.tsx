@@ -188,6 +188,7 @@ export function InfoPopover({
             </DrawerClose>
           </DrawerHeader>
 
+          {/* 标注 data-base-ui-swipe-ignore，避免移动端阅读长说明滚动时误触底部抽屉下滑关闭 */}
           <div
             data-base-ui-swipe-ignore
             className="flex-1 overflow-y-auto px-5 pt-3.5 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] text-[13px] leading-relaxed text-muted-foreground"

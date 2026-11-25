@@ -20,6 +20,7 @@ interface QuickRecordStoreState {
   setOpen: (open: boolean) => void;
 }
 
+/** 快捷记录抽屉全局意图 Store，统一管理新建、编辑与复用打开状态。 */
 export const useQuickRecordStore = create<QuickRecordStoreState>((set) => ({
   open: false,
   intent: { mode: 'create', category: 'feeding' },

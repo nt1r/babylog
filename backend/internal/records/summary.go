@@ -63,7 +63,7 @@ func AccumulateSleepSummary(sum *SleepDailySummary, r SleepRecord, mins int) {
 	}
 }
 
-// AccumulateHealthSummary 将单条健康记录累加到每日小计中；
+// AccumulateHealthSummary 将单条健康与生长记录累加到每日小计中；
 // 调用方按 recorded_at DESC, id DESC 顺序遍历时，首条非空体温记录自动成为当日最近体温。
 func AccumulateHealthSummary(sum *HealthDailySummary, r HealthRecord) {
 	sum.TotalCount++

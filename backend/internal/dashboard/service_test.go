@@ -7,6 +7,7 @@ import (
 	"github.com/nt1r/babylog/backend/internal/timeutil"
 )
 
+// 验证全天照护节律（Care Rhythm）5 个本地时段的分界时刻（05/09/12/18/21 时）。
 func TestDaySlotLabel(t *testing.T) {
 	shanghai, err := timeutil.LoadLocation("Asia/Shanghai")
 	if err != nil {

@@ -80,6 +80,7 @@ type appConfig struct {
 // AppOption 控制 NewTestApp 的初始化行为。
 type AppOption func(*appConfig)
 
+// WithClock 覆写测试应用初始固定时钟（默认使用 defaultFixedNow）。
 func WithClock(initial time.Time) AppOption {
 	return func(cfg *appConfig) {
 		cfg.initialNow = initial
@@ -228,6 +229,7 @@ func assertIsolatedTempDir(t *testing.T, tempRoot string) {
 	}
 }
 
+// setupDistFixtures 构造涵盖 4 类缓存策略的最小前端产物（HTML、PWA manifest、SW 与带哈希资源）及越界符号链接。
 func setupDistFixtures(t *testing.T, tempRoot string) string {
 	t.Helper()
 
@@ -392,6 +394,7 @@ func (c *AppClient) DoRaw(t *testing.T, method, path, contentType string, rawBod
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
+	// 非 GET/HEAD 写请求默认自动注入同源 Origin 头，以满足后端 Same-Origin 安全中间件校验。
 	if method != http.MethodGet && method != http.MethodHead && c.origin != "" {
 		req.Header.Set("Origin", c.origin)
 	}
@@ -483,6 +486,7 @@ func (r *Response) CookiePair(name string) (string, bool) {
 	return "", false
 }
 
+// DecodeJSON 将响应体反序列化为目标泛型结构 T，解析失败时立即终止当前用例并附带原始响应体。
 func DecodeJSON[T any](t *testing.T, resp *Response) T {
 	t.Helper()
 	var out T

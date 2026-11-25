@@ -13,6 +13,8 @@ import (
 // timeHHMMPattern 在包初始化时经 regexp.MustCompile 预编译一次，避免每次校验重复编译正则。
 var timeHHMMPattern = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
 
+// normalizeDatePtr 校验可选日期指针并限定年份处于 [1900, 2200] 安全区间；
+// 空串或纯空白统一收敛为 nil，以便落库为 SQL NULL。
 func normalizeDatePtr(raw *string, fieldLabel string) (*string, error) {
 	if raw == nil {
 		return nil, nil
@@ -51,6 +53,9 @@ func normalizeText(raw string, maxLen int, label string) (string, error) {
 	return trimmed, nil
 }
 
+// normalizeOptionalTextPtr 用于 [BatchUpdateInput] 的 *string 三态字段标准化：
+// 与 normalizeDatePtr（空串转为 nil）刻意不同——当 raw 非 nil 且裁剪后为空串时，
+// 必须返回指向 "" 的非 nil 指针，供上层区分“未传字段（nil，保留原值）”与“显式传空串（清空旧值）”。
 func normalizeOptionalTextPtr(raw *string, maxLen int, label string) (*string, error) {
 	if raw == nil {
 		return nil, nil
@@ -62,6 +67,8 @@ func normalizeOptionalTextPtr(raw *string, maxLen int, label string) (*string, e
 	return &norm, nil
 }
 
+// validateVaccinatedAt 校验实际接种日期必填且落在 [birthDate, todayKey] 范围内
+// （YYYY-MM-DD 格式字典序与自然日先后严格一致，可直接字符串比较）。
 func validateVaccinatedAt(raw *string, birthDate, todayKey, missingMsg string) (*string, error) {
 	vacDate, err := normalizeDatePtr(raw, "实际接种日期")
 	if err != nil {
@@ -194,6 +201,7 @@ func validateUpdateInput(in UpdateDoseInput, birthDate, todayKey string) (Update
 		out.ScheduledDate = schedDate
 		out.ScheduledTime = schedTime
 		out.ClinicName = clinicName
+		// 门诊为空时静默取消置顶标记，避免前端误勾选导致清空宝宝既有常去门诊。
 		out.SetDefaultClinic = in.SetDefaultClinic && clinicName != ""
 		return out, nil
 

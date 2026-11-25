@@ -28,7 +28,7 @@ func openTestStore(t *testing.T) (*auth.Store, *gorm.DB, string) {
 }
 
 func TestValidators(t *testing.T) {
-	t.Run("validates usernames by length and surrounding whitespace", func(t *testing.T) {
+	t.Run("按长度与首尾空白校验用户名", func(t *testing.T) {
 		valid := []string{"admin", strings.Repeat("a", 128)}
 		for _, u := range valid {
 			if err := auth.ValidateUsername(u); err != nil {
@@ -46,7 +46,7 @@ func TestValidators(t *testing.T) {
 		}
 	})
 
-	t.Run("validates passwords between 12 and 1024 characters", func(t *testing.T) {
+	t.Run("校验12至1024字符密码边界", func(t *testing.T) {
 		if err := auth.ValidatePassword("123456789012"); err != nil {
 			t.Errorf("expected 12-char password valid, got %v", err)
 		}
@@ -63,7 +63,8 @@ func TestValidators(t *testing.T) {
 		}
 	})
 
-	t.Run("recognizes 43-character base64url session tokens only", func(t *testing.T) {
+	// 32 字节（256 bit）随机令牌经无填充 base64url 编码后固定为 43 个字符。
+	t.Run("仅放行43位base64url会话令牌", func(t *testing.T) {
 		if !auth.IsSessionToken(strings.Repeat("A", 43)) {
 			t.Error("expected 43 A's valid")
 		}
@@ -87,7 +88,8 @@ func TestValidators(t *testing.T) {
 func TestStoreInfrastructureAndLegacyCompat(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("enforces directory and sqlite file permissions and WAL mode", func(t *testing.T) {
+	// 验证 HTTP 层无法直接表达的底层持久化不变量：目录 0700、SQLite 文件 0600 及 WAL 日志模式。
+	t.Run("校验数据目录与SQLite文件权限及WAL模式", func(t *testing.T) {
 		_, gormDB, dataDir := openTestStore(t)
 
 		dirInfo, err := os.Stat(dataDir)
@@ -115,7 +117,9 @@ func TestStoreInfrastructureAndLegacyCompat(t *testing.T) {
 		}
 	})
 
-	t.Run("authenticates legacy Node.js scrypt password hashes seamlessly", func(t *testing.T) {
+	// 兼容性专项：该向量由旧版 Node.js crypto.scryptSync("node-compat-secret-123", salt, 64) 生成（N=16384, r=8, p=1），
+	// 须绕过 InitializeAdministrator 直接写库，以验证 Go 实现与存量 SQLite 数据无缝兼容。
+	t.Run("无缝兼容旧版Node.js_scrypt密码哈希", func(t *testing.T) {
 		store, gormDB, _ := openTestStore(t)
 		legacyAdmin := auth.Administrator{
 			ID:           1,

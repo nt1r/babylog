@@ -27,6 +27,7 @@ interface CareBuildContext {
   readonly editId?: number;
 }
 
+/** 合并最近自定义护理标题与默认建议并去重截断至最多 6 项。 */
 export function resolveCarePresets(defaults?: SmartDefaults): readonly string[] {
   if (defaults && defaults.care.recent_other_titles.length > 0) {
     return Array.from(new Set([...defaults.care.recent_other_titles, ...CARE_OTHER_FALLBACKS])).slice(0, 6);
@@ -56,6 +57,7 @@ export function careFormFromRecord(record: CareRecord): CareFormState {
   };
 }
 
+/** 校验日常护理表单并组装提交载荷（仅嘘嘘时强制丢弃隐藏的大便性状与颜色字段置 null）。 */
 export function validateAndBuildCareSubmission(state: CareFormState, ctx: CareBuildContext): CategoryBuildResult {
   const recordedAt = combineLocalDateTimeToISO(ctx.dateStr, ctx.timeStr);
   if (!recordedAt) {

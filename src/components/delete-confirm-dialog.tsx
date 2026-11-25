@@ -22,6 +22,7 @@ interface DeleteConfirmDialogProps {
   readonly onConfirm: () => void | Promise<void>;
 }
 
+/** 通用危险操作确认弹窗；pending 期间拦截一切关闭动作，防止异步删除失败丢失反馈。 */
 export function DeleteConfirmDialog({
   open,
   onOpenChange,
@@ -34,6 +35,7 @@ export function DeleteConfirmDialog({
   onConfirm,
 }: DeleteConfirmDialogProps) {
   return (
+    // 提交/删除进行中拦截遮罩点击与 Esc 关闭，待异步请求结束后再由调用方关闭。
     <AlertDialog open={open} onOpenChange={(next) => (!pending ? onOpenChange(next) : undefined)}>
       <AlertDialogContent>
         <AlertDialogHeader>

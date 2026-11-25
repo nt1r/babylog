@@ -381,7 +381,7 @@ export function VaccineCatalogDrawer({ open, onOpenChange }: VaccineCatalogDrawe
                         )}
                       </div>
 
-                      {/* 展开前展示核实后的各剂默认月龄胶囊，方便一眼看清几剂和各自月龄 */}
+                      {/* 展开前展示默认排期的各剂适龄月龄胶囊，方便一眼看清剂次数与月龄 */}
                       {!isExpanded ? (
                         <div className="flex flex-wrap gap-1.5">
                           {tpl.doses.map((d) => (

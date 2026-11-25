@@ -5,7 +5,7 @@ import (
 	"sort"
 )
 
-// GetSmartDefaults 根据最近历史记录汇总智能默认值，为空历史提供开箱即用的兜底预设。
+// GetSmartDefaults 根据最近历史记录汇总智能默认值，为空历史提供开箱即用的初始默认建议。
 //
 // 仅回溯最近 60 条喂养（约 1 周）、20 条睡眠、40 条体温/用药与 30 条自定义护理记录，
 // 确保默认值紧贴宝宝当前月龄习惯，不被早期陈旧数据稀释。
@@ -103,6 +103,7 @@ func (s *Store) GetSmartDefaults(ctx context.Context, babyID int64) (*SmartDefau
 			defaults.Feeding.LastBreastDurationMin = *f.DurationMin
 			hasLastBreastDur = true
 		}
+		// 倒序遍历下首次命中同名辅食即锁定该辅食最近一次份量，去重保留前 5 项。
 		if f.Subtype == FeedingSubtypeSolid && f.SolidFood != nil && len(defaults.Feeding.RecentSolids) < 5 {
 			food := *f.SolidFood
 			if _, exists := solidSeen[food]; !exists {
@@ -149,7 +150,7 @@ func (s *Store) GetSmartDefaults(ctx context.Context, babyID int64) (*SmartDefau
 				topSeen[fallback] = struct{}{}
 			}
 		}
-		// 高频前 3 档按升序展示给前端胶囊，符合用户从少到多的视觉直觉。
+		// 高频前 3 档按升序展示给前端胶囊，符合家长从少到多的视觉直觉。
 		sort.Ints(top)
 		defaults.Feeding.FrequentMilkML = top
 	}
@@ -246,6 +247,7 @@ func (s *Store) GetSmartDefaults(ctx context.Context, babyID int64) (*SmartDefau
 // medianRounded 计算时长样本的中位数并四舍五入到指定分钟步长，再钳位到 [minVal, maxVal]，
 // 用中位数而非单次最近值可避免偶发短睡或长睡导致下一次默认倒推时长失真。
 func medianRounded(durations []int, step, minVal, maxVal int) int {
+	// 通过 append([]int(nil), ...) 拷贝新切片再排序，避免 sort.Ints 原地修改调用方切片。
 	sorted := append([]int(nil), durations...)
 	sort.Ints(sorted)
 	mid := len(sorted) / 2

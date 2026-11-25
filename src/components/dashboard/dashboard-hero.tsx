@@ -13,7 +13,7 @@ interface DashboardHeroProps {
 
 /**
  * 首页顶部绘本风时光问候卡片：
- * 结合随昼夜切换的手绘卡通插画（太阳/夕阳/弯月）与重构后的宝宝成长名片条，
+ * 结合随昼夜切换的手绘卡通插画（太阳/夕阳/弯月）与宝宝成长名片条，
  * 兼顾移动端首屏的亲子温度与信息紧凑度。
  */
 export function DashboardHero({ now, todayLabel, baby }: DashboardHeroProps) {

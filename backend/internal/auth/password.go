@@ -16,6 +16,7 @@ const (
 	SessionMaxAgeSeconds = 7 * 24 * 60 * 60
 	// SessionCookieName 为服务端签发的 HttpOnly 会话 Cookie 名称。
 	SessionCookieName = "babylog_session"
+	// 管理员用户名与密码长度边界（按 Unicode 字符数统计）。
 	MinPasswordLength = 12
 	MaxPasswordLength = 1024
 	MaxUsernameLength = 128

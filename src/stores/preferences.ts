@@ -48,6 +48,7 @@ interface PreferencesState {
 
 const initialMode = readStoredThemeMode();
 
+/** 主题偏好 Zustand Store，负责 localStorage 持久化与 DOM data-theme / theme-color 同步。 */
 export const usePreferencesStore = create<PreferencesState>((set, get) => ({
   themeMode: initialMode,
   resolvedTheme: resolveThemeMode(initialMode),

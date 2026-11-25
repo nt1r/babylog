@@ -68,10 +68,11 @@ func runCLI(binPath, dataDir string, args ...string) (int, string, string) {
 func TestAdminInitCLI(t *testing.T) {
 	binPath := testBinaryPath
 
-	t.Run("initializes admin stripping single trailing CRLF and rejects duplicate runs", func(t *testing.T) {
+	t.Run("初始化管理员仅裁末尾单个CRLF并拒绝重复执行", func(t *testing.T) {
 		workDir := t.TempDir()
 		dataDir := filepath.Join(workDir, "data")
 		passwordFile := filepath.Join(workDir, "password.txt")
+		// 仅剥离文件末尾单个 \r\n，刻意保留密码自身的首尾空格，防止误改合法口令。
 		if err := os.WriteFile(passwordFile, []byte("  padded-secret-123  \r\n"), 0o600); err != nil {
 			t.Fatalf("write password file: %v", err)
 		}
@@ -105,7 +106,8 @@ func TestAdminInitCLI(t *testing.T) {
 		}
 	})
 
-	t.Run("resolves relative password file and data dir via BABYLOG_WORK_DIR", func(t *testing.T) {
+	// 跨目录脚本（如 pnpm admin:init）通过 BABYLOG_WORK_DIR 透传调用方工作目录，相对路径须据此解析。
+	t.Run("基于BABYLOG_WORK_DIR解析相对密码文件与数据目录", func(t *testing.T) {
 		workDir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(workDir, "rel-pass.txt"), []byte("relative-path-secret\n"), 0o600); err != nil {
 			t.Fatalf("write rel password file: %v", err)
@@ -127,7 +129,7 @@ func TestAdminInitCLI(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects short, oversized, directory password files and invalid CLI arguments", func(t *testing.T) {
+	t.Run("拒绝过短超长目录密码文件及非法CLI参数", func(t *testing.T) {
 		workDir := t.TempDir()
 		dataDir := filepath.Join(workDir, "data")
 		shortFile := filepath.Join(workDir, "short.txt")
@@ -165,7 +167,7 @@ func TestAdminInitCLI(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects invalid usernames without creating administrator", func(t *testing.T) {
+	t.Run("拒绝非法用户名且不落库创建管理员", func(t *testing.T) {
 		workDir := t.TempDir()
 		dataDir := filepath.Join(workDir, "data")
 		validPassFile := filepath.Join(workDir, "valid-pass.txt")
@@ -226,12 +228,14 @@ func TestServeProcessLifecycle(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start serve: %v", err)
 	}
+	// 兜底终止未退出子进程，避免后续断言提前失败遗留孤儿进程。
 	defer func() {
 		if cmd.Process != nil && cmd.ProcessState == nil {
 			_ = cmd.Process.Kill()
 		}
 	}()
 
+	// 异步扫描子进程 stdout 捕获内核分配的动态监听地址。
 	urlCh := make(chan string, 1)
 	urlRegex := regexp.MustCompile(`http://127\.0\.0\.1:\d+`)
 	go func() {
@@ -257,6 +261,7 @@ func TestServeProcessLifecycle(t *testing.T) {
 	})
 	req, _ := http.NewRequest(http.MethodPost, baseURL+"/api/auth/login", bytes.NewReader(loginPayload))
 	req.Header.Set("Content-Type", "application/json")
+	// 写接口受 Same-Origin 中间件校验，须携带与监听地址一致的 Origin 头。
 	req.Header.Set("Origin", baseURL)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -283,7 +288,7 @@ func TestServeProcessLifecycle(t *testing.T) {
 }
 
 func TestVersionCLI(t *testing.T) {
-	t.Run("outputs default dev metadata via subcommand and flags", func(t *testing.T) {
+	t.Run("子命令与标志输出默认开发态版本信息", func(t *testing.T) {
 		const expected = "babylog dev (commit: unknown, built: unknown)"
 		for _, args := range [][]string{{"version"}, {"--version"}, {"-v"}} {
 			code, stdout, stderr := runCLIWithEnv(testBinaryPath, nil, args...)
@@ -301,7 +306,8 @@ func TestVersionCLI(t *testing.T) {
 		}
 	})
 
-	t.Run("outputs ldflags-injected release metadata", func(t *testing.T) {
+	// 验证 Go 编译期链接标志 -ldflags "-X" 注入发布版本元数据的行为。
+	t.Run("输出ldflags编译注入的发布版本元数据", func(t *testing.T) {
 		tmpBin := filepath.Join(t.TempDir(), "babylog-release")
 		ldflags := "-X main.version=v0.1.0 -X main.commit=abc1234 -X main.buildDate=2026-11-23T12:00:00Z"
 		buildCmd := exec.Command("go", "build", "-ldflags", ldflags, "-o", tmpBin, ".")

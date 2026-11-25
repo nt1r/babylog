@@ -30,7 +30,7 @@ func TestBabyProfileLifecycle(t *testing.T) {
 		app := NewTestApp(t)
 		client := app.Client()
 
-		// 1. 初始未建档返回 {baby: null}。
+		// 初始未建档返回 {baby: null}。
 		emptyResp := client.Get(t, "/api/baby")
 		emptyResp.RequireStatus(t, http.StatusOK)
 		emptyBody := DecodeJSON[struct {
@@ -40,7 +40,7 @@ func TestBabyProfileLifecycle(t *testing.T) {
 			t.Fatalf("expected baby=nil before onboarding, got %+v", emptyBody.Baby)
 		}
 
-		// 2. 创建宝宝档案（含首尾空白昵称与本地当天出生日）返回 201，并校验落库字段完整。
+		// 创建宝宝档案（含首尾空白昵称与本地当天出生日）返回 201，并校验落库字段完整。
 		createResp := client.Post(t, "/api/baby?tz=Asia/Shanghai", baby.UpsertInput{
 			Nickname:      "  小汤圆  ",
 			BirthDate:     "2026-11-23",
@@ -59,7 +59,7 @@ func TestBabyProfileLifecycle(t *testing.T) {
 			t.Fatalf("unexpected created baby profile: %+v", created)
 		}
 
-		// 3. GET /api/baby 回读档案一致。
+		// GET /api/baby 回读档案一致。
 		getResp := client.Get(t, "/api/baby")
 		getResp.RequireStatus(t, http.StatusOK)
 		fetched := DecodeJSON[struct {
@@ -69,7 +69,7 @@ func TestBabyProfileLifecycle(t *testing.T) {
 			t.Fatalf("unexpected fetched baby profile: %+v", fetched)
 		}
 
-		// 4. 推进时钟后更新档案，验证 updated_at 刷新且 SQLite 终态同步更新。
+		// 推进时钟后更新档案，验证 updated_at 刷新且 SQLite 终态同步更新。
 		app.Clock.Advance(10 * time.Minute)
 		updResp := client.Put(t, "/api/baby?tz=Asia/Shanghai", baby.UpsertInput{
 			Nickname:      "大汤圆",
@@ -101,7 +101,7 @@ func TestBabyProfileLifecycle(t *testing.T) {
 		app := NewTestApp(t, WithClock(time.Date(2026, 11, 22, 20, 0, 0, 0, time.UTC)))
 		client := app.Client()
 
-		// 1. 按 UTC 校验时 2026-11-23 为未来日期，应返回 400 且无落库记录。
+		// 按 UTC 校验时 2026-11-23 为未来日期，应返回 400 且无落库记录。
 		utcResp := client.Post(t, "/api/baby?tz=UTC", baby.UpsertInput{
 			Nickname:  "时区宝",
 			BirthDate: "2026-11-23",
@@ -112,7 +112,7 @@ func TestBabyProfileLifecycle(t *testing.T) {
 			t.Fatalf("expected 0 baby profiles after UTC future rejection, got %d", got)
 		}
 
-		// 2. 按 Asia/Shanghai 校验时 2026-11-23 即为本地当天，应建档成功。
+		// 按 Asia/Shanghai 校验时 2026-11-23 即为本地当天，应建档成功。
 		shResp := client.Post(t, "/api/baby?tz=Asia/Shanghai", baby.UpsertInput{
 			Nickname:  "时区宝",
 			BirthDate: "2026-11-23",
@@ -131,7 +131,7 @@ func TestBabyProfileLifecycle(t *testing.T) {
 		profile := app.Scenario().EnsureBaby()
 		client := app.Client()
 
-		// 1. 传入带首尾空白的常去门诊名称，验证裁剪落库。
+		// 传入带首尾空白的常去门诊名称，验证裁剪落库。
 		setResp := client.Put(t, "/api/baby?tz=Asia/Shanghai", baby.UpsertInput{
 			Nickname:          profile.Nickname,
 			BirthDate:         profile.BirthDate,
@@ -145,7 +145,7 @@ func TestBabyProfileLifecycle(t *testing.T) {
 			t.Fatalf("expected trimmed default_clinic_name, got %q", got)
 		}
 
-		// 2. 省略 default_clinic_name 更新昵称，验证既有常去门诊不被清空。
+		// 省略 default_clinic_name 更新昵称，验证既有常去门诊不被清空。
 		keepResp := client.Put(t, "/api/baby?tz=Asia/Shanghai", map[string]any{
 			"nickname":   "大汤圆",
 			"birth_date": profile.BirthDate,
@@ -161,7 +161,7 @@ func TestBabyProfileLifecycle(t *testing.T) {
 			t.Fatalf("expected SQLite default_clinic_name preserved, got %q", persisted.DefaultClinicName)
 		}
 
-		// 3. 传入超长（81 字）常去门诊返回 400 中文错误且不改动已落库值。
+		// 传入超长（81 字）常去门诊返回 400 中文错误且不改动已落库值。
 		overResp := client.Put(t, "/api/baby?tz=Asia/Shanghai", baby.UpsertInput{
 			Nickname:          "大汤圆",
 			BirthDate:         profile.BirthDate,
@@ -173,7 +173,7 @@ func TestBabyProfileLifecycle(t *testing.T) {
 			t.Fatalf("expected SQLite default_clinic_name untouched after 400, got %q", persisted.DefaultClinicName)
 		}
 
-		// 4. 传入空字符串 "" 显式清空并经 GET /api/baby 与 SQLite 双重回读验证。
+		// 传入空字符串 "" 显式清空并经 GET /api/baby 与 SQLite 双重回读验证。
 		clearResp := client.Put(t, "/api/baby?tz=Asia/Shanghai", baby.UpsertInput{
 			Nickname:          "大汤圆",
 			BirthDate:         profile.BirthDate,
@@ -202,21 +202,21 @@ func TestBabyProfileLifecycle(t *testing.T) {
 		anon := app.UnauthenticatedClient()
 		client := app.Client()
 
-		// 1. 未认证访问 GET/POST/PUT /api/baby 均返回 401 中文错误。
+		// 未认证访问 GET/POST/PUT /api/baby 均返回 401 中文错误。
 		anon.Get(t, "/api/baby").RequireError(t, http.StatusUnauthorized, "")
 		anon.Post(t, "/api/baby", baby.UpsertInput{Nickname: "宝", BirthDate: "2026-07-01", Gender: "male"}).
 			RequireError(t, http.StatusUnauthorized, "")
 		anon.Put(t, "/api/baby", baby.UpsertInput{Nickname: "宝", BirthDate: "2026-07-01", Gender: "male"}).
 			RequireError(t, http.StatusUnauthorized, "")
 
-		// 2. 未建档时 PUT /api/baby 返回 404。
+		// 未建档时 PUT /api/baby 返回 404。
 		client.Put(t, "/api/baby?tz=Asia/Shanghai", baby.UpsertInput{
 			Nickname:  "团子",
 			BirthDate: "2026-07-15",
 			Gender:    "male",
 		}).RequireError(t, http.StatusNotFound, "")
 
-		// 3. 非法建档入参全部返回 400 中文错误且 SQLite 保持零行。
+		// 非法建档入参全部返回 400 中文错误且 SQLite 保持零行。
 		invalidPayloads := []struct {
 			name string
 			in   baby.UpsertInput
@@ -237,7 +237,7 @@ func TestBabyProfileLifecycle(t *testing.T) {
 			t.Fatalf("expected 0 baby profiles after invalid POSTs, got %d", got)
 		}
 
-		// 4. 建档后重复 POST /api/baby 返回 409 且原档案不被篡改。
+		// 建档后重复 POST /api/baby 返回 409 且原档案不被篡改。
 		created := app.Scenario().EnsureBaby(BabyParams{Nickname: "原汤圆"})
 		client.Post(t, "/api/baby?tz=Asia/Shanghai", baby.UpsertInput{
 			Nickname:  "二宝",

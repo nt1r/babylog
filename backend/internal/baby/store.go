@@ -108,13 +108,14 @@ func (s *Store) Update(ctx context.Context, in UpsertInput, loc *time.Location) 
 		updated.Gender = clean.Gender
 		updated.BirthWeightKg = clean.BirthWeightKg
 		updated.BirthHeightCm = clean.BirthHeightCm
+		// 遵循 UpsertInput.DefaultClinicName 的 *string 三态约定：仅非 nil 时覆写（"" 表示显式清空），nil 保留既有值。
 		if clean.DefaultClinicName != nil {
 			updated.DefaultClinicName = *clean.DefaultClinicName
 		}
 		updated.UpdatedAt = timeutil.FormatUTC(now)
 
 		// GORM 默认的 Updates(&struct) 会跳过 nil 指针与零值字段；
-		// 显式调用 Select 指定全部可更新列，保证用户清空出生体重/身高或常去门诊时能正确落库。
+		// 显式调用 Select 指定全部可更新列，保证家长清空出生体重/身高或常去门诊时能正确落库。
 		return tx.Model(&updated).Select(
 			"nickname", "birth_date", "gender", "birth_weight_kg", "birth_height_cm", "default_clinic_name", "updated_at",
 		).Updates(&updated).Error
@@ -125,7 +126,8 @@ func (s *Store) Update(ctx context.Context, in UpsertInput, loc *time.Location) 
 	return &updated, nil
 }
 
-// UpdateDefaultClinic 单独设置或清空指定宝宝的常去接种门诊名称（允许传空串清空）。
+// UpdateDefaultClinic 单独设置或清空指定宝宝的常去接种门诊名称（允许传空串清空）；
+// 校验失败返回 [*ValidationError]，目标宝宝不存在返回 [ErrNotFound]。
 func (s *Store) UpdateDefaultClinic(ctx context.Context, babyID int64, rawClinicName string) (string, error) {
 	clinicName, err := ValidateClinicName(rawClinicName)
 	if err != nil {
@@ -134,6 +136,7 @@ func (s *Store) UpdateDefaultClinic(ctx context.Context, babyID int64, rawClinic
 
 	nowStr := timeutil.FormatUTC(s.now())
 	txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 使用 map[string]any 而非结构体更新，可绕过 GORM 忽略空串零值的默认行为，并省去先查后改。
 		res := tx.Model(&Profile{}).
 			Where("id = ?", babyID).
 			Updates(map[string]any{

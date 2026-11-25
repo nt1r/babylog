@@ -8,7 +8,7 @@ import (
 )
 
 func TestLoadDefaultsAndValidation(t *testing.T) {
-	t.Run("uses defaults when environment variables are unset", func(t *testing.T) {
+	t.Run("未设置环境变量时采用默认配置", func(t *testing.T) {
 		workDir := t.TempDir()
 		t.Setenv("HOST", "")
 		t.Setenv("BABYLOG_DATA_DIR", "")
@@ -35,7 +35,8 @@ func TestLoadDefaultsAndValidation(t *testing.T) {
 		}
 	})
 
-	t.Run("validates PORT range including ephemeral port 0", func(t *testing.T) {
+	// PORT=0 放行用于进程测试分配临时端口；显式传入空串 PORT="" 与未设置不同，会被显式拒绝。
+	t.Run("校验PORT范围并允许临时端口0", func(t *testing.T) {
 		t.Setenv("PORT", "0")
 		cfg, err := config.Load()
 		if err != nil || cfg.Port != 0 {
@@ -50,7 +51,8 @@ func TestLoadDefaultsAndValidation(t *testing.T) {
 		}
 	})
 
-	t.Run("resolves relative paths against BABYLOG_WORK_DIR", func(t *testing.T) {
+	// 跨目录脚本通过 BABYLOG_WORK_DIR 透传调用方目录作为相对路径基准。
+	t.Run("相对路径按BABYLOG_WORK_DIR解析", func(t *testing.T) {
 		workDir := t.TempDir()
 		t.Setenv("BABYLOG_WORK_DIR", workDir)
 		t.Setenv("BABYLOG_DATA_DIR", "./custom-data")
@@ -71,7 +73,7 @@ func TestLoadDefaultsAndValidation(t *testing.T) {
 		}
 	})
 
-	t.Run("validates GIN_MODE whitelist", func(t *testing.T) {
+	t.Run("校验GIN_MODE白名单", func(t *testing.T) {
 		for _, mode := range []string{"debug", "release", "test"} {
 			t.Setenv("GIN_MODE", mode)
 			cfg, err := config.Load()

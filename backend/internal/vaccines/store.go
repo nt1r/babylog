@@ -111,6 +111,7 @@ func (s *Store) GetOverview(ctx context.Context, babyID int64, birthDate string,
 		return nil, err
 	}
 
+	// 同月龄优先展示免费国家免疫规划疫苗（nip），其后按剂次序号与主键稳定排序。
 	var records []DoseRecord
 	if err := s.db.WithContext(ctx).
 		Where("baby_id = ?", babyID).
@@ -193,8 +194,8 @@ func (s *Store) GetOptionalCatalog(ctx context.Context, babyID int64) (*CatalogR
 }
 
 // AddFromTemplate 将指定内置自费疫苗模板加入宝宝计划：
-// 若前端未传 Doses 则采用模板默认排期，否则按用户定制的剂次与月龄顺序创建 1..N 剂；
-// 若该模板已在宝宝计划中则返回 [ErrTemplateAlreadyAdded]。
+// 若前端未传 Doses 则采用模板默认排期，否则按家长定制的剂次与月龄顺序创建 1..N 剂；
+// 模板无效或排期非法返回 [*ValidationError]，已加入过则返回 [ErrTemplateAlreadyAdded]。
 func (s *Store) AddFromTemplate(ctx context.Context, babyID int64, birthDate string, loc *time.Location, in AddTemplateInput) ([]DoseView, error) {
 	loc = resolveLocation(loc)
 	code := strings.TrimSpace(in.TemplateCode)
@@ -318,7 +319,8 @@ func (s *Store) CreateCustom(ctx context.Context, babyID int64, birthDate string
 	return views, nil
 }
 
-// UpdateDose 在单一事务内更新单剂状态、预约或接种信息（自费与自定义剂次亦支持调整适龄月龄）。
+// UpdateDose 在单一事务内更新单剂状态、预约或接种信息（自费与自定义剂次亦支持调整适龄月龄）；
+// 校验失败返回 [*ValidationError]，记录不存在返回 [ErrNotFound]。
 // GORM 默认的 Updates(&struct) 会忽略零值与 nil 指针字段，因此必须显式列出 Select 列清单，
 // 确保跨状态切换时（例如已接种回退待接种）废弃的可空列在 SQLite 中被真正写为 NULL 或空串。
 func (s *Store) UpdateDose(ctx context.Context, babyID int64, id int64, birthDate string, loc *time.Location, in UpdateDoseInput) (*DoseView, error) {
@@ -340,7 +342,8 @@ func (s *Store) UpdateDose(ctx context.Context, babyID int64, id int64, birthDat
 			return err
 		}
 
-		// 仅允许对自定义或自费剂次修改适龄月龄；仅当月龄确实变化时重算 AgeLabel，保留模板定制文案（如流感「6月龄起」）。
+		// 仅允许对自定义或自费剂次修改适龄月龄（对内置 NIP 剂次传入 age_months 静默保持既有月龄而非报错）；
+		// 仅当月龄确实变化时重算 AgeLabel，保留模板定制文案（如流感「6月龄起」）。
 		if norm.AgeMonths != nil && (existing.TemplateCode == nil || existing.Category == CategoryOptional) && *norm.AgeMonths != existing.AgeMonths {
 			existing.AgeMonths = *norm.AgeMonths
 			existing.AgeLabel = formatAgeLabel(*norm.AgeMonths)
@@ -414,6 +417,9 @@ func (s *Store) BatchUpdate(ctx context.Context, babyID int64, birthDate string,
 			return ErrNotFound
 		}
 
+		// hasNonBirthDose 确保纯产院出生两针批量确认时，不会把产院名称自动记为常去社区接种门诊；
+		// 批量预约清空接种细节（保留 PlannedDate）；批量标记已接种清空预约字段但刻意保留各剂已填的部位/厂家/批号/反应，
+		// 与单剂 UpdateDose 的全量覆写语义不同。
 		hasNonBirthDose := false
 		for i := range rows {
 			if !isBirthHospitalDose(rows[i]) {
@@ -497,7 +503,8 @@ func (s *Store) DeleteDose(ctx context.Context, babyID int64, id int64) error {
 			return err
 		}
 
-		// 查找同疫苗剩余剂次并按原剂次升序依次前移编号，确保始终满足 newNum <= oldNum，不触发部分唯一索引冲突。
+		// 查找同疫苗剩余剂次（自定义疫苗无模板码，按 vaccine_name + category 归组）并按原剂次升序依次前移编号，
+		// 逐条更新保证始终满足 newNum <= oldNum，避免触发部分唯一索引中间态冲突。
 		var siblings []DoseRecord
 		query := tx.Where("baby_id = ?", babyID)
 		if existing.TemplateCode != nil {
@@ -528,7 +535,8 @@ func (s *Store) DeleteDose(ctx context.Context, babyID int64, id int64) error {
 	})
 }
 
-// DeleteTemplate 整套移出指定自费疫苗模板的全部剂次；内置国家免疫规划模板返回 [ErrCannotDeleteNIP]。
+// DeleteTemplate 整套移出指定自费疫苗模板的全部剂次；
+// 模板不存在或尚未加入返回 [ErrNotFound]，内置国家免疫规划模板返回 [ErrCannotDeleteNIP]。
 func (s *Store) DeleteTemplate(ctx context.Context, babyID int64, templateCode string) error {
 	code := strings.TrimSpace(templateCode)
 	tpl, ok := lookupTemplate(code)

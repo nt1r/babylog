@@ -28,8 +28,8 @@ fi
 # 始终执行轻量静态工程门禁（含防误提交与 OpenSpec 校验）
 pnpm lint:guardrails
 
-# 仅在前端/配置改动时跑 Biome 与 TypeScript 类型检查
-if printf '%s\n' "$staged" | grep -qE '^(src/|package\.json|tsconfig\.json|biome\.json|vite\.config\.)'; then
+# 仅在前端、脚本或配置文件改动时跑 Biome 与 TypeScript 类型检查
+if printf '%s\n' "$staged" | grep -qE '^(src/|scripts/.*\.mjs$|package\.json|tsconfig\.json|biome\.json|vite\.config\.)'; then
   pnpm lint:web
   pnpm check
 fi

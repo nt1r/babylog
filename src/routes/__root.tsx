@@ -27,6 +27,7 @@ function RootComponent() {
     void restoreSession();
   }, [restoreSession]);
 
+  // 全局 401 未认证拦截：统一清空 Zustand 登录态与 TanStack Query 缓存，避免切号或失效后残留脏数据。
   useEffect(() => {
     setUnauthorizedHandler(() => {
       useAuthStore.getState().setUser(null);
