@@ -18,5 +18,9 @@ function IndexRedirect() {
     );
   }
 
-  return <Navigate to={user ? '/dashboard' : '/login'} replace />;
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <Navigate to={user.must_change_password ? '/change-password' : '/dashboard'} replace />;
 }

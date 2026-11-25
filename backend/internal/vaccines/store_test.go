@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nt1r/babylog/backend/internal/auth"
 	"github.com/nt1r/babylog/backend/internal/baby"
 	"github.com/nt1r/babylog/backend/internal/database"
 	"github.com/nt1r/babylog/backend/internal/timeutil"
@@ -38,8 +39,12 @@ func TestStoreSamplesClockOncePerRequest(t *testing.T) {
 		return baseTime.Add(2 * time.Second)
 	}
 
+	authStore := auth.NewStore(db.Gorm()).WithClock(func() time.Time { return baseTime })
+	if err := authStore.InitializeAdministrator(ctx, "admin", "vaccines-store-secret-123"); err != nil {
+		t.Fatalf("init admin: %v", err)
+	}
 	babyStore := baby.NewStore(db.Gorm()).WithClock(func() time.Time { return baseTime })
-	profile, err := babyStore.Create(ctx, baby.UpsertInput{
+	profile, err := babyStore.CreateForUser(ctx, 1, baby.UpsertInput{
 		Nickname:  "团团",
 		BirthDate: "2026-01-15",
 		Gender:    "female",

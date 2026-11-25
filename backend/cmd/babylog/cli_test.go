@@ -225,7 +225,7 @@ func TestCLIAdminInitInvalidPasswordAndArgsGuards(t *testing.T) {
 			t.Fatalf("校验零落库时打开 SQLite 失败: %v", openErr)
 		}
 		var adminCount int64
-		if countErr := db.Gorm().Model(&auth.Administrator{}).Count(&adminCount).Error; countErr != nil {
+		if countErr := db.Gorm().Model(&auth.User{}).Count(&adminCount).Error; countErr != nil {
 			_ = db.Close()
 			t.Fatalf("统计管理员行数失败: %v", countErr)
 		}
@@ -421,7 +421,7 @@ func TestCLIServeRestartPersistenceLifecycle(t *testing.T) {
 	}
 
 	safeBirthDate := time.Now().UTC().AddDate(0, -3, 0).Format("2006-01-02")
-	babyResp, babyBody := doLiveJSONRequest(t, http.MethodPost, baseURL1, "/api/baby?tz=Asia/Shanghai", sessionCookie, baby.UpsertInput{
+	babyResp, babyBody := doLiveJSONRequest(t, http.MethodPost, baseURL1, "/api/babies?tz=Asia/Shanghai", sessionCookie, baby.UpsertInput{
 		Nickname:  "重启宝",
 		BirthDate: safeBirthDate,
 		Gender:    "female",
@@ -429,9 +429,16 @@ func TestCLIServeRestartPersistenceLifecycle(t *testing.T) {
 	if babyResp.StatusCode != http.StatusCreated {
 		t.Fatalf("真实进程建档失败：status=%d body=%s", babyResp.StatusCode, string(babyBody))
 	}
+	var createdBabyPayload struct {
+		Baby *baby.Profile `json:"baby"`
+	}
+	if err := json.Unmarshal(babyBody, &createdBabyPayload); err != nil || createdBabyPayload.Baby == nil || createdBabyPayload.Baby.ID <= 0 {
+		t.Fatalf("解析新建宝宝响应失败：err=%v body=%s", err, string(babyBody))
+	}
+	babyID := createdBabyPayload.Baby.ID
 
 	amount := 125
-	feedResp, feedBody := doLiveJSONRequest(t, http.MethodPost, baseURL1, "/api/records/feeding", sessionCookie, records.FeedingInput{
+	feedResp, feedBody := doLiveJSONRequest(t, http.MethodPost, baseURL1, fmt.Sprintf("/api/babies/%d/records/feeding", babyID), sessionCookie, records.FeedingInput{
 		Subtype:    records.FeedingSubtypeFormula,
 		AmountML:   &amount,
 		RecordedAt: time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339),
@@ -445,18 +452,18 @@ func TestCLIServeRestartPersistenceLifecycle(t *testing.T) {
 	baseURL2, stop2 := startServeProcess(t, binPath, dataDir, distDir)
 	defer stop2()
 
-	getBabyResp, getBabyBody := doLiveJSONRequest(t, http.MethodGet, baseURL2, "/api/baby", sessionCookie, nil)
+	getBabyResp, getBabyBody := doLiveJSONRequest(t, http.MethodGet, baseURL2, "/api/babies", sessionCookie, nil)
 	if getBabyResp.StatusCode != http.StatusOK {
 		t.Fatalf("重启后携带原会话回读宝宝档案失败：status=%d body=%s", getBabyResp.StatusCode, string(getBabyBody))
 	}
 	var babyPayload struct {
-		Baby *baby.Profile `json:"baby"`
+		Babies []baby.Profile `json:"babies"`
 	}
-	if err := json.Unmarshal(getBabyBody, &babyPayload); err != nil || babyPayload.Baby == nil || babyPayload.Baby.Nickname != "重启宝" {
+	if err := json.Unmarshal(getBabyBody, &babyPayload); err != nil || len(babyPayload.Babies) != 1 || babyPayload.Babies[0].Nickname != "重启宝" {
 		t.Fatalf("重启后回读宝宝档案内容异常：err=%v body=%s", err, string(getBabyBody))
 	}
 
-	listFeedResp, listFeedBody := doLiveJSONRequest(t, http.MethodGet, baseURL2, "/api/records/feeding?range=all&tz=Asia/Shanghai", sessionCookie, nil)
+	listFeedResp, listFeedBody := doLiveJSONRequest(t, http.MethodGet, baseURL2, fmt.Sprintf("/api/babies/%d/records/feeding?range=all&tz=Asia/Shanghai", babyID), sessionCookie, nil)
 	if listFeedResp.StatusCode != http.StatusOK {
 		t.Fatalf("重启后回读喂养列表失败：status=%d body=%s", listFeedResp.StatusCode, string(listFeedBody))
 	}
@@ -464,6 +471,138 @@ func TestCLIServeRestartPersistenceLifecycle(t *testing.T) {
 	if err := json.Unmarshal(listFeedBody, &listPayload); err != nil || listPayload.Total != 1 ||
 		len(listPayload.Items) != 1 || listPayload.Items[0].AmountML == nil || *listPayload.Items[0].AmountML != 125 {
 		t.Fatalf("重启后喂养记录未持久保留：err=%v body=%s", err, string(listFeedBody))
+	}
+}
+
+/*
+ * Spec: user-management / Single-administrator lifecycle invariant / Prevent creating a second administrator; Prevent disabling the sole administrator
+ * Spec: user-management / CLI user lifecycle management / Create and list ordinary users via CLI; Reset password for any user including the administrator via CLI; Disable and re-enable an ordinary user via CLI
+ * 测试场景：验证真实二进制 `babylog user` 子命令完整覆盖普通用户创建、大小写防重、列表输出、启停用、唯一管理员保护与管理员救灾重置密码。
+ * 业务背景：自托管场景无自助注册，运维依赖 CLI 安全创建家庭账号、临时停用与在唯一管理员遗忘密码时通过宿主机救灾重置。
+ * 前置数据：
+ * - 运行环境：预编译只读 babylog 二进制与独立 t.TempDir() 数据目录
+ * - 管理员与会话：先经 `admin init` 初始化唯一管理员 `Boss`
+ * - 密码文件：Alice 初始密码、Alice 新密码与 Boss 救灾新密码各一份
+ * 测试目标：
+ * 1. 验证 `user create` 创建普通用户 `Alice`（含 `--force-change`）、拒绝忽略大小写重复名 `alice`，且 `user list` 输出非敏感账号元数据。
+ * 2. 验证 `user disable` 拒绝停用唯一管理员 `Boss`，停用 `Alice` 后立即吊销其会话并阻止认证，`user enable` 恢复后可重新认证。
+ * 3. 验证 `user reset-password` 支持重置普通用户与唯一管理员 `Boss` 密码并吊销既有会话，同时 `admin init` 仍拒绝创建第二个管理员。
+ */
+func TestCLIUserLifecycleAndAdminRecovery(t *testing.T) {
+	binPath := testBinaryPath
+	workDir := t.TempDir()
+	dataDir := filepath.Join(workDir, "data")
+
+	bossPass1 := filepath.Join(workDir, "boss1.pass")
+	bossPass2 := filepath.Join(workDir, "boss2.pass")
+	alicePass1 := filepath.Join(workDir, "alice1.pass")
+	alicePass2 := filepath.Join(workDir, "alice2.pass")
+	for file, content := range map[string]string{
+		bossPass1:  "boss-initial-secret-123\n",
+		bossPass2:  "boss-recovery-secret-456\n",
+		alicePass1: "alice-initial-secret-123\n",
+		alicePass2: "alice-reset-secret-456\n",
+	} {
+		if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
+			t.Fatalf("写入测试密码文件 %s 失败: %v", file, err)
+		}
+	}
+
+	if code, _, stderr := runCLI(binPath, dataDir, "admin", "init", "--username", "Boss", "--password-file", bossPass1); code != 0 {
+		t.Fatalf("初始化唯一管理员失败: %s", stderr)
+	}
+
+	// 1. 创建普通用户 Alice（--force-change）、拦截忽略大小写重名并核验 user list 输出。
+	if code, stdout, stderr := runCLI(binPath, dataDir, "user", "create", "--username", "Alice", "--password-file", alicePass1, "--force-change"); code != 0 || !strings.Contains(stdout, "Alice") {
+		t.Fatalf("创建普通用户 Alice 失败：code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if code, _, stderr := runCLI(binPath, dataDir, "user", "create", "--username", "alice", "--password-file", alicePass1); code == 0 || !strings.Contains(stderr, "用户名已存在") {
+		t.Fatalf("期望忽略大小写重名被拒绝：code=%d stderr=%q", code, stderr)
+	}
+	listCode, listOut, listErr := runCLI(binPath, dataDir, "user", "list")
+	if listCode != 0 || !strings.Contains(listOut, "Boss") || !strings.Contains(listOut, "Alice") || !strings.Contains(listOut, "admin") || !strings.Contains(listOut, "user") {
+		t.Fatalf("user list 输出异常：code=%d stdout=%q stderr=%q", listCode, listOut, listErr)
+	}
+
+	// 2. 拒绝停用唯一管理员 Boss；停用 Alice 立即吊销其会话，重新启用后恢复认证。
+	if code, _, stderr := runCLI(binPath, dataDir, "user", "disable", "--username", "Boss"); code == 0 || !strings.Contains(stderr, "唯一管理员") {
+		t.Fatalf("期望拒绝停用唯一管理员：code=%d stderr=%q", code, stderr)
+	}
+
+	db, err := database.Open(dataDir)
+	if err != nil {
+		t.Fatalf("打开测试库失败: %v", err)
+	}
+	store := auth.NewStore(db.Gorm())
+	aliceAuth, err := store.Authenticate(context.Background(), "alice", "alice-initial-secret-123")
+	if err != nil || aliceAuth == nil || !aliceAuth.MustChangePassword {
+		_ = db.Close()
+		t.Fatalf("Alice 初始登录状态异常：(%+v, %v)", aliceAuth, err)
+	}
+	aliceToken, err := store.CreateSession(context.Background(), aliceAuth.ID, "")
+	if err != nil {
+		_ = db.Close()
+		t.Fatalf("为 Alice 创建会话失败: %v", err)
+	}
+	bossAuth, err := store.Authenticate(context.Background(), "boss", "boss-initial-secret-123")
+	if err != nil || bossAuth == nil {
+		_ = db.Close()
+		t.Fatalf("Boss 初始认证失败: (%+v, %v)", bossAuth, err)
+	}
+	bossToken, err := store.CreateSession(context.Background(), bossAuth.ID, "")
+	if err != nil {
+		_ = db.Close()
+		t.Fatalf("为 Boss 创建会话失败: %v", err)
+	}
+	_ = db.Close()
+
+	if code, _, stderr := runCLI(binPath, dataDir, "user", "disable", "--username", "alice"); code != 0 {
+		t.Fatalf("停用普通用户 Alice 失败：code=%d stderr=%q", code, stderr)
+	}
+	db, err = database.Open(dataDir)
+	if err != nil {
+		t.Fatalf("停用后重开库失败: %v", err)
+	}
+	store = auth.NewStore(db.Gorm())
+	if sess, err := store.GetSession(context.Background(), aliceToken); err != nil || sess != nil {
+		_ = db.Close()
+		t.Fatalf("停用 Alice 后旧会话应失效，实际 (%+v, %v)", sess, err)
+	}
+	if _, err := store.Authenticate(context.Background(), "Alice", "alice-initial-secret-123"); err != auth.ErrUserDisabled {
+		_ = db.Close()
+		t.Fatalf("停用 Alice 后输对密码应返回 ErrUserDisabled，实际 %v", err)
+	}
+	_ = db.Close()
+
+	if code, _, stderr := runCLI(binPath, dataDir, "user", "enable", "--username", "Alice"); code != 0 {
+		t.Fatalf("重新启用 Alice 失败：code=%d stderr=%q", code, stderr)
+	}
+
+	// 3. CLI 重置普通用户 Alice 与唯一管理员 Boss 密码并吊销既有会话，且二次 admin init 继续被拒。
+	if code, _, stderr := runCLI(binPath, dataDir, "user", "reset-password", "--username", "Alice", "--password-file", alicePass2); code != 0 {
+		t.Fatalf("重置 Alice 密码失败：code=%d stderr=%q", code, stderr)
+	}
+	if code, _, stderr := runCLI(binPath, dataDir, "user", "reset-password", "--username", "Boss", "--password-file", bossPass2); code != 0 {
+		t.Fatalf("救灾重置管理员 Boss 密码失败：code=%d stderr=%q", code, stderr)
+	}
+	if code, _, stderr := runCLI(binPath, dataDir, "admin", "init", "--username", "SecondAdmin", "--password-file", bossPass2); code == 0 || !strings.Contains(stderr, "管理员已存在") {
+		t.Fatalf("二次 admin init 应被拒绝：code=%d stderr=%q", code, stderr)
+	}
+
+	db, err = database.Open(dataDir)
+	if err != nil {
+		t.Fatalf("重置密码后重开库失败: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	store = auth.NewStore(db.Gorm())
+	if sess, err := store.GetSession(context.Background(), bossToken); err != nil || sess != nil {
+		t.Fatalf("重置 Boss 密码后原会话应被吊销，实际 (%+v, %v)", sess, err)
+	}
+	if recovered, err := store.Authenticate(context.Background(), "boss", "boss-recovery-secret-456"); err != nil || recovered == nil || recovered.Role != auth.RoleAdmin {
+		t.Fatalf("Boss 救灾新密码认证失败：(%+v, %v)", recovered, err)
+	}
+	if aliceRecovered, err := store.Authenticate(context.Background(), "Alice", "alice-reset-secret-456"); err != nil || aliceRecovered == nil || aliceRecovered.MustChangePassword {
+		t.Fatalf("Alice 新密码认证失败（未指定 --force-change 应为 false）：(%+v, %v)", aliceRecovered, err)
 	}
 }
 

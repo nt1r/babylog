@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -75,6 +76,7 @@ type appConfig struct {
 	initAdmin    bool
 	autoLogin    bool
 	distFixtures bool
+	cookieSecure bool
 }
 
 // AppOption 控制 NewTestApp 的初始化行为。
@@ -106,6 +108,13 @@ func WithoutAutoLogin() AppOption {
 func WithDistFixtures() AppOption {
 	return func(cfg *appConfig) {
 		cfg.distFixtures = true
+	}
+}
+
+// WithCookieSecure 开启 BABYLOG_COOKIE_SECURE 强制下发 Secure Cookie，用于验证反代 HTTPS 场景。
+func WithCookieSecure() AppOption {
+	return func(cfg *appConfig) {
+		cfg.cookieSecure = true
 	}
 }
 
@@ -163,6 +172,7 @@ func NewTestApp(t *testing.T, opts ...AppOption) *TestApp {
 		}
 	}
 
+	loginGuard := auth.NewLoginGuard().WithClock(clock.Now)
 	babyStore := baby.NewStore(db.Gorm()).WithClock(clock.Now)
 	recordStore := records.NewStore(db.Gorm()).WithClock(clock.Now)
 	dashSvc := dashboard.NewService(recordStore).WithClock(clock.Now)
@@ -170,6 +180,8 @@ func NewTestApp(t *testing.T, opts ...AppOption) *TestApp {
 
 	router := httpapi.NewRouter(httpapi.Options{
 		Store:        authStore,
+		LoginGuard:   loginGuard,
+		CookieSecure: cfg.cookieSecure,
 		BabyStore:    babyStore,
 		RecordStore:  recordStore,
 		DashboardSvc: dashSvc,
@@ -289,6 +301,56 @@ func (a *TestApp) Scenario() *Scenario {
 	}
 }
 
+// ScenarioFor 返回绑定指定客户端视图的场景数据生成器，供多用户并发或越权隔离测试构造各账号独立数据。
+func (a *TestApp) ScenarioFor(client *AppClient) *Scenario {
+	return &Scenario{
+		t:      a.t,
+		client: client,
+	}
+}
+
+// CreateUserViaAdmin 通过真实管理员接口 POST /api/admin/users 创建普通用户（默认待改密），返回其元数据与初始登录客户端。
+func (a *TestApp) CreateUserViaAdmin(username, initPassword string) (*AppClient, auth.UserSummary) {
+	a.t.Helper()
+	resp := a.Client().Post(a.t, "/api/admin/users", map[string]string{
+		"username": username,
+		"password": initPassword,
+	})
+	created := DecodeStatus[struct {
+		User auth.UserSummary `json:"user"`
+	}](a.t, resp, http.StatusCreated).User
+
+	loginResp := a.UnauthenticatedClient().Login(a.t, username, initPassword)
+	loginResp.RequireStatus(a.t, http.StatusOK)
+	cookiePair, ok := loginResp.CookiePair(auth.SessionCookieName)
+	if !ok {
+		a.t.Fatalf("新建用户 %q 登录未返回会话 Cookie", username)
+	}
+	return a.UnauthenticatedClient().WithCookie(cookiePair), created
+}
+
+// CreateReadyUserViaAdmin 经管理员创建普通用户并自动完成首次强制改密，返回可直接调用全部业务接口的已登录客户端。
+func (a *TestApp) CreateReadyUserViaAdmin(username, initPassword, finalPassword string) (*AppClient, auth.UserSummary) {
+	a.t.Helper()
+	pendingClient, summary := a.CreateUserViaAdmin(username, initPassword)
+	changeResp := pendingClient.Post(a.t, "/api/auth/change-password", map[string]string{
+		"current_password": initPassword,
+		"new_password":     finalPassword,
+	})
+	changeResp.RequireStatus(a.t, http.StatusOK)
+	rotatedCookie, ok := changeResp.CookiePair(auth.SessionCookieName)
+	if !ok {
+		a.t.Fatalf("用户 %q 完成改密未返回轮换会话 Cookie", username)
+	}
+	summary.MustChangePassword = false
+	return a.UnauthenticatedClient().WithCookie(rotatedCookie), summary
+}
+
+// babyPath 构造显式宝宝作用域路由路径（/api/babies/:babyId/...）。
+func babyPath(babyID int64, suffix string) string {
+	return fmt.Sprintf("/api/babies/%d%s", babyID, suffix)
+}
+
 // readDB 仅在包内为只读回读断言函数提供干净的 GORM 会话，不对外暴露可写数据库句柄。
 func (a *TestApp) readDB() *gorm.DB {
 	return a.db.Gorm().Session(&gorm.Session{NewDB: true})
@@ -385,6 +447,11 @@ func (c *AppClient) Post(t *testing.T, path string, body any) *Response {
 func (c *AppClient) Put(t *testing.T, path string, body any) *Response {
 	t.Helper()
 	return c.doJSON(t, http.MethodPut, path, body)
+}
+
+func (c *AppClient) Patch(t *testing.T, path string, body any) *Response {
+	t.Helper()
+	return c.doJSON(t, http.MethodPatch, path, body)
 }
 
 func (c *AppClient) Delete(t *testing.T, path string) *Response {

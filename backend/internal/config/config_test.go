@@ -87,4 +87,30 @@ func TestLoadDefaultsAndValidation(t *testing.T) {
 			t.Error("expected invalid GIN_MODE rejected")
 		}
 	})
+
+	t.Run("解析BABYLOG_COOKIE_SECURE开关并拒绝非法值", func(t *testing.T) {
+		cfg, err := config.Load()
+		if err != nil || cfg.CookieSecure {
+			t.Fatalf("expected default CookieSecure=false, got (%v, %v)", cfg.CookieSecure, err)
+		}
+
+		t.Setenv("BABYLOG_COOKIE_SECURE", "true")
+		cfg, err = config.Load()
+		if err != nil || !cfg.CookieSecure {
+			t.Fatalf("expected BABYLOG_COOKIE_SECURE=true valid, got (%v, %v)", cfg.CookieSecure, err)
+		}
+
+		t.Setenv("BABYLOG_COOKIE_SECURE", "FALSE")
+		cfg, err = config.Load()
+		if err != nil || cfg.CookieSecure {
+			t.Fatalf("expected BABYLOG_COOKIE_SECURE=FALSE valid, got (%v, %v)", cfg.CookieSecure, err)
+		}
+
+		for _, invalid := range []string{"", "yes", "1", "invalid"} {
+			t.Setenv("BABYLOG_COOKIE_SECURE", invalid)
+			if _, err := config.Load(); err == nil {
+				t.Errorf("expected BABYLOG_COOKIE_SECURE=%q rejected", invalid)
+			}
+		}
+	})
 }

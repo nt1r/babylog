@@ -1,19 +1,27 @@
-/** 统一的接口请求异常，携带 HTTP 状态码（网络中断时为 0）与面向用户的中文提示 */
+/** 统一的接口请求异常，携带 HTTP 状态码（网络中断时为 0）、可选错误码与面向用户的中文提示 */
 export class ApiError extends Error {
   readonly status: number;
+  readonly code?: string;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.code = code;
   }
 }
 
 let unauthorizedHandler: (() => void) | null = null;
+let passwordChangeRequiredHandler: (() => void) | null = null;
 
 /** 注册全局 401 未认证回调（用于业务接口会话过期时清理登录态并跳回登录页）。 */
 export function setUnauthorizedHandler(handler: (() => void) | null) {
   unauthorizedHandler = handler;
+}
+
+/** 注册全局 403 PASSWORD_CHANGE_REQUIRED 回调（用于强制改密状态变更时刷新会话并触发改密门禁）。 */
+export function setPasswordChangeRequiredHandler(handler: (() => void) | null) {
+  passwordChangeRequiredHandler = handler;
 }
 
 interface RequestOptions {
@@ -49,15 +57,22 @@ export async function apiRequest<T>(url: string, options: RequestOptions = {}): 
   }
 
   if (!response.ok) {
-    // 登录接口返回 401 代表凭据错误，由表单本地展示；其余业务接口 401 代表会话过期，触发全局退登。
-    if (response.status === 401 && !url.startsWith('/api/auth/')) {
+    const errorCode =
+      data && typeof data === 'object' && 'code' in data && typeof data.code === 'string' ? data.code : undefined;
+    // 登录接口 401 与改密接口当前密码错误（INVALID_CREDENTIALS）由表单本地展示；
+    // 其余业务接口或改密接口会话失效的 401 统一触发全局退登清态。
+    const isLocalCredentialError =
+      url.startsWith('/api/auth/') && (url !== '/api/auth/change-password' || errorCode === 'INVALID_CREDENTIALS');
+    if (response.status === 401 && !isLocalCredentialError) {
       unauthorizedHandler?.();
+    } else if (response.status === 403 && errorCode === 'PASSWORD_CHANGE_REQUIRED') {
+      passwordChangeRequiredHandler?.();
     }
     const errorMessage =
       data && typeof data === 'object' && 'error' in data && typeof data.error === 'string'
         ? data.error
         : '操作未完成，请稍后重试。';
-    throw new ApiError(response.status, errorMessage);
+    throw new ApiError(response.status, errorMessage, errorCode);
   }
 
   return data as T;

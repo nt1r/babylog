@@ -79,15 +79,20 @@ func parseTimezoneQuery(c *gin.Context) (*time.Location, bool) {
 	return loc, true
 }
 
-// parseIDParam 解析路径参数 :id 为正整数。
-func parseIDParam(c *gin.Context) (int64, bool) {
-	raw := strings.TrimSpace(c.Param("id"))
+// parsePositiveIntParam 解析指定路径参数为正整数，非法时直接写回 HTTP 400 中文错误。
+func parsePositiveIntParam(c *gin.Context, paramName, invalidMsg string) (int64, bool) {
+	raw := strings.TrimSpace(c.Param(paramName))
 	id, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || id <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的记录编号"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": invalidMsg})
 		return 0, false
 	}
 	return id, true
+}
+
+// parseIDParam 解析路径参数 :id 为正整数。
+func parseIDParam(c *gin.Context) (int64, bool) {
+	return parsePositiveIntParam(c, "id", "无效的记录编号")
 }
 
 // parseListFilter 解析记录列表查询的筛选、时区与分页参数。

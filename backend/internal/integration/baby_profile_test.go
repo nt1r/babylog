@@ -1,90 +1,109 @@
 package integration_test
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/nt1r/babylog/backend/internal/baby"
+	"github.com/nt1r/babylog/backend/internal/records"
+	"github.com/nt1r/babylog/backend/internal/vaccines"
 )
 
 /*
  * Spec: baby-profile / Baby profile retrieval and onboarding status / Retrieve empty profile before onboarding; Retrieve existing baby profile
- * Spec: baby-profile / Single baby profile creation / Create baby profile successfully
+ * Spec: baby-profile / Multi-baby profile creation / Create multiple baby profiles for the same user
  * Spec: baby-profile / Baby profile update / Update existing baby profile
- * 测试场景：首次建档前探测空档案、完成单宝宝建档、回读核验、推进时钟更新档案并清空可选出生体格。
- * 业务背景：管理员首次登录后进入强制建档引导，建档完成后可在设置页修改昵称、出生日期及可选出生体重/身高（包括将误填的出生体格清空为 NULL）。
+ * 测试场景：首次建档前探测空列表、同一用户创建多个宝宝（含同名）、跨用户列表隔离与推进时钟更新指定宝宝并清空可选出生体格。
+ * 业务背景：一户一账号支持二胎或双胞胎多宝宝建档，且不同家庭账号之间的宝宝列表必须完全隔离互不可见。
  * 前置数据：
  * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
- * - 管理员与会话：已初始化并登录管理员
- * - 宝宝档案：初始未建档
+ * - 管理员与会话：管理员（用户 A）与普通用户 B（已完成改密）均已登录
+ * - 宝宝档案：初始均未建档
  * - 前置业务记录：无
  * 测试目标：
- * 1. 验证未建档时 GET /api/baby 返回 200 {baby: null}，触发前端建档门禁。
- * 2. 验证首次 POST /api/baby 裁剪昵称空白并落库完整字段（201），随后 GET /api/baby 回读一致。
- * 3. 验证推进时钟后 PUT /api/baby 刷新 updated_at，且将出生体重/身高置空后 SQLite 真正落库为 NULL（而非被 GORM 零值跳过）。
+ * 1. 验证未建档时 GET /api/babies 返回 200 {babies: []}；用户 A 建档两个宝宝后，用户 B 仍探测到空列表。
+ * 2. 验证用户 A 列表仅返回自身两个按 id ASC 排序的宝宝档案且昵称裁剪正确。
+ * 3. 验证推进时钟后 PUT /api/babies/:babyId 刷新 updated_at 并真正将清空的出生体重/身高落库为 NULL。
  */
 func TestBabyProfileOnboardingAndUpdateClosedLoop(t *testing.T) {
 	t.Parallel()
 
 	app := NewTestApp(t)
-	client := app.Client()
+	clientA := app.Client()
+	clientB, _ := app.CreateReadyUserViaAdmin("UserB", "userb-init-secret-123", "userb-final-secret-456")
 
-	// 1. 建档前探测：确认返回 {baby: null}，作为首次引导建档的判定依据。
-	emptyResp := client.Get(t, "/api/baby")
-	emptyResp.RequireStatus(t, http.StatusOK)
-	if got := DecodeOK[struct {
-		Baby *baby.Profile `json:"baby"`
-	}](t, emptyResp).Baby; got != nil {
-		t.Fatalf("未建档时预期 baby=nil，实际 %+v", got)
+	// 1. 建档前探测空列表；用户 A 创建两个宝宝（允许同名）后，用户 B 依然看到空列表。
+	emptyA := DecodeOK[struct {
+		Babies []baby.Profile `json:"babies"`
+	}](t, clientA.Get(t, "/api/babies")).Babies
+	if len(emptyA) != 0 {
+		t.Fatalf("未建档时预期 babies 为空数组，实际 %+v", emptyA)
 	}
 
-	// 2. 首次建档并回读：核对首尾空白昵称被裁剪、当天出生日合法放行，且回读接口返回完整档案。
-	createResp := client.Post(t, "/api/baby?tz=Asia/Shanghai", baby.UpsertInput{
+	firstResp := clientA.Post(t, "/api/babies?tz=Asia/Shanghai", baby.UpsertInput{
 		Nickname:      "  小汤圆  ",
 		BirthDate:     "2026-11-23",
 		Gender:        "female",
 		BirthWeightKg: ptr(3.35),
 		BirthHeightCm: ptr(50.2),
 	})
-	created := DecodeStatus[struct {
+	first := DecodeStatus[struct {
 		Baby baby.Profile `json:"baby"`
-	}](t, createResp, http.StatusCreated).Baby
-	if created.ID <= 0 || created.Nickname != "小汤圆" || created.BirthDate != "2026-11-23" ||
-		created.Gender != "female" || created.BirthWeightKg == nil || *created.BirthWeightKg != 3.35 ||
-		created.BirthHeightCm == nil || *created.BirthHeightCm != 50.2 ||
-		created.DefaultClinicName != "" || created.CreatedAt == "" || created.UpdatedAt == "" {
-		t.Fatalf("建档返回档案字段异常：%+v", created)
+	}](t, firstResp, http.StatusCreated).Baby
+	if first.ID <= 0 || first.Nickname != "小汤圆" || first.BirthDate != "2026-11-23" ||
+		first.Gender != "female" || first.BirthWeightKg == nil || *first.BirthWeightKg != 3.35 ||
+		first.BirthHeightCm == nil || *first.BirthHeightCm != 50.2 || first.DefaultClinicName != "" {
+		t.Fatalf("首次建档返回档案字段异常：%+v", first)
 	}
 
-	getResp := client.Get(t, "/api/baby")
-	getResp.RequireStatus(t, http.StatusOK)
-	fetched := DecodeOK[struct {
-		Baby *baby.Profile `json:"baby"`
-	}](t, getResp).Baby
-	if fetched == nil || fetched.ID != created.ID || fetched.Nickname != "小汤圆" {
-		t.Fatalf("GET /api/baby 回读与建档结果不一致：%+v", fetched)
+	secondResp := clientA.Post(t, "/api/babies?tz=Asia/Shanghai", baby.UpsertInput{
+		Nickname:  "小汤圆",
+		BirthDate: "2026-08-01",
+		Gender:    "male",
+	})
+	second := DecodeStatus[struct {
+		Baby baby.Profile `json:"baby"`
+	}](t, secondResp, http.StatusCreated).Baby
+	if second.ID <= first.ID || second.Nickname != "小汤圆" {
+		t.Fatalf("同用户第二个宝宝（同名）建档返回异常：%+v", second)
 	}
 
-	// 3. 推进时钟后更新档案并显式清空可选出生体格，回读 SQLite 验证 updated_at 递增且可空列真正清为 NULL。
+	emptyB := DecodeOK[struct {
+		Babies []baby.Profile `json:"babies"`
+	}](t, clientB.Get(t, "/api/babies")).Babies
+	if len(emptyB) != 0 {
+		t.Fatalf("用户 A 建档后用户 B 仍应为空列表，实际 %+v", emptyB)
+	}
+
+	// 2. 用户 B 建档后，用户 A 的 GET /api/babies 仅返回 A 的 2 个宝宝并按 id ASC 排序。
+	app.ScenarioFor(clientB).EnsureBaby(BabyParams{Nickname: "B家宝宝"})
+	listA := DecodeOK[struct {
+		Babies []baby.Profile `json:"babies"`
+	}](t, clientA.Get(t, "/api/babies")).Babies
+	if len(listA) != 2 || listA[0].ID != first.ID || listA[1].ID != second.ID {
+		t.Fatalf("用户 A 回读宝宝列表应严格隔离且按 id ASC 排序，实际 %+v", listA)
+	}
+
+	// 3. 推进时钟后更新首个宝宝并显式清空可选出生体格，回读 SQLite 确认真正清为 NULL。
 	app.Clock.Advance(10 * time.Minute)
-	updResp := client.Put(t, "/api/baby?tz=Asia/Shanghai", baby.UpsertInput{
+	updResp := clientA.Put(t, fmt.Sprintf("/api/babies/%d?tz=Asia/Shanghai", first.ID), baby.UpsertInput{
 		Nickname:  "大汤圆",
 		BirthDate: "2026-07-15",
 		Gender:    "female",
 	})
-	updResp.RequireStatus(t, http.StatusOK)
 	updated := DecodeOK[struct {
 		Baby baby.Profile `json:"baby"`
 	}](t, updResp).Baby
 	if updated.Nickname != "大汤圆" || updated.BirthDate != "2026-07-15" ||
 		updated.BirthWeightKg != nil || updated.BirthHeightCm != nil ||
-		updated.UpdatedAt <= created.UpdatedAt {
-		t.Fatalf("更新档案返回异常（预期 updated_at > %q 且出生体格为空）：%+v", created.UpdatedAt, updated)
+		updated.UpdatedAt <= first.UpdatedAt {
+		t.Fatalf("更新宝宝档案返回异常：%+v", updated)
 	}
 
-	persisted := FirstRow[baby.Profile](t, app, "id = ?", created.ID)
+	persisted := FirstRow[baby.Profile](t, app, "id = ?", first.ID)
 	if persisted.Nickname != "大汤圆" || persisted.BirthWeightKg != nil || persisted.BirthHeightCm != nil ||
 		persisted.UpdatedAt != updated.UpdatedAt {
 		t.Fatalf("SQLite 落库档案未同步清空可空列或刷新时间戳：%+v", persisted)
@@ -92,7 +111,7 @@ func TestBabyProfileOnboardingAndUpdateClosedLoop(t *testing.T) {
 }
 
 /*
- * Spec: baby-profile / Single baby profile creation / Create baby profile successfully; Reject invalid baby profile input
+ * Spec: baby-profile / Multi-baby profile creation / Create multiple baby profiles for the same user; Reject invalid baby profile input
  * 测试场景：跨时区零点时刻按请求时区校验宝宝出生日期是否为未来日期。
  * 业务背景：服务端统一使用 UTC 存储，但新生儿在东八区凌晨出生时 UTC 尚处于前一日，必须按客户端传入的 ?tz= 判定“本地今天”。
  * 前置数据：
@@ -107,12 +126,11 @@ func TestBabyProfileOnboardingAndUpdateClosedLoop(t *testing.T) {
 func TestBabyProfileTimezoneTodayBirthDateBoundary(t *testing.T) {
 	t.Parallel()
 
-	// 2026-11-22 20:00Z：UTC 尚为 11-22，东八区已为 11-23 04:00。
 	app := NewTestApp(t, WithClock(time.Date(2026, 11, 22, 20, 0, 0, 0, time.UTC)))
 	client := app.Client()
 
 	// 1. 按 UTC 校验时 2026-11-23 晚于当天，必须拒绝且不得产生脏档案。
-	utcResp := client.Post(t, "/api/baby?tz=UTC", baby.UpsertInput{
+	utcResp := client.Post(t, "/api/babies?tz=UTC", baby.UpsertInput{
 		Nickname:  "时区宝",
 		BirthDate: "2026-11-23",
 		Gender:    "unknown",
@@ -123,7 +141,7 @@ func TestBabyProfileTimezoneTodayBirthDateBoundary(t *testing.T) {
 	}
 
 	// 2. 按 Asia/Shanghai 校验时 2026-11-23 为本地今天，允许建档且无可选出生体格时正常落库 NULL。
-	shResp := client.Post(t, "/api/baby?tz=Asia/Shanghai", baby.UpsertInput{
+	shResp := client.Post(t, "/api/babies?tz=Asia/Shanghai", baby.UpsertInput{
 		Nickname:  "时区宝",
 		BirthDate: "2026-11-23",
 		Gender:    "unknown",
@@ -147,7 +165,7 @@ func TestBabyProfileTimezoneTodayBirthDateBoundary(t *testing.T) {
  * 测试目标：
  * 1. 验证传入带首尾空白的 default_clinic_name 被裁剪持久化。
  * 2. 验证省略 default_clinic_name 仅更新昵称时，既有常去门诊完整保留（接口与 SQLite 双重验证）。
- * 3. 验证超过 80 字的常去门诊返回 400 且不覆盖原值；显式传入 "" 清空并通过 GET /api/baby 与 SQLite 确认清空。
+ * 3. 验证超过 80 字的常去门诊返回 400 且不覆盖原值；显式传入 "" 清空并通过 GET /api/babies 与 SQLite 确认清空。
  */
 func TestBabyProfileDefaultClinicTriStateUpdate(t *testing.T) {
 	t.Parallel()
@@ -155,15 +173,15 @@ func TestBabyProfileDefaultClinicTriStateUpdate(t *testing.T) {
 	app := NewTestApp(t)
 	profile := app.Scenario().EnsureBaby()
 	client := app.Client()
+	putURL := fmt.Sprintf("/api/babies/%d?tz=Asia/Shanghai", profile.ID)
 
 	// 1. 传入带首尾空白的常去门诊名称，核对裁剪落库。
-	setResp := client.Put(t, "/api/baby?tz=Asia/Shanghai", baby.UpsertInput{
+	setResp := client.Put(t, putURL, baby.UpsertInput{
 		Nickname:          profile.Nickname,
 		BirthDate:         profile.BirthDate,
 		Gender:            profile.Gender,
 		DefaultClinicName: ptr("  阳光街道社区卫生服务中心  "),
 	})
-	setResp.RequireStatus(t, http.StatusOK)
 	if got := DecodeOK[struct {
 		Baby baby.Profile `json:"baby"`
 	}](t, setResp).Baby.DefaultClinicName; got != "阳光街道社区卫生服务中心" {
@@ -171,12 +189,11 @@ func TestBabyProfileDefaultClinicTriStateUpdate(t *testing.T) {
 	}
 
 	// 2. 省略 default_clinic_name 仅改昵称，验证 *string 三态“未传保留”语义不被零值覆盖。
-	keepResp := client.Put(t, "/api/baby?tz=Asia/Shanghai", map[string]any{
+	keepResp := client.Put(t, putURL, map[string]any{
 		"nickname":   "大汤圆",
 		"birth_date": profile.BirthDate,
 		"gender":     profile.Gender,
 	})
-	keepResp.RequireStatus(t, http.StatusOK)
 	if got := DecodeOK[struct {
 		Baby baby.Profile `json:"baby"`
 	}](t, keepResp).Baby.DefaultClinicName; got != "阳光街道社区卫生服务中心" {
@@ -187,31 +204,28 @@ func TestBabyProfileDefaultClinicTriStateUpdate(t *testing.T) {
 	}
 
 	// 3. 超长（81 字）拦截保护既有值，随后显式传 "" 清空并经接口与 SQLite 双重回读核验。
-	overResp := client.Put(t, "/api/baby?tz=Asia/Shanghai", baby.UpsertInput{
+	client.Put(t, putURL, baby.UpsertInput{
 		Nickname:          "大汤圆",
 		BirthDate:         profile.BirthDate,
 		Gender:            profile.Gender,
 		DefaultClinicName: ptr(strings.Repeat("医", baby.MaxClinicNameLength+1)),
-	})
-	overResp.RequireError(t, http.StatusBadRequest, "80")
+	}).RequireError(t, http.StatusBadRequest, "80")
 	if persisted := FirstRow[baby.Profile](t, app, "id = ?", profile.ID); persisted.DefaultClinicName != "阳光街道社区卫生服务中心" {
 		t.Fatalf("400 校验失败后不应改动已落库常去门诊，实际 %q", persisted.DefaultClinicName)
 	}
 
-	client.Put(t, "/api/baby?tz=Asia/Shanghai", baby.UpsertInput{
+	client.Put(t, putURL, baby.UpsertInput{
 		Nickname:          "大汤圆",
 		BirthDate:         profile.BirthDate,
 		Gender:            profile.Gender,
 		DefaultClinicName: ptr(""),
 	}).RequireStatus(t, http.StatusOK)
 
-	afterGet := client.Get(t, "/api/baby")
-	afterGet.RequireStatus(t, http.StatusOK)
-	afterBaby := DecodeOK[struct {
-		Baby *baby.Profile `json:"baby"`
-	}](t, afterGet).Baby
-	if afterBaby == nil || afterBaby.DefaultClinicName != "" {
-		t.Fatalf("显式清空后 GET /api/baby 预期返回空常去门诊，实际 %+v", afterBaby)
+	afterBabies := DecodeOK[struct {
+		Babies []baby.Profile `json:"babies"`
+	}](t, client.Get(t, "/api/babies")).Babies
+	if len(afterBabies) != 1 || afterBabies[0].DefaultClinicName != "" {
+		t.Fatalf("显式清空后 GET /api/babies 预期返回空常去门诊，实际 %+v", afterBabies)
 	}
 	if persisted := FirstRow[baby.Profile](t, app, "id = ?", profile.ID); persisted.DefaultClinicName != "" {
 		t.Fatalf("SQLite 常去门诊未清空，实际 %q", persisted.DefaultClinicName)
@@ -219,36 +233,107 @@ func TestBabyProfileDefaultClinicTriStateUpdate(t *testing.T) {
 }
 
 /*
- * Spec: baby-profile / Authenticated access to baby profile endpoints / Reject unauthenticated baby profile request
- * Spec: baby-profile / Single baby profile creation / Reject duplicate baby profile creation; Reject invalid baby profile input
- * Spec: baby-profile / Baby profile update / Reject update before onboarding
- * 测试场景：集中验证宝宝档案接口的认证门禁、未建档更新拒绝、非法入参拦截与单宝宝防重复建档。
- * 业务背景：BabyLog 为单宝宝模型，需同时守住未登录越权、未建档直调更新、非法字段写脏库及并发/重复 POST 创建第二份档案四条底线。
+ * Spec: baby-profile / Hard deletion of a baby profile / Hard-delete an owned baby profile and cascade child records; Reject deleting another user's baby profile
+ * Spec: baby-profile / Baby profile update / Reject updating another user's baby profile
+ * 测试场景：验证硬删除宝宝档案级联清空全部 5 张子表并释放额度，同时拒绝跨用户修改或删除他人宝宝档案（404）。
+ * 业务背景：删除宝宝必须物理清除所有关联隐私记录且绝不能影响兄弟宝宝或其他用户的数据，越权操作统一返回 404 防枚举。
  * 前置数据：
  * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
- * - 管理员与会话：已初始化管理员，具备匿名与已登录两套客户端视图
- * - 宝宝档案：初始未建档（第 3 步先合法建档，再测重复建档 409）
+ * - 管理员与会话：用户 A（admin）与普通用户 B（已完成改密）
+ * - 宝宝档案：用户 A 拥有大宝与二宝；用户 B 拥有三宝
+ * - 前置业务记录：大宝名下写入喂养、睡眠、护理、健康与疫苗记录；二宝名下写入 1 条喂养记录
+ * 测试目标：
+ * 1. 验证用户 B 尝试 PUT 或 DELETE 用户 A 的大宝均返回 404，且大宝档案与全部子记录完好无损。
+ * 2. 验证用户 A 硬删除大宝返回 200 {deleted: true}，大宝及 5 张子表记录在 SQLite 中彻底级联清零，而二宝与三宝记录不受影响。
+ */
+func TestBabyProfileHardDeleteCascadeAndCrossUserGuards(t *testing.T) {
+	t.Parallel()
+
+	app := NewTestApp(t)
+	clientA := app.Client()
+	clientB, _ := app.CreateReadyUserViaAdmin("UserB", "userb-init-secret-123", "userb-final-secret-456")
+
+	sA := app.ScenarioFor(clientA)
+	babyA1 := sA.EnsureBaby(BabyParams{Nickname: "大宝"})
+	sA.AddFormula(120, "2026-11-23T01:00:00Z")
+	sA.AddSleep(records.SleepSubtypeNap, "2026-11-23T01:00:00Z", "2026-11-23T01:45:00Z")
+	sA.AddBath("2026-11-23T01:30:00Z")
+	sA.AddTemperature(36.7, "2026-11-23T01:40:00Z")
+	sA.SeedVaccines()
+
+	babyA2 := sA.EnsureBaby(BabyParams{Nickname: "二宝"})
+	sA.ForBaby(babyA2.ID).AddFormula(90, "2026-11-23T01:20:00Z")
+
+	sB := app.ScenarioFor(clientB)
+	babyB := sB.EnsureBaby(BabyParams{Nickname: "三宝"})
+	sB.ForBaby(babyB.ID).AddFormula(150, "2026-11-23T01:30:00Z")
+
+	// 1. 跨用户 PUT/DELETE 均返回 404 且原数据毫发无损。
+	clientB.Put(t, fmt.Sprintf("/api/babies/%d?tz=Asia/Shanghai", babyA1.ID), baby.UpsertInput{
+		Nickname:  "篡改",
+		BirthDate: "2026-07-15",
+		Gender:    "male",
+	}).RequireError(t, http.StatusNotFound, "")
+	clientB.Delete(t, fmt.Sprintf("/api/babies/%d", babyA1.ID)).
+		RequireError(t, http.StatusNotFound, "")
+	if persisted := FirstRow[baby.Profile](t, app, "id = ?", babyA1.ID); persisted.Nickname != "大宝" {
+		t.Fatalf("跨用户越权拒绝后大宝档案被意外修改：%+v", persisted)
+	}
+
+	// 2. 用户 A 硬删除大宝后 5 张子表级联清零，二宝与用户 B 的三宝完好保留。
+	delResp := clientA.Delete(t, fmt.Sprintf("/api/babies/%d", babyA1.ID))
+	if !DecodeOK[struct {
+		Deleted bool `json:"deleted"`
+	}](t, delResp).Deleted {
+		t.Fatalf("硬删除大宝预期返回 deleted=true")
+	}
+	if CountRows[baby.Profile](t, app, "id = ?", babyA1.ID) != 0 ||
+		CountRows[records.FeedingRecord](t, app, "baby_id = ?", babyA1.ID) != 0 ||
+		CountRows[records.SleepRecord](t, app, "baby_id = ?", babyA1.ID) != 0 ||
+		CountRows[records.CareRecord](t, app, "baby_id = ?", babyA1.ID) != 0 ||
+		CountRows[records.HealthRecord](t, app, "baby_id = ?", babyA1.ID) != 0 ||
+		CountRows[vaccines.DoseRecord](t, app, "baby_id = ?", babyA1.ID) != 0 {
+		t.Fatalf("硬删除大宝后 5 张关联子表未完全级联清零")
+	}
+	if CountRows[records.FeedingRecord](t, app, "baby_id = ?", babyA2.ID) != 1 ||
+		CountRows[records.FeedingRecord](t, app, "baby_id = ?", babyB.ID) != 1 {
+		t.Fatalf("删除大宝不应误伤二宝或用户 B 的宝宝记录")
+	}
+}
+
+/*
+ * Spec: baby-profile / Authenticated access to baby profile endpoints / Reject unauthenticated baby profile request
+ * Spec: baby-profile / Multi-baby profile creation / Enforce maximum of 10 baby profiles per user; Reject invalid baby profile input
+ * Spec: baby-profile / Baby profile update / Reject update before onboarding
+ * 测试场景：集中验证宝宝档案接口的认证门禁、空档案更新 404、非法入参 400 与每用户 10 个宝宝上限且用户间额度独立。
+ * 业务背景：多宝宝场景需守住未登录拦截、非法数据零脏写与单用户合理数量配额，同时确保 A 满额不影响 B 建档，且删除后释放配额。
+ * 前置数据：
+ * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
+ * - 管理员与会话：管理员（用户 A）与普通用户 B（已完成改密）及匿名客户端
+ * - 宝宝档案：初始未建档
  * - 前置业务记录：无
  * 测试目标：
- * 1. 验证匿名访问 GET/POST/PUT /api/baby 均返回 401，未建档时 PUT /api/baby 返回 404。
- * 2. 验证空/超长昵称、畸形/未来日期、非法性别与越界出生体格均返回 400 且 SQLite 保持零行。
- * 3. 验证建档后再次 POST /api/baby 返回 409 且原档案不被修改、总数仍为 1。
+ * 1. 验证匿名访问 GET/POST/PUT/DELETE /api/babies* 均返回 401，未建档时 PUT /api/babies/999 返回 404。
+ * 2. 验证非法昵称、日期、性别与出生体格全部返回 400 且零落库。
+ * 3. 验证用户 A 建满 10 个宝宝后第 11 个返回 400，用户 B 仍可正常建档，且 A 删除 1 个宝宝后额度恢复可再建。
  */
-func TestBabyProfileAuthOnboardingValidationAndDuplicateGuards(t *testing.T) {
+func TestBabyProfileAuthOnboardingValidationAndLimitGuards(t *testing.T) {
 	t.Parallel()
 
 	app := NewTestApp(t)
 	anon := app.UnauthenticatedClient()
-	client := app.Client()
+	clientA := app.Client()
+	clientB, _ := app.CreateReadyUserViaAdmin("UserB", "userb-init-secret-123", "userb-final-secret-456")
 
-	// 1. 未认证访问一律 401；已认证但未建档直接 PUT 返回 404。
-	anon.Get(t, "/api/baby").RequireError(t, http.StatusUnauthorized, "")
-	anon.Post(t, "/api/baby", baby.UpsertInput{Nickname: "宝", BirthDate: "2026-07-01", Gender: "male"}).
+	// 1. 未认证访问一律 401；不存在或未建档直接 PUT 返回 404。
+	anon.Get(t, "/api/babies").RequireError(t, http.StatusUnauthorized, "")
+	anon.Post(t, "/api/babies", baby.UpsertInput{Nickname: "宝", BirthDate: "2026-07-01", Gender: "male"}).
 		RequireError(t, http.StatusUnauthorized, "")
-	anon.Put(t, "/api/baby", baby.UpsertInput{Nickname: "宝", BirthDate: "2026-07-01", Gender: "male"}).
+	anon.Put(t, "/api/babies/1", baby.UpsertInput{Nickname: "宝", BirthDate: "2026-07-01", Gender: "male"}).
 		RequireError(t, http.StatusUnauthorized, "")
+	anon.Delete(t, "/api/babies/1").RequireError(t, http.StatusUnauthorized, "")
 
-	client.Put(t, "/api/baby?tz=Asia/Shanghai", baby.UpsertInput{
+	clientA.Put(t, "/api/babies/999?tz=Asia/Shanghai", baby.UpsertInput{
 		Nickname:  "团子",
 		BirthDate: "2026-07-15",
 		Gender:    "male",
@@ -265,24 +350,32 @@ func TestBabyProfileAuthOnboardingValidationAndDuplicateGuards(t *testing.T) {
 		{Nickname: "小宝", BirthDate: "2026-07-15", Gender: "male", BirthHeightCm: ptr(120.0)},
 	}
 	for _, in := range invalidPayloads {
-		client.Post(t, "/api/baby?tz=Asia/Shanghai", in).RequireError(t, http.StatusBadRequest, "")
+		clientA.Post(t, "/api/babies?tz=Asia/Shanghai", in).RequireError(t, http.StatusBadRequest, "")
 	}
 	if got := CountRows[baby.Profile](t, app, ""); got != 0 {
 		t.Fatalf("非法建档载荷被拒后 SQLite 应保持 0 行，实际 %d", got)
 	}
 
-	// 3. 合法建档后再次 POST /api/baby 触发单宝宝唯一约束返回 409，且原档案完好无损。
-	created := app.Scenario().EnsureBaby(BabyParams{Nickname: "原汤圆"})
-	client.Post(t, "/api/baby?tz=Asia/Shanghai", baby.UpsertInput{
-		Nickname:  "二宝",
+	// 3. 用户 A 建满 10 个宝宝后第 11 个返回 400，用户 B 仍可建档，A 删除 1 个后可再次新建。
+	var firstID int64
+	for i := 1; i <= 10; i++ {
+		created := app.ScenarioFor(clientA).EnsureBaby(BabyParams{Nickname: fmt.Sprintf("宝宝%d", i)})
+		if i == 1 {
+			firstID = created.ID
+		}
+	}
+	clientA.Post(t, "/api/babies?tz=Asia/Shanghai", baby.UpsertInput{
+		Nickname:  "第11宝",
 		BirthDate: "2026-08-01",
 		Gender:    "male",
-	}).RequireError(t, http.StatusConflict, "")
+	}).RequireError(t, http.StatusBadRequest, "10")
 
-	if got := CountRows[baby.Profile](t, app, ""); got != 1 {
-		t.Fatalf("重复建档拒绝后档案总数应仍为 1，实际 %d", got)
-	}
-	if persisted := FirstRow[baby.Profile](t, app, "id = ?", created.ID); persisted.Nickname != "原汤圆" {
-		t.Fatalf("重复建档拒绝后原档案被意外改写：%+v", persisted)
-	}
+	app.ScenarioFor(clientB).EnsureBaby(BabyParams{Nickname: "用户B首宝"})
+
+	clientA.Delete(t, fmt.Sprintf("/api/babies/%d", firstID)).RequireStatus(t, http.StatusOK)
+	clientA.Post(t, "/api/babies?tz=Asia/Shanghai", baby.UpsertInput{
+		Nickname:  "补位宝",
+		BirthDate: "2026-08-01",
+		Gender:    "female",
+	}).RequireStatus(t, http.StatusCreated)
 }

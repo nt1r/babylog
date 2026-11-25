@@ -5,8 +5,8 @@ import { AppShell } from '@/components/app-shell';
 import { Button } from '@/components/ui/button';
 import { Empty, EmptyActions, EmptyDescription, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useBabyProfileQuery } from '@/lib/baby';
-import { findNavItemByPath } from '@/navigation/menu';
+import { useSyncActiveBaby } from '@/lib/baby';
+import { findNavItemByPath, isAccountLevelRoute } from '@/navigation/menu';
 import { useAuthStore } from '@/stores/auth';
 
 export const Route = createFileRoute('/_app')({
@@ -14,19 +14,22 @@ export const Route = createFileRoute('/_app')({
 });
 
 /**
- * 已认证业务区布局守卫，按严格顺序执行四层门禁：
- * 1. 会话恢复或宝宝档案首次加载中 → 渲染骨架屏，避免闪烁跳转；
+ * 已认证业务区布局守卫，按严格顺序执行五层门禁：
+ * 1. 会话恢复或宝宝列表首次加载中 → 渲染骨架屏，避免闪烁跳转；
  * 2. 未登录 → 重定向至登录页并携带来源路径；
- * 3. 档案请求失败 → 停留错误重试页（避免把网络故障误判为未建档而跳去建档页）；
- * 4. 确认档案为 null（尚未建档）→ 强制进入首次建档流程。
+ * 3. 待修改初始密码 → 强制重定向至全屏改密页；
+ * 4. 宝宝列表请求失败（仅拦截育儿业务页）→ 停留错误重试页，避免把网络故障误判为未建档；
+ * 5. 当前账号尚无宝宝档案且访问育儿业务页 → 强制进入首次建档流程（账号级页面 `/settings` 与 `/admin/users` 放行）。
  */
 function AuthenticatedLayout() {
   const user = useAuthStore((state) => state.user);
   const restoring = useAuthStore((state) => state.restoring);
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const navItem = findNavItemByPath(pathname);
+  const accountRoute = isAccountLevelRoute(pathname);
 
-  const babyQuery = useBabyProfileQuery(Boolean(user) && !restoring);
+  const shouldLoadBabies = Boolean(user) && !restoring && !user?.must_change_password;
+  const { babies, babiesQuery, isSynced } = useSyncActiveBaby(shouldLoadBabies);
 
   useEffect(() => {
     if (user) {
@@ -34,7 +37,7 @@ function AuthenticatedLayout() {
     }
   }, [user, navItem]);
 
-  if (restoring || (user && babyQuery.isLoading)) {
+  if (restoring || (shouldLoadBabies && (babiesQuery.isLoading || !isSynced))) {
     return (
       <div className="flex min-h-svh items-center justify-center bg-background p-6">
         <div className="w-full max-w-4xl space-y-4">
@@ -55,7 +58,11 @@ function AuthenticatedLayout() {
     return <Navigate to="/login" search={{ redirect: pathname }} replace />;
   }
 
-  if (babyQuery.isError) {
+  if (user.must_change_password) {
+    return <Navigate to="/change-password" replace />;
+  }
+
+  if (babiesQuery.isError && !accountRoute) {
     return (
       <div className="flex min-h-svh items-center justify-center bg-background p-6">
         <Empty className="w-full max-w-md border-solid bg-card shadow-card">
@@ -66,10 +73,10 @@ function AuthenticatedLayout() {
           </EmptyMedia>
           <EmptyTitle>宝宝档案加载失败</EmptyTitle>
           <EmptyDescription>
-            {babyQuery.error instanceof Error ? babyQuery.error.message : '暂时无法读取宝宝档案，请重试。'}
+            {babiesQuery.error instanceof Error ? babiesQuery.error.message : '暂时无法读取宝宝档案，请重试。'}
           </EmptyDescription>
           <EmptyActions>
-            <Button onClick={() => void babyQuery.refetch()}>
+            <Button onClick={() => void babiesQuery.refetch()}>
               <RotateCw className="size-4" />
               重新加载
             </Button>
@@ -79,7 +86,7 @@ function AuthenticatedLayout() {
     );
   }
 
-  if (babyQuery.data === null) {
+  if (babies.length === 0 && !accountRoute) {
     return <Navigate to="/onboarding" replace />;
   }
 

@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
-import { BellRing, LayoutDashboard, Ruler, Settings2, Syringe } from 'lucide-react';
+import { BellRing, LayoutDashboard, Ruler, Settings2, Syringe, Users } from 'lucide-react';
+import type { UserRole } from '@/lib/auth';
 import { RECORD_CATEGORY_META, type RecordCategory } from '@/lib/categories';
 import { useGrowthRecordStore } from '@/stores/growth-record';
 import { useQuickRecordStore } from '@/stores/quick-record';
@@ -17,9 +18,11 @@ interface NavItem {
     | '/health'
     | '/growth'
     | '/reminders'
-    | '/settings';
+    | '/settings'
+    | '/admin/users';
   readonly icon: LucideIcon;
   readonly category?: RecordCategory;
+  readonly adminOnly?: boolean;
 }
 
 interface NavGroup {
@@ -40,7 +43,7 @@ function navItemFromCategory(category: RecordCategory): NavItem {
   };
 }
 
-export const NAV_GROUPS: readonly NavGroup[] = [
+const NAV_GROUPS: readonly NavGroup[] = [
   {
     id: 'overview',
     label: '成长概览',
@@ -91,6 +94,14 @@ export const NAV_GROUPS: readonly NavGroup[] = [
         url: '/settings',
         icon: Settings2,
       },
+      {
+        id: 'admin-users',
+        title: '用户管理',
+        shortTitle: '用户',
+        url: '/admin/users',
+        icon: Users,
+        adminOnly: true,
+      },
     ],
   },
 ] as const;
@@ -112,6 +123,25 @@ const MOBILE_NAV_IDS = new Set(['dashboard', 'feeding', 'sleep', 'care']);
 
 /** 移动端底部导航栏展示的 4 个高频核心入口（搭配中央快速记一笔按钮）。 */
 export const MOBILE_NAV_ITEMS: readonly NavItem[] = ALL_NAV_ITEMS.filter((item) => MOBILE_NAV_IDS.has(item.id));
+
+/** 按当前账号角色过滤可见导航分组（普通用户隐藏仅管理员可见的用户管理入口）。 */
+export function getVisibleNavGroups(role: UserRole | undefined): readonly NavGroup[] {
+  const isAdmin = role === 'admin';
+  return NAV_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => !item.adminOnly || isAdmin),
+  })).filter((group) => group.items.length > 0);
+}
+
+/** 判断路径是否属于账号级路由（无宝宝档案时也允许访问，不触发首次建档重定向）。 */
+export function isAccountLevelRoute(pathname: string): boolean {
+  return (
+    pathname === '/settings' ||
+    pathname.startsWith('/settings/') ||
+    pathname === '/admin/users' ||
+    pathname.startsWith('/admin/users/')
+  );
+}
 
 /** 按路径精确或前缀匹配导航元数据（同时覆盖 HIDDEN_NAV_ITEMS 中的保留路由）。 */
 export function findNavItemByPath(pathname: string): NavItem | undefined {

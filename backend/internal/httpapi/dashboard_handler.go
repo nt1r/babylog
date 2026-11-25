@@ -13,7 +13,7 @@ import (
 )
 
 // dashboardHandler 处理首页看板今日汇总与近 N 日趋势聚合接口。
-// 路由组已挂载 requireBabyProfileMiddleware，前置校验宝宝已完成建档。
+// 路由组已挂载 requireBabyOwnershipMiddleware，前置校验目标宝宝归属于当前登录用户。
 type dashboardHandler struct {
 	svc    *dashboard.Service
 	logger *slog.Logger
@@ -26,7 +26,7 @@ func newDashboardHandler(svc *dashboard.Service, logger *slog.Logger) *dashboard
 	}
 }
 
-// getSummary 处理 GET /api/dashboard/summary，按指定 IANA 时区返回今日 KPI、健康观察与生长概览。
+// getSummary 处理 GET /api/babies/:babyId/dashboard/summary，按指定 IANA 时区返回今日 KPI、健康观察与生长概览。
 func (h *dashboardHandler) getSummary(c *gin.Context) {
 	profile, ok := mustBabyProfile(c)
 	if !ok {
@@ -50,7 +50,7 @@ func (h *dashboardHandler) getSummary(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
-// getTrends 处理 GET /api/dashboard/trends，返回连续 days 天的奶量/睡眠趋势与 5 时段照护节律。
+// getTrends 处理 GET /api/babies/:babyId/dashboard/trends，返回连续 days 天的奶量/睡眠趋势与 5 时段照护节律。
 func (h *dashboardHandler) getTrends(c *gin.Context) {
 	babyID, ok := mustBabyID(c)
 	if !ok {

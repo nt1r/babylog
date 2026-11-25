@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Empty, EmptyActions, EmptyDescription, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Toaster, toast } from '@/components/ui/toast';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { setUnauthorizedHandler } from '@/lib/http';
+import { setPasswordChangeRequiredHandler, setUnauthorizedHandler } from '@/lib/http';
 import { registerServiceWorker } from '@/lib/pwa';
 import { queryClient } from '@/lib/query-client';
 import { useAuthStore } from '@/stores/auth';
@@ -27,13 +27,18 @@ function RootComponent() {
     void restoreSession();
   }, [restoreSession]);
 
-  // 全局 401 未认证拦截：统一清空 Zustand 登录态与 TanStack Query 缓存，避免切号或失效后残留脏数据。
+  // 全局 401 未认证与 403 强制改密拦截：setUser(null) 内置客户端清态，403 刷新会话以触发改密门禁。
   useEffect(() => {
     setUnauthorizedHandler(() => {
       useAuthStore.getState().setUser(null);
-      queryClient.clear();
     });
-    return () => setUnauthorizedHandler(null);
+    setPasswordChangeRequiredHandler(() => {
+      void useAuthStore.getState().restoreSession();
+    });
+    return () => {
+      setUnauthorizedHandler(null);
+      setPasswordChangeRequiredHandler(null);
+    };
   }, []);
 
   useEffect(() => {

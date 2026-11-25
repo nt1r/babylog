@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { InfoPopover } from '@/components/ui/info-popover';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useBabyProfileQuery } from '@/lib/baby';
+import { useActiveBaby } from '@/lib/baby';
 import { GROWTH_SUBTYPE_OPTIONS, HEALTH_SUBTYPE_LABELS } from '@/lib/categories';
 import {
   buildGrowthMetricTiles,
@@ -49,7 +49,7 @@ function GrowthPage() {
   const openCreate = useGrowthRecordStore((state) => state.openCreate);
   const openEdit = useGrowthRecordStore((state) => state.openEdit);
 
-  const babyQuery = useBabyProfileQuery();
+  const { activeBaby, babiesQuery: babyQuery } = useActiveBaby();
   const summaryQuery = useGrowthSummaryQuery();
   const growthChartQuery = useGrowthChartQuery();
 
@@ -145,7 +145,7 @@ function GrowthPage() {
 
       {/* 生长发育曲线（体重 / 身高 / 头围 + WHO 参考区间） */}
       <GrowthTrendCard
-        baby={babyQuery.data}
+        baby={activeBaby}
         records={growthChartRecords}
         isLoading={growthChartQuery.isLoading || babyQuery.isLoading}
         isError={growthChartError}

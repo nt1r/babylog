@@ -136,6 +136,28 @@ fi
   2. **Base UI 进场过渡帧（`data-starting-style`）**：用 JS 自动点击打开 `Popover` / `Dialog` 后立即截屏时，`--virtual-time-budget` 可能停留在 `data-starting-style`（`opacity: 0`）的首帧导致浮层看似空白。将触发延迟设小（如 `10ms`）并将 `--virtual-time-budget` 提高至 `3500–4000` 即可截到完全显现的浮层。
   3. **Recharts 默认入场动画**：`<Line>` / `<Area>` 开启默认入场动画时，无头截屏可能只绘出散点而未完成折线描边；业务曲线或预览核验时显式设置 `isAnimationActive={false}`，既避免切换 Tab 闪烁也确保截屏稳定。
   4. **单次脚本批量出图**：将亮/暗色与桌面/移动端多个视口放进同一份 Node 脚本循环调用 Chrome 后在 `finally` 统一关闭 Vite server，避免反复启动服务和重复生成样板脚本。
+  5. **侧边栏折叠态存储键**：本仓桌面侧边栏展开状态持久化在 `localStorage` 的 `babylog_sidebar_open`（非 shadcn 默认 Cookie）；核验折叠态（图标态）须在渲染前显式写入 `localStorage.setItem('babylog_sidebar_open', 'false')`。
+- **整页路由 + Mock `fetch` 预览最小骨架**（需要审视含 `AppShell` 与真实路由页的布局时，替换 `preview.tsx` 挂载段即可）：
+
+```tsx
+import { QueryClientProvider } from '@tanstack/react-query';
+import { createMemoryHistory, createRouter, RouterProvider } from '@tanstack/react-router';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { queryClient } from '@/lib/query-client';
+import { routeTree } from '@/routeTree.gen';
+import { useAuthStore } from '@/stores/auth';
+
+window.fetch = async (input) => {
+  const url = typeof input === 'string' ? input : input.toString();
+  const json = (data: unknown) => new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  if (url.startsWith('/api/auth/session')) return json({ user: mockUser });
+  if (url === '/api/babies') return json({ babies: mockBabies });
+  return json({});
+};
+useAuthStore.setState({ user: mockUser, initialized: true, restoring: false, restoreFailed: false, restoreError: '' });
+const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [routePath] }) });
+// 挂载：<QueryClientProvider client={queryClient}><TooltipProvider><RouterProvider router={router} /></TooltipProvider></QueryClientProvider>
+```
 
 ## 约束提醒
 

@@ -12,7 +12,6 @@ import (
 
 	"github.com/nt1r/babylog/backend/internal/auth"
 	"github.com/nt1r/babylog/backend/internal/config"
-	"github.com/nt1r/babylog/backend/internal/database"
 )
 
 const initAdminUsage = "用法：babylog admin init --password-file <路径> [--username <用户名>]"
@@ -74,26 +73,14 @@ func runAdminInit(ctx context.Context, out io.Writer, passwordFile, username str
 		return err
 	}
 
-	dataDir, err := config.ResolveDataDir()
+	db, store, err := openCLIAuthStore()
 	if err != nil {
-		return errors.New("无法打开数据库，请检查数据目录及权限")
-	}
-
-	db, err := database.Open(dataDir)
-	if err != nil {
-		return errors.New("无法打开数据库，请检查数据目录及权限")
+		return err
 	}
 	defer func() { _ = db.Close() }()
 
-	store := auth.NewStore(db.Gorm())
 	if err := store.InitializeAdministrator(ctx, username, password); err != nil {
-		// 使用 errors.As 从错误链中识别预期业务错误（如“管理员已存在”），直接透传中文提示；
-		// 其余未预期底层错误统一收敛为脱敏中文消息，避免暴露数据库细节。
-		var adminErr *auth.AdministratorError
-		if errors.As(err, &adminErr) {
-			return adminErr
-		}
-		return errors.New("管理员初始化失败")
+		return mapCLIAuthError(err, "管理员初始化失败")
 	}
 
 	_, _ = fmt.Fprintln(out, "管理员初始化成功")

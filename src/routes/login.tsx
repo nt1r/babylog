@@ -63,7 +63,8 @@ function LoginPage() {
 
   useEffect(() => {
     if (!restoring && user) {
-      void navigate({ to: redirect ?? '/dashboard', replace: true });
+      const target = user.must_change_password ? '/change-password' : (redirect ?? '/dashboard');
+      void navigate({ to: target, replace: true });
     }
   }, [restoring, user, redirect, navigate]);
 
@@ -83,10 +84,11 @@ function LoginPage() {
     setSubmitError('');
     setFieldErrors({});
     try {
-      await login(username, password);
+      const loggedInUser = await login(username, password);
       setPassword('');
       setShowPassword(false);
-      await navigate({ to: redirect ?? '/dashboard', replace: true });
+      const target = loggedInUser?.must_change_password ? '/change-password' : (redirect ?? '/dashboard');
+      await navigate({ to: target, replace: true });
     } catch (cause) {
       setSubmitError(cause instanceof Error ? cause.message : '登录失败，请稍后重试。');
     } finally {

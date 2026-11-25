@@ -1,4 +1,4 @@
-// Package main 提供 BabyLog 的命令行入口，负责组装 HTTP 服务（serve）、管理员维护（admin）与版本查询（version）子命令。
+// Package main 提供 BabyLog 的命令行入口，负责组装 HTTP 服务（serve）、管理员维护（admin）、用户维护（user）与版本查询（version）子命令。
 package main
 
 import (
@@ -23,6 +23,7 @@ func newRootCommand() *cobra.Command {
 
 	rootCmd.AddCommand(newServeCommand())
 	rootCmd.AddCommand(newAdminCommand())
+	rootCmd.AddCommand(newUserCommand())
 	rootCmd.AddCommand(newVersionCommand())
 
 	return rootCmd

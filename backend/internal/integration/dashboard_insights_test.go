@@ -28,7 +28,8 @@ func TestDashboardSummaryTimezoneSplitAndMedicine(t *testing.T) {
 	// 固定时钟在 2026-11-23 16:00:00+08:00（UTC 08:00），对应洛杉矶 2026-11-23 00:00:00-08:00。
 	app := NewTestApp(t, WithClock(time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)))
 	s := app.Scenario()
-	s.EnsureBaby()
+	b := s.EnsureBaby()
+	summaryBase := babyPath(b.ID, "/dashboard/summary")
 
 	// 前置造数：写入跨 UTC 凌晨喂养、跨夜睡眠、尿布、体温与跨日/当日用药。
 	s.AddFormula(120, "2026-11-22T16:30:00Z")
@@ -42,7 +43,7 @@ func TestDashboardSummaryTimezoneSplitAndMedicine(t *testing.T) {
 	s.AddMedicine("布洛芬", "2.5 ml", "2026-11-23T06:00:00Z") // 11-23 14:00+08
 
 	// 1. 按 Asia/Shanghai 查询今日摘要，核验全部维度汇总与跨夜睡眠当日切分。
-	shResp := app.Client().Get(t, "/api/dashboard/summary?tz=Asia/Shanghai")
+	shResp := app.Client().Get(t, summaryBase+"?tz=Asia/Shanghai")
 	shResp.RequireStatus(t, http.StatusOK)
 	sum := DecodeOK[dashboard.SummaryResponse](t, shResp)
 
@@ -67,7 +68,7 @@ func TestDashboardSummaryTimezoneSplitAndMedicine(t *testing.T) {
 	}
 
 	// 2. 切换为 America/Los_Angeles（此时恰好刚跨入 11-23 00:00），核验当日统计全部归零而跨日最近标记依然保留。
-	laResp := app.Client().Get(t, "/api/dashboard/summary?tz=America/Los_Angeles")
+	laResp := app.Client().Get(t, summaryBase+"?tz=America/Los_Angeles")
 	laResp.RequireStatus(t, http.StatusOK)
 	laSum := DecodeOK[dashboard.SummaryResponse](t, laResp)
 	if laSum.Date != "2026-11-23" {
@@ -101,7 +102,8 @@ func TestDashboardSevenDayTrendsAndCareRhythm(t *testing.T) {
 
 	app := NewTestApp(t)
 	s := app.Scenario()
-	s.EnsureBaby()
+	b := s.EnsureBaby()
+	trendsBase := babyPath(b.ID, "/dashboard/trends")
 
 	// 前置造数：仅在最后 2 天写入多品类记录，精确覆盖清晨/上午/下午/傍晚/夜间全部 5 个照护时段。
 	s.AddFormula(120, "2026-11-22T16:30:00Z")                                             // 11-23 00:30+08（夜间）
@@ -115,7 +117,7 @@ func TestDashboardSevenDayTrendsAndCareRhythm(t *testing.T) {
 	s.AddSleep(records.SleepSubtypeNight, "2026-11-22T14:00:00Z", "2026-11-22T22:00:00Z") // 11-22 22:00+08 入睡（夜间）
 
 	// 1. 请求 7 日趋势，核验连续 7 个日桶且前 5 个空日全零填充。
-	resp := app.Client().Get(t, "/api/dashboard/trends?days=7&tz=Asia/Shanghai")
+	resp := app.Client().Get(t, trendsBase+"?days=7&tz=Asia/Shanghai")
 	resp.RequireStatus(t, http.StatusOK)
 	tr := DecodeOK[dashboard.TrendsResponse](t, resp)
 
@@ -158,7 +160,7 @@ func TestDashboardSevenDayTrendsAndCareRhythm(t *testing.T) {
 
 	// 4. 边界校验：跨 7 天窗口起点的睡眠仅切分 6.0h 到首日 11-17、入睡早于窗口不计入夜间时段；同时核对默认 7d、14d 标签与非法 days 400。
 	s.AddSleep(records.SleepSubtypeNight, "2026-11-16T14:00:00Z", "2026-11-16T22:00:00Z")
-	tDefaultResp := app.Client().Get(t, "/api/dashboard/trends?tz=Asia/Shanghai")
+	tDefaultResp := app.Client().Get(t, trendsBase+"?tz=Asia/Shanghai")
 	tDefaultResp.RequireStatus(t, http.StatusOK)
 	tDefault := DecodeOK[dashboard.TrendsResponse](t, tDefaultResp)
 	if len(tDefault.Daily) != 7 || tDefault.Daily[0].Date != "2026-11-17" || tDefault.Daily[0].SleepHours != 6.0 {
@@ -174,7 +176,7 @@ func TestDashboardSevenDayTrendsAndCareRhythm(t *testing.T) {
 		t.Errorf("入睡早于 7 天窗口起点的睡眠不应计入夜间时段，预期 3，实际 %d", nightCount)
 	}
 
-	t14Resp := app.Client().Get(t, "/api/dashboard/trends?days=14&tz=Asia/Shanghai")
+	t14Resp := app.Client().Get(t, trendsBase+"?days=14&tz=Asia/Shanghai")
 	t14Resp.RequireStatus(t, http.StatusOK)
 	t14 := DecodeOK[dashboard.TrendsResponse](t, t14Resp)
 	if len(t14.Daily) != 14 {
@@ -185,7 +187,7 @@ func TestDashboardSevenDayTrendsAndCareRhythm(t *testing.T) {
 	}
 
 	for _, badDays := range []string{"0", "91", "abc"} {
-		app.Client().Get(t, "/api/dashboard/trends?days="+badDays+"&tz=Asia/Shanghai").
+		app.Client().Get(t, trendsBase+"?days="+badDays+"&tz=Asia/Shanghai").
 			RequireError(t, http.StatusBadRequest, "趋势天数")
 	}
 }
@@ -210,8 +212,8 @@ func TestDashboardGrowthPartialResolutionAndColdStart(t *testing.T) {
 
 	// 1. 冷启动宝宝（无出生体重/身高、无任何日常记录）：验证 summary 全零/全空，且 trends 7 个日桶与 5 个时段逐项全零。
 	coldApp := NewTestApp(t)
-	coldApp.Scenario().EnsureBaby(BabyParams{WithoutBirthMeasurements: true})
-	coldSumResp := coldApp.Client().Get(t, "/api/dashboard/summary?tz=Asia/Shanghai")
+	coldBaby := coldApp.Scenario().EnsureBaby(BabyParams{WithoutBirthMeasurements: true})
+	coldSumResp := coldApp.Client().Get(t, babyPath(coldBaby.ID, "/dashboard/summary?tz=Asia/Shanghai"))
 	coldSumResp.RequireStatus(t, http.StatusOK)
 	coldSum := DecodeOK[dashboard.SummaryResponse](t, coldSumResp)
 	if coldSum.Feeding.TotalML != 0 || coldSum.Feeding.LastFeedingAt != nil ||
@@ -219,7 +221,7 @@ func TestDashboardGrowthPartialResolutionAndColdStart(t *testing.T) {
 		coldSum.Growth.LatestHeadCm != nil || coldSum.Growth.WeightIsBirth || coldSum.Growth.HeightIsBirth {
 		t.Fatalf("无出生体格冷启动摘要应全零/全空：%+v", coldSum)
 	}
-	coldTrendResp := coldApp.Client().Get(t, "/api/dashboard/trends?days=7&tz=Asia/Shanghai")
+	coldTrendResp := coldApp.Client().Get(t, babyPath(coldBaby.ID, "/dashboard/trends?days=7&tz=Asia/Shanghai"))
 	coldTrendResp.RequireStatus(t, http.StatusOK)
 	coldTrend := DecodeOK[dashboard.TrendsResponse](t, coldTrendResp)
 	if len(coldTrend.Daily) != 7 || len(coldTrend.Slots) != 5 {
@@ -239,14 +241,15 @@ func TestDashboardGrowthPartialResolutionAndColdStart(t *testing.T) {
 	// 2. 带出生体格的宝宝：先验证出生值兜底，再写一条仅含体重的手动生长记录验证维度独立切换。
 	app := NewTestApp(t)
 	s := app.Scenario()
-	s.EnsureBaby(BabyParams{
+	b := s.EnsureBaby(BabyParams{
 		BirthDate:     "2026-07-15",
 		BirthWeightKg: ptr(3.3),
 		BirthHeightCm: ptr(50.0),
 	})
 	client := app.Client()
+	sumURL := babyPath(b.ID, "/dashboard/summary?tz=Asia/Shanghai")
 
-	initResp := client.Get(t, "/api/dashboard/summary?tz=Asia/Shanghai")
+	initResp := client.Get(t, sumURL)
 	initResp.RequireStatus(t, http.StatusOK)
 	initGrowth := DecodeOK[dashboard.SummaryResponse](t, initResp).Growth
 	if initGrowth.LatestWeightKg == nil || *initGrowth.LatestWeightKg != 3.3 || !initGrowth.WeightIsBirth ||
@@ -258,7 +261,7 @@ func TestDashboardGrowthPartialResolutionAndColdStart(t *testing.T) {
 	}
 
 	s.AddGrowth(GrowthParams{WeightKg: ptr(7.2), RecordedAt: "2026-11-20T04:00:00Z"})
-	midResp := client.Get(t, "/api/dashboard/summary?tz=Asia/Shanghai")
+	midResp := client.Get(t, sumURL)
 	midResp.RequireStatus(t, http.StatusOK)
 	midGrowth := DecodeOK[dashboard.SummaryResponse](t, midResp).Growth
 	if midGrowth.LatestWeightKg == nil || *midGrowth.LatestWeightKg != 7.2 || midGrowth.WeightIsBirth ||
@@ -272,7 +275,7 @@ func TestDashboardGrowthPartialResolutionAndColdStart(t *testing.T) {
 	s.AddTooth("下中切牙（第 1 颗）", "2026-11-15T04:00:00Z")
 	s.AddTooth("下中切牙（第 2 颗）", "2026-11-22T04:00:00Z")
 
-	afterResp := client.Get(t, "/api/dashboard/summary?tz=Asia/Shanghai")
+	afterResp := client.Get(t, sumURL)
 	afterResp.RequireStatus(t, http.StatusOK)
 	afterGrowth := DecodeOK[dashboard.SummaryResponse](t, afterResp).Growth
 	if afterGrowth.LatestWeightKg == nil || *afterGrowth.LatestWeightKg != 7.2 || afterGrowth.WeightIsBirth ||
@@ -284,37 +287,41 @@ func TestDashboardGrowthPartialResolutionAndColdStart(t *testing.T) {
 }
 
 /*
- * Spec: dashboard-insights / Authenticated access to dashboard endpoints / Reject unauthenticated dashboard request; Reject dashboard request before baby onboarding
+ * Spec: dashboard-insights / Authenticated access to dashboard endpoints / Reject unauthenticated dashboard request; Reject dashboard request before baby onboarding; Reject dashboard request for foreign baby ID
  * Spec: dashboard-insights / Timezone-aware daily KPI summary and recency indicators / Reject invalid IANA timezone parameter
- * 测试场景：验证首页看板 summary 与 trends 端点的认证门禁（401）、未建档门禁（409）与非法时区拒绝（400）。
- * 业务背景：看板聚合强依赖已登录会话、单宝宝档案及合法 IANA 时区，任一前置不满足都必须及时返回明确中文错误。
+ * 测试场景：验证首页看板 summary 与 trends 端点的认证门禁（401）、未建档与跨用户越权隔离（404）及非法时区拒绝（400）。
+ * 业务背景：看板聚合严格绑定归属宝宝与合法 IANA 时区，未登录、不存在或他人宝宝 ID 与非法时区均须在入口层明确拦截。
  * 前置数据：
  * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
- * - 管理员与会话：已初始化管理员，具备匿名与已登录两套客户端
- * - 宝宝档案：步骤 1–2 未建档；步骤 3 建档后验证非法时区 400
+ * - 管理员与会话：用户 A（admin）、普通用户 B（已完成改密）及匿名客户端
+ * - 宝宝档案：步骤 1–2 用户 A 未建档；步骤 3 用户 A 建档后验证跨用户 404 与非法时区 400
  * - 前置业务记录：无
  * 测试目标：
- * 1. 验证匿名请求 /api/dashboard/summary 与 /api/dashboard/trends 均返回 401。
- * 2. 验证已登录但未建档请求两接口均返回 409 中文建档提示。
- * 3. 验证建档后携带非法 tz=Invalid/Zone 请求两接口均返回 400 中文错误。
+ * 1. 验证匿名请求 /api/babies/1/dashboard/summary 与 trends 均返回 401。
+ * 2. 验证已登录但未拥有目标宝宝时请求两接口均返回 404。
+ * 3. 验证建档后用户 B 访问用户 A 的宝宝看板返回 404，且携带非法 tz=Invalid/Zone 返回 400 中文错误。
  */
 func TestDashboardAuthOnboardingAndTimezoneGuards(t *testing.T) {
 	t.Parallel()
 
 	app := NewTestApp(t)
 	anon := app.UnauthenticatedClient()
-	client := app.Client()
+	clientA := app.Client()
+	clientB, _ := app.CreateReadyUserViaAdmin("UserB", "userb-init-secret-123", "userb-final-secret-456")
 
 	// 1. 未认证返回 401。
-	anon.Get(t, "/api/dashboard/summary").RequireError(t, http.StatusUnauthorized, "")
-	anon.Get(t, "/api/dashboard/trends").RequireError(t, http.StatusUnauthorized, "")
+	anon.Get(t, babyPath(1, "/dashboard/summary")).RequireError(t, http.StatusUnauthorized, "")
+	anon.Get(t, babyPath(1, "/dashboard/trends")).RequireError(t, http.StatusUnauthorized, "")
 
-	// 2. 已认证但未建档返回 409。
-	client.Get(t, "/api/dashboard/summary").RequireError(t, http.StatusConflict, "建档")
-	client.Get(t, "/api/dashboard/trends").RequireError(t, http.StatusConflict, "建档")
+	// 2. 已认证但无对应归属宝宝返回 404。
+	clientA.Get(t, babyPath(999, "/dashboard/summary")).RequireError(t, http.StatusNotFound, "")
+	clientA.Get(t, babyPath(999, "/dashboard/trends")).RequireError(t, http.StatusNotFound, "")
 
-	// 3. 建档后非法 IANA 时区参数返回 400 中文错误。
-	app.Scenario().EnsureBaby()
-	client.Get(t, "/api/dashboard/summary?tz=Invalid/Zone").RequireError(t, http.StatusBadRequest, "")
-	client.Get(t, "/api/dashboard/trends?tz=Invalid/Zone").RequireError(t, http.StatusBadRequest, "")
+	// 3. 建档后跨用户访问返回 404，且非法 IANA 时区参数返回 400 中文错误。
+	b := app.ScenarioFor(clientA).EnsureBaby()
+	clientB.Get(t, babyPath(b.ID, "/dashboard/summary")).RequireError(t, http.StatusNotFound, "")
+	clientB.Get(t, babyPath(b.ID, "/dashboard/trends")).RequireError(t, http.StatusNotFound, "")
+
+	clientA.Get(t, babyPath(b.ID, "/dashboard/summary?tz=Invalid/Zone")).RequireError(t, http.StatusBadRequest, "")
+	clientA.Get(t, babyPath(b.ID, "/dashboard/trends?tz=Invalid/Zone")).RequireError(t, http.StatusBadRequest, "")
 }

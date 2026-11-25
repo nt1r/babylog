@@ -1,4 +1,4 @@
-// Package vaccines 管理单宝宝的疫苗接种计划、国家免疫规划内置知识库、
+// Package vaccines 管理各宝宝的疫苗接种计划、国家免疫规划内置知识库、
 // 预计日期推算、派生提醒状态、预约与接种记录持久化。
 package vaccines
 
@@ -140,7 +140,7 @@ type Summary struct {
 	NextFocus             *NextFocus `json:"next_focus"`
 }
 
-// OverviewResponse 表示 GET /api/vaccines 的完整响应体。
+// OverviewResponse 表示 GET /api/babies/:babyId/vaccines 的完整响应体。
 type OverviewResponse struct {
 	Today             string     `json:"today"`
 	BirthDate         string     `json:"birth_date"`
@@ -172,7 +172,7 @@ type CatalogItem struct {
 	Doses          []CatalogDoseItem `json:"doses"`
 }
 
-// CatalogResponse 表示 GET /api/vaccines/catalog 的响应体。
+// CatalogResponse 表示 GET /api/babies/:babyId/vaccines/catalog 的响应体。
 type CatalogResponse struct {
 	Disclaimer string        `json:"disclaimer"`
 	Templates  []CatalogItem `json:"templates"`

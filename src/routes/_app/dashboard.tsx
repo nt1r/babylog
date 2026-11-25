@@ -18,7 +18,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useOneTapRecord } from '@/hooks/use-one-tap-record';
-import { useBabyProfileQuery } from '@/lib/baby';
+import { useActiveBaby } from '@/lib/baby';
 import { RECORD_CATEGORY_META } from '@/lib/categories';
 import {
   buildDashboardKpiCards,
@@ -144,14 +144,14 @@ function DashboardPage() {
     return () => window.clearInterval(timer);
   }, []);
 
-  const babyQuery = useBabyProfileQuery();
+  const { activeBaby } = useActiveBaby();
   const summaryQuery = useDashboardSummaryQuery();
   const trendsQuery = useDashboardTrendsQuery(7);
   const defaultsQuery = useSmartDefaultsQuery();
   // 与 60 秒轮询解耦：设置 5 分钟缓存，首次访问自动触发国家免疫规划懒初始化，疫苗变更后由 mutation 精确失效。
   const vaccinesQuery = useVaccinesOverviewQuery(true, VACCINE_OVERVIEW_STALE_MS);
 
-  const baby = babyQuery.data;
+  const baby = activeBaby;
   const summary = summaryQuery.data;
   const trends = trendsQuery.data;
   const vaccines = vaccinesQuery.data;

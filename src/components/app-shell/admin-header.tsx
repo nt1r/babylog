@@ -1,5 +1,6 @@
 import { Link, useRouterState } from '@tanstack/react-router';
 import { PlusIcon, Search } from 'lucide-react';
+import { BabySwitcher } from '@/components/app-shell/baby-switcher';
 import { getShortcutModifierSymbol } from '@/components/app-shell/command-palette';
 import { ThemeSwitcher } from '@/components/app-shell/theme-switcher';
 import { UserMenu } from '@/components/app-shell/user-menu';
@@ -16,27 +17,32 @@ import { Kbd } from '@/components/ui/kbd';
 import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { findNavItemByPath, openContextualCreate } from '@/navigation/menu';
+import { useActiveBabyId } from '@/lib/baby';
+import { findNavItemByPath, isAccountLevelRoute, openContextualCreate } from '@/navigation/menu';
 import { useCommandPaletteStore } from '@/stores/command-palette';
 
 export function AdminHeader() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const openCommandPalette = useCommandPaletteStore((state) => state.setOpen);
+  const activeBabyId = useActiveBabyId();
   const currentItem = findNavItemByPath(pathname);
-  // 记录列表页（含生长发育页）自身卡片头部已提供带子类型上下文的主按钮，避免桌面端上下双主色按钮重复。
-  const showGlobalQuickRecord = !currentItem?.category && currentItem?.id !== 'growth';
+  // 仅在拥有宝宝档案且位于非列表/非账号级页面时展示顶栏「记一笔」，避免列表页双主按钮或无娃态误触发。
+  const showGlobalQuickRecord =
+    activeBabyId !== null && !isAccountLevelRoute(pathname) && !currentItem?.category && currentItem?.id !== 'growth';
   const modSymbol = getShortcutModifierSymbol();
 
   return (
     <header className="sticky top-0 z-10 shrink-0 border-b border-border/75 bg-background/85 pt-[env(safe-area-inset-top)] backdrop-blur-md md:rounded-t-2xl md:pt-0">
-      <div className="flex h-14 items-center justify-between gap-3 px-4 md:px-6">
-        <div className="flex min-w-0 items-center gap-2.5">
+      <div className="flex h-14 items-center justify-between gap-2 px-4 md:gap-3 md:px-6">
+        <div className="flex min-w-0 items-center gap-2 md:gap-2.5">
           <SidebarTrigger />
           <Separator orientation="vertical" className="h-4" />
           <Breadcrumb className="min-w-0">
             <BreadcrumbList>
               <BreadcrumbItem className="hidden sm:inline-flex">
-                <BreadcrumbLink render={<Link to="/dashboard" />}>BabyLog</BreadcrumbLink>
+                <BreadcrumbLink render={<Link to={activeBabyId !== null ? '/dashboard' : '/settings'} />}>
+                  BabyLog
+                </BreadcrumbLink>
               </BreadcrumbItem>
               <BreadcrumbSeparator className="hidden sm:inline-flex" />
               <BreadcrumbItem>
@@ -44,6 +50,7 @@ export function AdminHeader() {
               </BreadcrumbItem>
             </BreadcrumbList>
           </Breadcrumb>
+          <BabySwitcher variant="header" />
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">

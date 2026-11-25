@@ -1,6 +1,6 @@
-import { createFileRoute, Navigate, useNavigate } from '@tanstack/react-router';
+import { createFileRoute, Link, Navigate, useNavigate } from '@tanstack/react-router';
 import { format } from 'date-fns';
-import { AlertCircle, Baby, ChevronDown, ChevronUp } from 'lucide-react';
+import { AlertCircle, Baby, ChevronDown, ChevronUp, Settings2, Users } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
 import { ThemeSwitcher } from '@/components/app-shell/theme-switcher';
 import { BrandMark } from '@/components/brand/brand-mark';
@@ -18,7 +18,7 @@ import {
   BABY_GENDER_LABELS,
   type BabyFormValidationErrors,
   type BabyGender,
-  useBabyProfileQuery,
+  useBabiesQuery,
   useCreateBabyMutation,
   validateBabyProfileForm,
 } from '@/lib/baby';
@@ -39,7 +39,7 @@ function OnboardingPage() {
   const user = useAuthStore((state) => state.user);
   const restoring = useAuthStore((state) => state.restoring);
 
-  const babyQuery = useBabyProfileQuery(Boolean(user) && !restoring);
+  const babiesQuery = useBabiesQuery(Boolean(user) && !restoring && !user?.must_change_password);
   const createBaby = useCreateBabyMutation();
 
   const todayStr = format(new Date(), 'yyyy-MM-dd');
@@ -56,7 +56,7 @@ function OnboardingPage() {
     document.title = '创建宝宝档案 · BabyLog';
   }, []);
 
-  if (restoring || (user && babyQuery.isLoading)) {
+  if (restoring || (user && !user.must_change_password && babiesQuery.isLoading)) {
     return (
       <div className="flex min-h-svh items-center justify-center bg-background">
         <Spinner className="size-6 text-primary" />
@@ -68,7 +68,11 @@ function OnboardingPage() {
     return <Navigate to="/login" search={{ redirect: '/onboarding' }} replace />;
   }
 
-  if (babyQuery.data) {
+  if (user.must_change_password) {
+    return <Navigate to="/change-password" replace />;
+  }
+
+  if (babiesQuery.data && babiesQuery.data.length > 0) {
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -105,14 +109,26 @@ function OnboardingPage() {
 
   return (
     <div className="mx-auto flex min-h-svh max-w-[1360px] flex-col px-5 pt-[calc(env(safe-area-inset-top)+1.5rem)] pb-[calc(env(safe-area-inset-bottom)+1.5rem)] sm:px-10 md:px-16 md:pt-9">
-      <header className="flex items-center justify-between">
+      <header className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-3 text-primary">
           <BrandMark className="size-9" />
           <span className="text-xl leading-none font-bold tracking-tight text-foreground">
             Baby<span className="font-medium">Log</span>
           </span>
         </div>
-        <ThemeSwitcher showTooltip={false} />
+        <div className="flex items-center gap-1.5">
+          {user.role === 'admin' ? (
+            <Button variant="ghost" size="sm" render={<Link to="/admin/users" />} nativeButton={false}>
+              <Users className="size-4" />
+              <span className="hidden sm:inline">用户管理</span>
+            </Button>
+          ) : null}
+          <Button variant="ghost" size="sm" render={<Link to="/settings" />} nativeButton={false}>
+            <Settings2 className="size-4" />
+            <span className="hidden sm:inline">偏好与账号</span>
+          </Button>
+          <ThemeSwitcher showTooltip={false} />
+        </div>
       </header>
 
       <main className="mx-auto grid w-full max-w-[1040px] flex-1 grid-cols-1 items-center gap-10 py-6 md:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] md:gap-14">
@@ -148,6 +164,7 @@ function OnboardingPage() {
                     id="baby-nickname"
                     value={nickname}
                     maxLength={32}
+                    disabled={createBaby.isPending}
                     placeholder="例如：小汤圆、团子"
                     aria-invalid={Boolean(fieldErrors.nickname)}
                     onChange={(event) => {
@@ -165,6 +182,7 @@ function OnboardingPage() {
                     captionLayout="dropdown"
                     max={todayStr}
                     value={birthDate}
+                    disabled={createBaby.isPending}
                     invalid={Boolean(fieldErrors.birthDate)}
                     ariaLabel="出生日期"
                     drawerTitle="宝宝出生日期"
@@ -183,6 +201,7 @@ function OnboardingPage() {
                       <ChoiceCardButton
                         key={option.value}
                         active={gender === option.value}
+                        disabled={createBaby.isPending}
                         onClick={() => setGender(option.value)}
                         className="h-auto flex-col gap-0.5 py-2.5 text-center"
                       >
@@ -196,8 +215,9 @@ function OnboardingPage() {
                 <div>
                   <button
                     type="button"
+                    disabled={createBaby.isPending}
                     onClick={() => setShowOptional((v) => !v)}
-                    className="inline-flex cursor-pointer items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+                    className="inline-flex cursor-pointer items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
                   >
                     {showOptional ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
                     补充出生体重与身高（可选）
@@ -214,6 +234,7 @@ function OnboardingPage() {
                           min="0.3"
                           max="15"
                           inputMode="decimal"
+                          disabled={createBaby.isPending}
                           placeholder="如 3.35"
                           className="tabular-nums"
                           aria-invalid={Boolean(fieldErrors.birthWeight)}
@@ -236,6 +257,7 @@ function OnboardingPage() {
                           min="20"
                           max="100"
                           inputMode="decimal"
+                          disabled={createBaby.isPending}
                           placeholder="如 50.0"
                           className="tabular-nums"
                           aria-invalid={Boolean(fieldErrors.birthHeight)}

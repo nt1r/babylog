@@ -21,8 +21,10 @@ import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, u
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Kbd } from '@/components/ui/kbd';
 import { toast } from '@/components/ui/toast';
+import { useActiveBabyId } from '@/lib/baby';
 import { cn } from '@/lib/utils';
-import { NAV_GROUPS, openContextualCreate } from '@/navigation/menu';
+import { getVisibleNavGroups, openContextualCreate } from '@/navigation/menu';
+import { useAuthStore } from '@/stores/auth';
 import { useCommandPaletteStore } from '@/stores/command-palette';
 import { useGrowthRecordStore } from '@/stores/growth-record';
 import { usePreferencesStore } from '@/stores/preferences';
@@ -74,6 +76,8 @@ export function CommandPalette() {
 
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const user = useAuthStore((state) => state.user);
+  const activeBabyId = useActiveBabyId();
   const openQuickCreate = useQuickRecordStore((state) => state.openCreate);
   const openGrowthCreate = useGrowthRecordStore((state) => state.openCreate);
   const setThemeMode = usePreferencesStore((state) => state.setThemeMode);
@@ -98,7 +102,7 @@ export function CommandPalette() {
       }
 
       if (!mod && !event.altKey && !event.shiftKey && key === 'n') {
-        if (isEditableTarget(event.target) || hasOpenOverlay()) return;
+        if (activeBabyId === null || isEditableTarget(event.target) || hasOpenOverlay()) return;
         event.preventDefault();
         openContextualCreate(pathname);
       }
@@ -106,7 +110,7 @@ export function CommandPalette() {
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [open, toggle, pathname]);
+  }, [open, toggle, pathname, activeBabyId]);
 
   useEffect(() => {
     if (!open) return;
@@ -210,7 +214,7 @@ export function CommandPalette() {
       },
     ];
 
-    const navItems: CommandActionItem[] = NAV_GROUPS.flatMap((group) =>
+    const navItems: CommandActionItem[] = getVisibleNavGroups(user?.role).flatMap((group) =>
       group.items.map((item) => ({
         id: `nav-${item.id}`,
         group: '页面导航' as const,
@@ -263,8 +267,8 @@ export function CommandPalette() {
       },
     ];
 
-    return [...quickItems, ...navItems, ...themeItems];
-  }, [navigate, openQuickCreate, openGrowthCreate, setThemeMode]);
+    return [...(activeBabyId !== null ? quickItems : []), ...navItems, ...themeItems];
+  }, [activeBabyId, user?.role, navigate, openQuickCreate, openGrowthCreate, setThemeMode]);
 
   const filteredItems = useMemo(() => {
     const q = query.trim().toLowerCase();

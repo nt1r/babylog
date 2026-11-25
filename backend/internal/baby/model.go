@@ -1,4 +1,4 @@
-// Package baby 管理单宝宝档案的领域模型、输入校验与 SQLite 持久化。
+// Package baby 管理按用户归属的多宝宝档案领域模型、输入校验与 SQLite 持久化。
 package baby
 
 import (
@@ -12,16 +12,17 @@ import (
 )
 
 const (
-	// 宝宝档案文本长度（按 Unicode 字符数计）与出生体格合法区间边界。
+	// 宝宝档案文本长度（按 Unicode 字符数计）、体格区间与单用户档案数上限边界。
 	MaxNicknameLength   = 32
 	MaxClinicNameLength = 80
 	MinBirthWeightKg    = 0.3
 	MaxBirthWeightKg    = 15.0
 	MinBirthHeightCm    = 20.0
 	MaxBirthHeightCm    = 100.0
+	maxBabiesPerUser    = 10
 )
 
-// ValidationError 表示宝宝档案输入不符合业务规则，映射为 HTTP 400。
+// ValidationError 表示宝宝档案输入或数量上限不符合业务规则，映射为 HTTP 400。
 type ValidationError struct {
 	Message string
 }
@@ -29,17 +30,15 @@ type ValidationError struct {
 // Error 实现内置 error 接口，返回可直接展示给前端的中文校验提示。
 func (e *ValidationError) Error() string { return e.Message }
 
-// ErrAlreadyExists 表示已存在宝宝档案，单宝宝模式拒绝重复创建（映射 HTTP 409）。
-var ErrAlreadyExists = errors.New("已存在宝宝档案，请直接修改现有信息")
-
-// ErrNotFound 表示尚未创建宝宝档案（映射 HTTP 404 或记录接口前置 409）。
-var ErrNotFound = errors.New("请先完成宝宝建档")
+// ErrNotFound 表示目标宝宝档案不存在或不属于当前登录用户（统一映射 HTTP 404 防枚举）。
+var ErrNotFound = errors.New("宝宝档案不存在")
 
 // Profile 对应 SQLite 中的 baby_profiles 表。
-// 可选测量字段使用指针类型 *float64 而非 float64：Go 中普通 float64 零值为 0.0 无法表示“未填写”，
-// 使用指针才能准确区分 nil（数据库 NULL / JSON null）与有效数值。
+// UserID 仅用于服务端数据归属与越权隔离，不对外序列化；
+// 可选测量字段使用指针类型 *float64 区分未填写（NULL）与有效数值。
 type Profile struct {
 	ID                int64    `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	UserID            int64    `gorm:"column:user_id;not null;index" json:"-"`
 	Nickname          string   `gorm:"column:nickname;not null" json:"nickname"`
 	BirthDate         string   `gorm:"column:birth_date;not null" json:"birth_date"`
 	Gender            string   `gorm:"column:gender;not null" json:"gender"`
@@ -97,12 +96,10 @@ func ValidateAndNormalize(in UpsertInput, now time.Time, loc *time.Location) (Up
 	if err != nil {
 		return UpsertInput{}, &ValidationError{Message: "出生日期格式应为 YYYY-MM-DD"}
 	}
-	// YYYY-MM-DD 格式的字典序与自然日先后严格一致，可直接按字符串比较是否为未来日期。
 	todayStr := timeutil.LocalDateKey(now, loc)
 	if birthDate > todayStr {
 		return UpsertInput{}, &ValidationError{Message: "出生日期不能晚于今天"}
 	}
-	// 防止明显不合理的过早年份（例如早于 1900 年）。
 	if parsedDate.Year() < 1900 {
 		return UpsertInput{}, &ValidationError{Message: "出生日期不合理，请重新选择"}
 	}
@@ -114,7 +111,6 @@ func ValidateAndNormalize(in UpsertInput, now time.Time, loc *time.Location) (Up
 		return UpsertInput{}, &ValidationError{Message: "请选择有效的宝宝性别"}
 	}
 
-	// 可选浮点数须先拦截 NaN / Inf（防止非法浮点绕过区间比较），再按业务精度四舍五入。
 	var weight *float64
 	if in.BirthWeightKg != nil {
 		v := *in.BirthWeightKg

@@ -1,4 +1,4 @@
-// Package httpapi 装配 Gin HTTP 引擎、安全中间件、认证接口、核心业务接口及静态前端托管。
+// Package httpapi 装配 Gin HTTP 引擎、安全中间件、认证接口、管理员用户管理、多宝宝业务接口及静态前端托管。
 package httpapi
 
 import (
@@ -18,6 +18,8 @@ import (
 // Options 控制 HTTP 路由装配所需的依赖与运行参数。
 type Options struct {
 	Store           *auth.Store
+	LoginGuard      *auth.LoginGuard
+	CookieSecure    bool
 	BabyStore       *baby.Store
 	RecordStore     *records.Store
 	DashboardSvc    *dashboard.Service
@@ -27,28 +29,29 @@ type Options struct {
 	Logger          *slog.Logger
 }
 
-// NewRouter 装配 Gin 引擎、安全中间件、认证、宝宝档案、日常记录、首页看板、疫苗管理与静态前端回退处理。
+// NewRouter 装配 Gin 引擎、安全中间件、认证、管理员用户管理、多宝宝档案、日常记录、首页看板、疫苗管理与静态前端回退处理。
 // 调用方应在进程启动入口（而非路由构造函数内）设置 gin.SetMode，避免全局状态并发竞争。
 func NewRouter(opts Options) *gin.Engine {
-	// 未传入 Logger 时回退到 slog.DiscardHandler（静默丢弃日志），便于测试环境复用而无需到处判空。
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
 
 	r := gin.New()
-	// 关闭自动重定向与路径改写，确保路径穿越拦截与 REST 状态码语义精确可控。
 	r.RedirectTrailingSlash = false
 	r.RedirectFixedPath = false
 	r.RemoveExtraSlash = false
 	r.HandleMethodNotAllowed = true
 
-	// 全局中间件按洋葱模型依次包裹：最外层捕获 panic → 统计全链路访问日志与耗时 → 校验 API 缓存与同源安全。
 	r.Use(recoveryMiddleware(logger))
 	r.Use(requestLoggerMiddleware(logger))
 	r.Use(apiSecurityMiddleware())
 
-	authH := newAuthHandler(opts.Store, logger)
+	loginGuard := opts.LoginGuard
+	if loginGuard == nil {
+		loginGuard = auth.NewLoginGuard()
+	}
+	authH := newAuthHandler(opts.Store, loginGuard, opts.CookieSecure, logger)
 	staticH := newStaticHandler(opts.DistDir, opts.FallbackDistDir, logger)
 
 	api := r.Group("/api")
@@ -59,36 +62,49 @@ func NewRouter(opts Options) *gin.Engine {
 		authGroup.POST("/login", authH.login)
 		authGroup.POST("/logout", authH.logout)
 
-		// 受保护路由组：统一要求管理员已登录；业务子模块按依赖是否注入条件挂载，便于单元测试局部装配。
+		// 已认证路由组：允许处于强制改密态的用户完成自助改密。
 		protected := api.Group("")
-		protected.Use(requireAuthMiddleware(opts.Store, logger))
+		protected.Use(requireAuthMiddleware(opts.Store, logger, opts.CookieSecure))
 		{
-			if opts.BabyStore != nil {
-				babyH := newBabyHandler(opts.BabyStore, logger)
-				protected.GET("/baby", babyH.getProfile)
-				protected.POST("/baby", babyH.createProfile)
-				protected.PUT("/baby", babyH.updateProfile)
+			protected.POST("/auth/change-password", authH.changePassword)
 
-				// 日常记录、首页看板与疫苗管理均依赖宝宝档案，挂载 requireBabyProfileMiddleware 未建档时统一前置返回 409。
-				if opts.RecordStore != nil {
-					recH := newRecordsHandler(opts.RecordStore, logger)
-					recGroup := protected.Group("/records", requireBabyProfileMiddleware(opts.BabyStore, logger))
-					recH.registerRoutes(recGroup)
-				}
+			// 业务与管理路由组：统一要求已完成初始密码修改（must_change_password = false）。
+			ready := protected.Group("")
+			ready.Use(requirePasswordChangedMiddleware())
+			{
+				adminUsersH := newAdminUsersHandler(opts.Store, loginGuard, logger)
+				adminGroup := ready.Group("/admin/users", requireAdminMiddleware())
+				adminUsersH.registerRoutes(adminGroup)
 
-				if opts.DashboardSvc != nil {
-					dashH := newDashboardHandler(opts.DashboardSvc, logger)
-					dashGroup := protected.Group("/dashboard", requireBabyProfileMiddleware(opts.BabyStore, logger))
-					dashGroup.GET("/summary", dashH.getSummary)
-					dashGroup.GET("/trends", dashH.getTrends)
-				}
+				if opts.BabyStore != nil {
+					babyH := newBabyHandler(opts.BabyStore, logger)
+					ready.GET("/babies", babyH.listProfiles)
+					ready.POST("/babies", babyH.createProfile)
+					ready.PUT("/babies/:babyId", babyH.updateProfile)
+					ready.DELETE("/babies/:babyId", babyH.deleteProfile)
 
-				if opts.VaccineStore != nil {
-					vacH := newVaccinesHandler(opts.VaccineStore, logger)
-					vacGroup := protected.Group("/vaccines", requireBabyProfileMiddleware(opts.BabyStore, logger))
-					// 路径归属疫苗工作区以便行内设置常去门诊，底层字段归属单宝宝档案，故直接由 babyH 承接。
-					vacGroup.PUT("/default-clinic", babyH.updateDefaultClinic)
-					vacH.registerRoutes(vacGroup)
+					// 宝宝作用域业务路由组：统一按 (babyId, user.ID) 校验归属，未命中返回 404 防枚举。
+					babyGroup := ready.Group("/babies/:babyId", requireBabyOwnershipMiddleware(opts.BabyStore, logger))
+					{
+						if opts.RecordStore != nil {
+							recH := newRecordsHandler(opts.RecordStore, logger)
+							recH.registerRoutes(babyGroup.Group("/records"))
+						}
+
+						if opts.DashboardSvc != nil {
+							dashH := newDashboardHandler(opts.DashboardSvc, logger)
+							dashGroup := babyGroup.Group("/dashboard")
+							dashGroup.GET("/summary", dashH.getSummary)
+							dashGroup.GET("/trends", dashH.getTrends)
+						}
+
+						if opts.VaccineStore != nil {
+							vacH := newVaccinesHandler(opts.VaccineStore, logger)
+							vacGroup := babyGroup.Group("/vaccines")
+							vacGroup.PUT("/default-clinic", babyH.updateDefaultClinic)
+							vacH.registerRoutes(vacGroup)
+						}
+					}
 				}
 			}
 		}
@@ -98,7 +114,6 @@ func NewRouter(opts Options) *gin.Engine {
 		c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "不支持此请求方法"})
 	})
 
-	// 未命中已注册路由时：/api/* 一律返回 404 JSON，避免错路由误回退到前端 index.html；其余路径交给静态托管与 SPA 回退。
 	r.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "接口不存在"})

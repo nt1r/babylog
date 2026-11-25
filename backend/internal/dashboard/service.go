@@ -68,7 +68,7 @@ type CareSummary struct {
 	LastDiaperAt *string `json:"last_diaper_at"`
 }
 
-// SummaryResponse 表示 GET /api/dashboard/summary 的完整响应体。
+// SummaryResponse 表示 GET /api/babies/:babyId/dashboard/summary 的完整响应体。
 type SummaryResponse struct {
 	Date    string         `json:"date"`
 	Feeding FeedingSummary `json:"feeding"`
@@ -94,7 +94,7 @@ type SlotDistributionPoint struct {
 	Count int    `json:"count"`
 }
 
-// TrendsResponse 表示 GET /api/dashboard/trends 的完整响应体。
+// TrendsResponse 表示 GET /api/babies/:babyId/dashboard/trends 的完整响应体。
 type TrendsResponse struct {
 	Daily []DailyTrendPoint       `json:"daily"`
 	Slots []SlotDistributionPoint `json:"slots"`

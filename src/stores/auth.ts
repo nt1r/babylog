@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { fetchSession, loginWithCredentials, logoutSession, type User } from '@/lib/auth';
+import { resetClientSessionState } from '@/lib/session-reset';
 
 interface AuthState {
   user: User | null;
@@ -24,7 +25,7 @@ function cancelActiveRestore() {
   activeRestorePromise = null;
 }
 
-/** 管理员认证会话 Zustand Store，内置在途恢复请求取消与版本号防竞态机制。 */
+/** 账号认证会话 Zustand Store，内置在途恢复请求取消、版本号防竞态与切号清态机制。 */
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   initialized: false,
@@ -33,8 +34,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   restoreError: '',
 
   setUser: (user) => {
+    const prevUser = get().user;
     authRevision += 1;
     cancelActiveRestore();
+    if (!user || (prevUser && prevUser.id !== user.id)) {
+      resetClientSessionState();
+    }
     set({ user, initialized: true, restoring: false, restoreFailed: false, restoreError: '' });
   },
 
@@ -50,6 +55,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       .then((user) => {
         if (controller.signal.aborted || currentRevision !== authRevision) {
           return get().user;
+        }
+        const prevUser = get().user;
+        if (prevUser && (!user || prevUser.id !== user.id)) {
+          resetClientSessionState();
         }
         set({ user, initialized: true, restoring: false, restoreFailed: false, restoreError: '' });
         return user;
@@ -87,6 +96,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     cancelActiveRestore();
     const user = await loginWithCredentials(username, password);
     authRevision += 1;
+    // 登录成功切换至全新会话前彻底清空缓存、当前选中宝宝与录入抽屉，阻断跨账号残留。
+    resetClientSessionState();
     set({ user, initialized: true, restoring: false, restoreFailed: false, restoreError: '' });
     return user;
   },
@@ -97,6 +108,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     cancelActiveRestore();
     await logoutSession();
     authRevision += 1;
+    resetClientSessionState();
     set({ user: null, initialized: true, restoring: false, restoreFailed: false, restoreError: '' });
   },
 }));
