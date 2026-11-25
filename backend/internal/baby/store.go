@@ -156,3 +156,34 @@ func (s *Store) UpdateDefaultClinic(ctx context.Context, babyID int64, rawClinic
 	}
 	return clinicName, nil
 }
+
+// SyncDefaultClinicTx 在调用方既有 SQLite 事务内原子同步宝宝的常去接种门诊名称：
+// 内部经 [ValidateClinicName] 完成裁剪与长度校验，空串直接跳过；
+// 显式置顶（explicitPin）时直接覆写；否则仅在允许自动记忆（如非产院常规社区剂次）且档案尚无默认门诊时补写，
+// 保证首次常规门诊自动生效，同时产院补录与偶发去其他医院不会覆盖已固定的常去门诊。
+func SyncDefaultClinicTx(tx *gorm.DB, babyID int64, clinicName string, explicitPin bool, allowAutoRemember bool, nowStr string) error {
+	normClinic, err := ValidateClinicName(clinicName)
+	if err != nil {
+		return err
+	}
+	if normClinic == "" {
+		return nil
+	}
+	if explicitPin {
+		return tx.Model(&Profile{}).
+			Where("id = ?", babyID).
+			Updates(map[string]any{
+				"default_clinic_name": normClinic,
+				"updated_at":          nowStr,
+			}).Error
+	}
+	if !allowAutoRemember {
+		return nil
+	}
+	return tx.Model(&Profile{}).
+		Where("id = ? AND default_clinic_name = ''", babyID).
+		Updates(map[string]any{
+			"default_clinic_name": normClinic,
+			"updated_at":          nowStr,
+		}).Error
+}

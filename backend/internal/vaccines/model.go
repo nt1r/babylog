@@ -30,10 +30,9 @@ const (
 	PendingDueSoonWindowDays = 14
 	ScheduledSoonWindowDays  = 7
 
-	// 批量操作剂次上限、字段长度上限与排期边界常量。
+	// 批量操作剂次上限、字段长度上限与排期边界常量（接种地点长度复用 baby.MaxClinicNameLength）。
 	MaxBatchDoseCount  = 30
 	MaxNameLength      = 60
-	MaxClinicLength    = 80
 	MaxSiteLength      = 32
 	MaxMakerLength     = 60
 	MaxBatchNoLength   = 60

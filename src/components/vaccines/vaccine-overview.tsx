@@ -23,6 +23,7 @@ import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { Spinner } from '@/components/ui/spinner';
 import { VaccineCalendar } from '@/components/vaccines/vaccine-calendar';
+import { type BirthConfirmItem, getDefaultBirthDoseDate } from '@/components/vaccines/vaccine-codec';
 import { cn } from '@/lib/utils';
 import {
   formatDaysUntilLabel,
@@ -33,11 +34,6 @@ import {
   type VaccineOverviewResponse,
   type VaccineStatusFilter,
 } from '@/lib/vaccines';
-
-export interface BirthConfirmItem {
-  readonly dose: VaccineDose;
-  readonly vaccinatedAt: string;
-}
 
 interface VaccineOverviewProps {
   readonly overview: VaccineOverviewResponse;
@@ -57,18 +53,6 @@ interface VaccineOverviewProps {
     defaultClinic?: string,
   ) => void;
   readonly onSelectStatusFilter?: (filter: VaccineStatusFilter) => void;
-}
-
-/** 根据出生日期推导卡介苗默认接种日（常规为出生次日，若今天即出生当天则取出生当天）。 */
-function getDefaultBirthDoseDate(dose: VaccineDose, birthDate: string, today: string): string {
-  if (dose.template_code !== 'bcg') {
-    return birthDate;
-  }
-  const [y, m, d] = birthDate.split('-').map(Number);
-  if (!y || !m || !d) return birthDate;
-  const next = new Date(Date.UTC(y, m - 1, d + 1));
-  const nextKey = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-${String(next.getUTCDate()).padStart(2, '0')}`;
-  return nextKey <= today ? nextKey : birthDate;
 }
 
 /** 疫苗页首屏总览区：精简风险声明、产院疫苗确认，以及「直观接种日历 + 下次接种与进度」双栏视图。 */

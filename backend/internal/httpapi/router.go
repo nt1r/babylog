@@ -68,26 +68,28 @@ func NewRouter(opts Options) *gin.Engine {
 				protected.GET("/baby", babyH.getProfile)
 				protected.POST("/baby", babyH.createProfile)
 				protected.PUT("/baby", babyH.updateProfile)
-			}
 
-			// 日常记录、首页看板与疫苗管理额外挂载 requireBabyProfileMiddleware，未建档时统一前置返回 409。
-			if opts.BabyStore != nil && opts.RecordStore != nil {
-				recH := newRecordsHandler(opts.RecordStore, logger)
-				recGroup := protected.Group("/records", requireBabyProfileMiddleware(opts.BabyStore, logger))
-				recH.registerRoutes(recGroup)
-			}
+				// 日常记录、首页看板与疫苗管理均依赖宝宝档案，挂载 requireBabyProfileMiddleware 未建档时统一前置返回 409。
+				if opts.RecordStore != nil {
+					recH := newRecordsHandler(opts.RecordStore, logger)
+					recGroup := protected.Group("/records", requireBabyProfileMiddleware(opts.BabyStore, logger))
+					recH.registerRoutes(recGroup)
+				}
 
-			if opts.BabyStore != nil && opts.DashboardSvc != nil {
-				dashH := newDashboardHandler(opts.DashboardSvc, logger)
-				dashGroup := protected.Group("/dashboard", requireBabyProfileMiddleware(opts.BabyStore, logger))
-				dashGroup.GET("/summary", dashH.getSummary)
-				dashGroup.GET("/trends", dashH.getTrends)
-			}
+				if opts.DashboardSvc != nil {
+					dashH := newDashboardHandler(opts.DashboardSvc, logger)
+					dashGroup := protected.Group("/dashboard", requireBabyProfileMiddleware(opts.BabyStore, logger))
+					dashGroup.GET("/summary", dashH.getSummary)
+					dashGroup.GET("/trends", dashH.getTrends)
+				}
 
-			if opts.BabyStore != nil && opts.VaccineStore != nil {
-				vacH := newVaccinesHandler(opts.VaccineStore, opts.BabyStore, logger)
-				vacGroup := protected.Group("/vaccines", requireBabyProfileMiddleware(opts.BabyStore, logger))
-				vacH.registerRoutes(vacGroup)
+				if opts.VaccineStore != nil {
+					vacH := newVaccinesHandler(opts.VaccineStore, logger)
+					vacGroup := protected.Group("/vaccines", requireBabyProfileMiddleware(opts.BabyStore, logger))
+					// 路径归属疫苗工作区以便行内设置常去门诊，底层字段归属单宝宝档案，故直接由 babyH 承接。
+					vacGroup.PUT("/default-clinic", babyH.updateDefaultClinic)
+					vacH.registerRoutes(vacGroup)
+				}
 			}
 		}
 	}

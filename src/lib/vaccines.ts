@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '@/lib/http';
+import type { exportVaccineVisitIcs } from '@/lib/ics';
 import { BABY_QUERY_KEY, VACCINE_CATALOG_QUERY_KEY, VACCINES_QUERY_KEY } from '@/lib/query-client';
 import { getBrowserTimeZone } from '@/lib/time';
 
@@ -112,14 +113,19 @@ export interface DosePlanInput {
   planned_date: string | null;
 }
 
-interface CreateCustomVaccineInput {
+export interface AddVaccineTemplateInput {
+  templateCode: string;
+  doses?: DosePlanInput[];
+}
+
+export interface CreateCustomVaccineInput {
   vaccine_name: string;
   category: VaccineCategory;
   note: string;
   doses: DosePlanInput[];
 }
 
-interface UpdateVaccineDoseInput {
+export interface UpdateVaccineDoseInput {
   status: VaccineStatus;
   age_months?: number;
   planned_date: string | null;
@@ -135,7 +141,7 @@ interface UpdateVaccineDoseInput {
   note: string;
 }
 
-interface BatchVaccineInput {
+export interface BatchVaccineInput {
   action: 'schedule' | 'complete';
   dose_ids: number[];
   scheduled_date?: string | null;
@@ -517,6 +523,72 @@ export function buildVaccineCalendarMonth(
   return { cells, monthDoses };
 }
 
+interface CalendarExportTarget {
+  readonly date: string;
+  readonly doses: readonly VaccineDose[];
+  readonly isFallbackFocus: boolean;
+}
+
+/**
+ * 解析接种日历「导出日历 (.ics)」对应的目标日期与未完成剂次：
+ * 1. 已显式点选某日 → 仅导出当天未完成剂次（当天无可导出项则返回 null 禁用按钮，避免静默跨月导出）；
+ * 2. 未点选具体日期 → 优先导出当月最早一天的未完成剂次；当月全空时回退至下一次接种焦点并标记 isFallbackFocus。
+ */
+export function resolveCalendarExportTarget(params: {
+  readonly selectedDateKey: string | null;
+  readonly selectedDayDoses: readonly VaccineDose[];
+  readonly monthDoses: readonly VaccineDose[];
+  readonly nextFocus: VaccineNextFocus | null;
+  readonly allDoses: readonly VaccineDose[];
+}): CalendarExportTarget | null {
+  if (params.selectedDateKey) {
+    const pendingOnSelected = params.selectedDayDoses.filter((d) => d.status !== 'completed');
+    if (pendingOnSelected.length > 0) {
+      return { date: params.selectedDateKey, doses: pendingOnSelected, isFallbackFocus: false };
+    }
+    return null;
+  }
+
+  const pendingInMonth = params.monthDoses.filter((d) => d.status !== 'completed');
+  if (pendingInMonth.length > 0) {
+    const firstDate = pendingInMonth[0].effective_date;
+    return {
+      date: firstDate,
+      doses: pendingInMonth.filter((d) => d.effective_date === firstDate),
+      isFallbackFocus: false,
+    };
+  }
+
+  if (params.nextFocus) {
+    const focusDoses = params.allDoses.filter((d) => params.nextFocus?.dose_ids.includes(d.id));
+    if (focusDoses.length > 0) {
+      return { date: params.nextFocus.target_date, doses: focusDoses, isFallbackFocus: true };
+    }
+  }
+  return null;
+}
+
+/** 将已解析的日历导出目标组装为 exportVaccineVisitIcs 所需的导出选项。 */
+export function buildCalendarIcsOptions(
+  target: CalendarExportTarget,
+  defaultClinicName: string,
+  babyNickname?: string,
+): Parameters<typeof exportVaccineVisitIcs>[0] {
+  const lead = target.doses[0];
+  const scheduledTime = target.doses.find((d) => d.status === 'scheduled' && d.scheduled_time)?.scheduled_time;
+  const clinicName = target.doses.find((d) => d.clinic_name)?.clinic_name || defaultClinicName.trim();
+
+  return {
+    uidSeed: `cal-${target.date}-${target.doses.map((d) => d.id).join('-')}`,
+    babyNickname,
+    date: target.date,
+    time: scheduledTime || undefined,
+    location: clinicName || undefined,
+    stageLabel: lead?.age_label,
+    doses: target.doses,
+  };
+}
+
 // --- API 请求与 TanStack Query Hooks ---
 
 async function fetchVaccinesOverview(signal?: AbortSignal): Promise<VaccineOverviewResponse> {
@@ -548,7 +620,7 @@ export function useVaccineCatalogQuery(enabled = true) {
 export function useAddVaccineTemplateMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (params: { templateCode: string; doses?: DosePlanInput[] }) => {
+    mutationFn: async (params: AddVaccineTemplateInput) => {
       const tz = encodeURIComponent(getBrowserTimeZone());
       return apiRequest<{ doses: VaccineDose[] }>(`/api/vaccines/from-template?tz=${tz}`, {
         method: 'POST',

@@ -17,6 +17,24 @@ if command -v shellcheck >/dev/null 2>&1; then
   shellcheck scripts/*.sh .githooks/*
 fi
 
+# 1.1 前端依赖版本必须精确固定（禁止 ^ / ~ / * / 范围符，避免隐式漂移）
+node -e '
+const fs = require("node:fs");
+const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+const bad = [];
+for (const section of ["dependencies", "devDependencies"]) {
+  for (const [name, ver] of Object.entries(pkg[section] ?? {})) {
+    if (/^[\^~*<>]|\|\||\b[xX]\b/.test(String(ver))) {
+      bad.push(section + "." + name + "=" + ver);
+    }
+  }
+}
+if (bad.length > 0) {
+  console.error("package.json dependencies must use exact pinned versions (no ^/~ ranges):\n  " + bad.join("\n  "));
+  process.exit(1);
+}
+'
+
 # 2. 全站最小字号不低于 12px
 if grep -rnE 'text-\[([0-9]|1[01])px\]' src/; then
   echo 'Found font size below 12px in src/' >&2

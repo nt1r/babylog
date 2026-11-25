@@ -4,17 +4,17 @@
 
 ## 文档指针（按需读取）
 
-- **新增或修改前后端代码、维护中文注释或代码审查** → 先读 `CODING_STANDARDS.md`
+- **代码审查、前端交互/视觉改动、维护中文注释或 Go 跨模块改动** → 先读 `CODING_STANDARDS.md`
 - **编写或审查测试、制定 OpenSpec `test-plan.md`** → 先读 `docs/testing-guide.md`
-- **架构设计、模块命名或核对业务术语** → 先读 `GLOSSARY.md`
+- **架构设计、模块命名、核对业务术语或既有架构权衡** → 先读 `GLOSSARY.md` 与 `docs/adr/`
 - **调整视觉样式、亮暗主题或分类色 Token** → 先读 `docs/design-system.md`
 - **验证前端纯 TS 模块，或新建页面/大幅调整布局后做免登录视觉自查（390px 移动 + 桌面亮暗态无头截屏审图）** → 先读 `docs/temp-verification.md`
 - **查看可用脚本与依赖版本** → 以 `package.json`、`backend/go.mod` 与 `tsconfig.json` 为单一事实来源
 
 ## 工程硬边界
 
-- 后端根目录为 `backend/`；开发、静态检查、测试与发布全链路保持 `CGO_ENABLED=0`，静态检查覆盖所有构建标签（含 `embedwebui`），开发态与发布态内嵌资源互不污染，开发工具不写入主 `backend/go.mod`。
-- 前端包管理器固定为 `pnpm`，依赖版本保持精确固定；若当前 shell 的 `node -v` 与 `.node-version` 不一致，先经本机版本管理器（如 `nvs`）切换；新增或修改路由后运行 `pnpm build:web` 重新生成 `src/routeTree.gen.ts` 并纳入版本控制（保证直接运行 `pnpm check`），避免手动编辑。
+- 后端根目录为 `backend/`；全链路保持 `CGO_ENABLED=0`，开发态与发布态内嵌资源互不污染，开发工具不写入主 `backend/go.mod`。
+- 前端包管理器固定为 `pnpm`；若当前 shell 的 `node -v` 与 `.node-version` 不一致，先经本机版本管理器（如 `nvs`）切换；新增或修改路由后运行 `pnpm build:web` 重新生成 `src/routeTree.gen.ts` 并纳入版本控制（保证直接运行 `pnpm check`），避免手动编辑。
 
 ## 安全与隐私红线
 
@@ -36,5 +36,5 @@
 
 ## 执行与记录
 
-- 只运行本次变更需要的验证，优先复用 `package.json` 现有命令（`pnpm lint`、`pnpm format`、`pnpm check`、`pnpm test`、`pnpm build`），不默认执行全仓测试或完整构建；参考明确的外部公开 GitHub 仓库时，优先通过只读 GitHub API 直取目标文件，减少无效网页搜索。
+- 只运行本次变更需要的验证，优先复用 `package.json` 现有脚本（有代码修改时先 `pnpm format` 再跑检查），不默认执行全仓测试或完整构建；参考明确的外部公开 GitHub 仓库时，优先通过只读 GitHub API 直取目标文件，减少无效网页搜索。
 - 验证结论如实记录实际执行的命令与观察结果，未验证部分明确说明；PR 保留简短测试与验证说明。

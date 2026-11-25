@@ -68,7 +68,7 @@ func mustBabyProfile(c *gin.Context) (*baby.Profile, bool) {
 		return nil, false
 	}
 	profile, ok := raw.(*baby.Profile)
-	if !ok || profile == nil || profile.ID <= 0 {
+	if !ok || profile == nil || profile.ID <= 0 || profile.BirthDate == "" {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 		return nil, false
 	}
@@ -82,18 +82,6 @@ func mustBabyID(c *gin.Context) (int64, bool) {
 		return 0, false
 	}
 	return profile.ID, true
-}
-
-// mustBabyBirthDate 从已校验的宝宝档案上下文提取出生日期。
-func mustBabyBirthDate(c *gin.Context) (string, bool) {
-	profile, ok := mustBabyProfile(c)
-	if !ok || profile.BirthDate == "" {
-		if ok {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
-		}
-		return "", false
-	}
-	return profile.BirthDate, true
 }
 
 // apiSecurityMiddleware 为所有 /api/* 响应强制禁用缓存，并对写操作执行 Same-Origin 防护。

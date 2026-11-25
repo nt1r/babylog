@@ -9,10 +9,12 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { exportVaccineVisitIcs } from '@/lib/ics';
 import { cn } from '@/lib/utils';
 import {
+  buildCalendarIcsOptions,
   buildVaccineCalendarMonth,
   formatDoseShortTitle,
   formatShortCnDate,
   getAlertBadgeMeta,
+  resolveCalendarExportTarget,
   type VaccineDose,
   type VaccineNextFocus,
 } from '@/lib/vaccines';
@@ -65,34 +67,17 @@ export function VaccineCalendar({
     return doses.filter((d) => d.effective_date === selectedDateKey);
   }, [doses, selectedDateKey]);
 
-  // 计算当前「导出日历」按钮对应的目标日期与剂次：
-  // 1. 已显式点选某日 → 仅导出当天未完成剂次（若当天无可导出剂次则禁用按钮，避免静默跨月导出）；
-  // 2. 未点选具体日期 → 优先导出当月最早一天的未完成剂次；当月全空时回退至下一次接种焦点并明确标注。
-  const exportTarget = useMemo(() => {
-    if (selectedDateKey) {
-      const pendingOnSelected = selectedDayDoses.filter((d) => d.status !== 'completed');
-      if (pendingOnSelected.length > 0) {
-        return { date: selectedDateKey, doses: pendingOnSelected, isFallbackFocus: false };
-      }
-      return null;
-    }
-    const pendingInMonth = monthDoses.filter((d) => d.status !== 'completed');
-    if (pendingInMonth.length > 0) {
-      const firstDate = pendingInMonth[0].effective_date;
-      return {
-        date: firstDate,
-        doses: pendingInMonth.filter((d) => d.effective_date === firstDate),
-        isFallbackFocus: false,
-      };
-    }
-    if (nextFocus) {
-      const focusDoses = doses.filter((d) => nextFocus.dose_ids.includes(d.id));
-      if (focusDoses.length > 0) {
-        return { date: nextFocus.target_date, doses: focusDoses, isFallbackFocus: true };
-      }
-    }
-    return null;
-  }, [selectedDateKey, selectedDayDoses, monthDoses, nextFocus, doses]);
+  const exportTarget = useMemo(
+    () =>
+      resolveCalendarExportTarget({
+        selectedDateKey,
+        selectedDayDoses,
+        monthDoses,
+        nextFocus,
+        allDoses: doses,
+      }),
+    [selectedDateKey, selectedDayDoses, monthDoses, nextFocus, doses],
+  );
 
   function shiftMonth(delta: number) {
     const dt = new Date(Date.UTC(year, monthIndex + delta, 1));
@@ -110,19 +95,7 @@ export function VaccineCalendar({
 
   function handleExportCalendar() {
     if (!exportTarget) return;
-    const lead = exportTarget.doses[0];
-    const scheduledTime = exportTarget.doses.find((d) => d.status === 'scheduled' && d.scheduled_time)?.scheduled_time;
-    const clinicName = exportTarget.doses.find((d) => d.clinic_name)?.clinic_name || defaultClinicName.trim();
-
-    exportVaccineVisitIcs({
-      uidSeed: `cal-${exportTarget.date}-${exportTarget.doses.map((d) => d.id).join('-')}`,
-      babyNickname,
-      date: exportTarget.date,
-      time: scheduledTime || undefined,
-      location: clinicName || undefined,
-      stageLabel: lead?.age_label,
-      doses: exportTarget.doses,
-    });
+    exportVaccineVisitIcs(buildCalendarIcsOptions(exportTarget, defaultClinicName, babyNickname));
     toast.success(
       '已导出日历（.ics）',
       `已生成 ${formatShortCnDate(exportTarget.date, today)} 的接种提醒，打开即可导入手机日历`,
