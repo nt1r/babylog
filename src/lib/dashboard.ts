@@ -1,12 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
 import { differenceInCalendarDays, parseISO } from 'date-fns';
+import { Baby, Bath, Droplets, type LucideIcon, Milk } from 'lucide-react';
 import { RECORD_CATEGORY_META, type RecordCategoryMeta } from '@/lib/categories';
 import type { GrowthSummary } from '@/lib/growth';
 import { apiRequest } from '@/lib/http';
+import type { OneTapRecordAction } from '@/lib/one-tap-record';
 import { DASHBOARD_QUERY_KEY, DASHBOARD_SUMMARY_QUERY_KEY } from '@/lib/query-client';
 import {
   BREAST_SIDE_LABELS,
   type CareDailySummary,
+  FEEDING_DEFAULTS,
   type FeedingDailySummary,
   getTemperatureSeverity,
   type SaveRecordRequest,
@@ -385,18 +388,26 @@ interface AdaptiveFeedingOneTap {
   readonly buildRequest: (recordedAt: string) => SaveRecordRequest;
 }
 
+type DashboardOneTapKind = 'feeding' | 'pee' | 'poop' | 'bath';
+
+interface DashboardOneTapPreset extends OneTapRecordAction<DashboardOneTapKind> {
+  readonly title: string;
+  readonly hint: string;
+  readonly icon: LucideIcon;
+  readonly tileClass: string;
+  readonly iconClass: string;
+}
+
 /**
  * 根据宝宝最近喂养习惯自适应首页第一张一键直记卡（配方奶 / 瓶喂母乳 / 亲喂左右交替），
  * 避免纯母乳或混合喂养家庭因卡片写死配方奶而误记。
  */
-export function buildAdaptiveFeedingOneTap(
+function buildAdaptiveFeedingOneTap(
   defaults: SmartDefaults | undefined,
   defaultsReady: boolean,
-  fallbackMilkML = 90,
-  fallbackBreastMin = 15,
 ): AdaptiveFeedingOneTap {
   const feeding = defaults?.feeding;
-  const lastMilkML = feeding?.last_milk_ml ?? fallbackMilkML;
+  const lastMilkML = feeding?.last_milk_ml ?? FEEDING_DEFAULTS.milkML;
 
   if (!defaultsReady) {
     return {
@@ -431,7 +442,7 @@ export function buildAdaptiveFeedingOneTap(
     }
 
     const side = feeding.suggested_breast_side ?? 'left';
-    const durationMin = feeding.last_breast_duration_min || fallbackBreastMin;
+    const durationMin = feeding.last_breast_duration_min || FEEDING_DEFAULTS.breastMin;
     const sideLabel = BREAST_SIDE_LABELS[side];
     return {
       title: '再来一次亲喂',
@@ -460,6 +471,81 @@ export function buildAdaptiveFeedingOneTap(
       payload: { subtype: 'formula', amount_ml: lastMilkML, recorded_at: recordedAt, note: '' },
     }),
   };
+}
+
+/**
+ * 统一构造首页看板 4 张高频一键直记预设（自适应喂养 / 嘘嘘 / 便便正常 / 洗澡），
+ * 集中收敛直记载荷与撤销文案，避免页面组件散落预设定义或跨层依赖快记 codec。
+ */
+export function buildDashboardOneTapPresets(
+  defaults: SmartDefaults | undefined,
+  defaultsReady: boolean,
+): readonly DashboardOneTapPreset[] {
+  const adaptiveFeedingOneTap = buildAdaptiveFeedingOneTap(defaults, defaultsReady);
+
+  return [
+    {
+      key: 'feeding',
+      title: adaptiveFeedingOneTap.title,
+      hint: adaptiveFeedingOneTap.hint,
+      icon: Milk,
+      tileClass: 'border-feeding/35 bg-card hover:border-feeding/70 hover:bg-feeding-soft/25',
+      iconClass: 'bg-feeding-soft text-feeding-soft-foreground',
+      disabled: !defaultsReady,
+      toastTitle: adaptiveFeedingOneTap.toastTitle,
+      undoToastTitle: '已撤销刚才的喂养记录',
+      buildRequest: adaptiveFeedingOneTap.buildRequest,
+    },
+    {
+      key: 'pee',
+      title: '嘘嘘',
+      hint: '尿布记录',
+      icon: Droplets,
+      tileClass: 'border-care/35 bg-card hover:border-care/70 hover:bg-care-soft/25',
+      iconClass: 'bg-care-soft text-care-soft-foreground',
+      toastTitle: '已记录 · 嘘嘘',
+      undoToastTitle: '已撤销刚才的护理记录',
+      buildRequest: (recordedAt) => ({
+        category: 'care',
+        payload: { subtype: 'diaper', diaper_kind: 'pee', recorded_at: recordedAt, note: '' },
+      }),
+    },
+    {
+      key: 'poop',
+      title: '便便正常',
+      hint: '软便 · 黄色',
+      icon: Baby,
+      tileClass: 'border-care/35 bg-card hover:border-care/70 hover:bg-care-soft/25',
+      iconClass: 'bg-care-soft text-care-soft-foreground',
+      toastTitle: '已记录 · 便便正常',
+      undoToastTitle: '已撤销刚才的护理记录',
+      buildRequest: (recordedAt) => ({
+        category: 'care',
+        payload: {
+          subtype: 'diaper',
+          diaper_kind: 'poop',
+          stool_consistency: 'soft',
+          stool_color: 'yellow',
+          recorded_at: recordedAt,
+          note: '',
+        },
+      }),
+    },
+    {
+      key: 'bath',
+      title: '洗澡',
+      hint: '日常护理',
+      icon: Bath,
+      tileClass: 'border-border/80 bg-card hover:border-primary/45 hover:bg-accent/35',
+      iconClass: 'bg-secondary text-secondary-foreground',
+      toastTitle: '已记录 · 洗澡',
+      undoToastTitle: '已撤销刚才的洗澡记录',
+      buildRequest: (recordedAt) => ({
+        category: 'care',
+        payload: { subtype: 'bath', recorded_at: recordedAt, note: '' },
+      }),
+    },
+  ];
 }
 
 /** 首页今日汇总查询：每 60 秒轮询刷新，供首页看板实时展示照护概览。 */

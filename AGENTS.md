@@ -5,7 +5,7 @@
 ## 文档指针（按需读取）
 
 - **代码审查、前端交互/视觉改动、维护中文注释或 Go 跨模块改动** → 先读 `CODING_STANDARDS.md`
-- **编写或审查测试、制定 OpenSpec `test-plan.md`** → 先读 `docs/testing-guide.md`
+- **新增/修改测试或制定 OpenSpec `test-plan.md`** → 先读 `docs/testing-guide.md`
 - **架构设计、模块命名、核对业务术语或既有架构权衡** → 先读 `GLOSSARY.md` 与 `docs/adr/`
 - **调整视觉样式、亮暗主题或分类色 Token** → 先读 `docs/design-system.md`
 - **验证前端纯 TS 模块，或新建页面/大幅调整布局后做免登录视觉自查（390px 移动 + 桌面亮暗态无头截屏审图）** → 先读 `docs/temp-verification.md`
@@ -32,7 +32,7 @@
 
 ## 测试范围与临时验证
 
-- 纳入 Git 的自动化测试仅限后端 Go 测试（范围以对应 OpenSpec `test-plan.md` 或用户要求为准）；前端与其他临时验证须放系统临时目录（Git 工作区外）、隔离数据并在结束时清理。分层、造数与写法细则见 `docs/testing-guide.md`。
+- 纳入 Git 的常驻测试仅限后端 Go 测试，前端与临时验证统一放系统临时目录（`$TMPDIR`）并在结束时清理；分层、造数与写法详见 `docs/testing-guide.md` 与 `docs/temp-verification.md`。
 
 ## 执行与记录
 

@@ -91,27 +91,9 @@ func formatAgeLabel(ageMonths int) string {
 	return fmt.Sprintf("%d月龄", ageMonths)
 }
 
-// isBirthHospitalDose 判断单剂记录是否属于产院出生疫苗（乙肝第 1 剂或卡介苗），
-// 用于避免补录产院门诊名称时自动覆盖宝宝常规社区接种门诊。
-func isBirthHospitalDose(rec DoseRecord) bool {
-	if rec.TemplateCode == nil {
-		return false
-	}
-	tpl, ok := lookupTemplate(*rec.TemplateCode)
-	if !ok {
-		return false
-	}
-	for i := range tpl.Doses {
-		if tpl.Doses[i].DoseNumber == rec.DoseNumber {
-			return tpl.Doses[i].IsBirthHospital
-		}
-	}
-	return false
-}
-
 // buildDoseView 组合数据库记录、内置知识库与实时派生字段：
 // EffectiveDate 按三态优先级（vaccinated_at / scheduled_date / planned_date）取非空值，否则回退 defaultDue；
-// Deletable 仅保护内置国家免疫规划模板，放行自费模板与家长自定义（含自定义免费）剂次。
+// Deletable 与模板匹配统一委托 lifecycle 内部规则，避免跨文件口径漂移。
 func buildDoseView(rec DoseRecord, birthDate string, todayKey string) DoseView {
 	defaultDue, err := addCalendarMonthsClamped(birthDate, rec.AgeMonths)
 	if err != nil {
@@ -145,45 +127,26 @@ func buildDoseView(rec DoseRecord, birthDate string, todayKey string) DoseView {
 		EffectiveDate:     effectiveDate,
 		AlertState:        alertState,
 		DaysUntil:         daysUntil,
-		Deletable:         rec.TemplateCode == nil || rec.Category == CategoryOptional,
+		Deletable:         !rec.isProtectedNIP(),
 		PrecautionsBefore: append([]string(nil), commonPrecautionsBefore...),
 		PrecautionsAfter:  append([]string(nil), commonPrecautionsAfter...),
 		RiskWarning:       "自定义或非标准模板疫苗请务必对照产品说明书及当地接种门诊医生医嘱核对剂次、间隔与禁忌。",
 	}
 
-	if rec.TemplateCode != nil {
-		if tpl, ok := lookupTemplate(*rec.TemplateCode); ok {
-			view.ShortName = tpl.ShortName
-			view.Prevents = tpl.Prevents
-			view.Route = tpl.Route
-			view.PrecautionsBefore = append([]string(nil), tpl.PrecautionsBefore...)
-			view.PrecautionsAfter = append([]string(nil), tpl.PrecautionsAfter...)
-			view.RiskWarning = tpl.RiskWarning
+	if tpl, matchedDose, ok := matchTemplateDose(rec); ok {
+		view.ShortName = tpl.ShortName
+		view.Prevents = tpl.Prevents
+		view.Route = tpl.Route
+		view.PrecautionsBefore = append([]string(nil), tpl.PrecautionsBefore...)
+		view.PrecautionsAfter = append([]string(nil), tpl.PrecautionsAfter...)
+		view.RiskWarning = tpl.RiskWarning
 
-			// 未删改剂次总数时按剂次序号精确匹配提示；若家长删改过剂次数，则按月龄回退匹配，避免序号错位。
-			var matchedDose *templateDose
-			if rec.TotalDoses == len(tpl.Doses) {
-				for i := range tpl.Doses {
-					if tpl.Doses[i].DoseNumber == rec.DoseNumber {
-						matchedDose = &tpl.Doses[i]
-						break
-					}
-				}
-			} else {
-				for i := range tpl.Doses {
-					if tpl.Doses[i].AgeMonths == rec.AgeMonths {
-						matchedDose = &tpl.Doses[i]
-						break
-					}
-				}
+		if matchedDose != nil {
+			if matchedDose.Route != "" {
+				view.Route = matchedDose.Route
 			}
-			if matchedDose != nil {
-				if matchedDose.Route != "" {
-					view.Route = matchedDose.Route
-				}
-				view.DoseTip = matchedDose.DoseTip
-				view.IsBirthHospital = matchedDose.IsBirthHospital
-			}
+			view.DoseTip = matchedDose.DoseTip
+			view.IsBirthHospital = matchedDose.IsBirthHospital
 		}
 	}
 

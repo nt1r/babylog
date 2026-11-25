@@ -104,6 +104,13 @@ if grep -rn '"babylog_session"' backend/internal/integration/ backend/cmd/babylo
   exit 1
 fi
 
+# 10.2 纯单元测试文件（非 store_test.go / integration / database）禁止打开真实 SQLite，保持测试分层清晰
+bad_unit_db=$(find backend/internal -name '*_test.go' ! -name 'store_test.go' ! -path 'backend/internal/integration/*' ! -path 'backend/internal/database/*' -exec grep -l 'database\.Open(' {} + || true)
+if [ -n "$bad_unit_db" ]; then
+  printf 'Pure unit test files must not call database.Open (move persistence invariant tests to store_test.go):\n%s\n' "$bad_unit_db" >&2
+  exit 1
+fi
+
 # 11. 测试与临时验证产物防误提交门禁（前端不保留常驻自动化测试，临时预览与 SQLite 文件严禁入仓）
 bad_frontend_tests=$(find src -type f \( -name '*.test.ts' -o -name '*.test.tsx' -o -name '*.spec.ts' -o -name '*.spec.tsx' -o -name '*.test.js' -o -name '*.spec.js' -o -name '*__temp_preview__*' \) -o -type d -name '__tests__')
 if [ -n "$bad_frontend_tests" ]; then

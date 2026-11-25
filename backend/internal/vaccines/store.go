@@ -35,6 +35,20 @@ func (s *Store) WithClock(fn func() time.Time) *Store {
 	return s
 }
 
+// requestTime 封存单次请求采样得到的时钟快照，确保同一请求内的校验基准日、落库时间戳与视图投影日口径一致，避免跨午夜分裂。
+type requestTime struct {
+	nowUTC   string
+	todayKey string
+}
+
+func (s *Store) sampleTime(loc *time.Location) requestTime {
+	now := s.now()
+	return requestTime{
+		nowUTC:   timeutil.FormatUTC(now),
+		todayKey: timeutil.LocalDateKey(now, loc),
+	}
+}
+
 // resolveLocation 兜底回退至服务端默认时区，避免各入口重复判断 loc == nil。
 func resolveLocation(loc *time.Location) *time.Location {
 	if loc != nil {
@@ -86,9 +100,9 @@ func buildTemplateDoseRecords(babyID int64, tpl vaccineTemplate, nowStr string) 
 	return rows
 }
 
-// EnsureNIPSeeded 为指定宝宝幂等地初始化国家免疫规划基础剂次（22 剂，全部为 pending 状态）。
+// ensureNIPSeeded 为指定宝宝幂等地初始化国家免疫规划基础剂次（22 剂，全部为 pending 状态）。
 // 先以只读 Count 快速跳过，避免每次 GET 查询都开启 SQLite 写事务；写路径再用部分唯一索引兜底防并发重复。
-func (s *Store) EnsureNIPSeeded(ctx context.Context, babyID int64) error {
+func (s *Store) ensureNIPSeeded(ctx context.Context, babyID int64, nowStr string) error {
 	var nipCount int64
 	if err := s.db.WithContext(ctx).
 		Model(&DoseRecord{}).
@@ -100,7 +114,6 @@ func (s *Store) EnsureNIPSeeded(ctx context.Context, babyID int64) error {
 		return nil
 	}
 
-	nowStr := timeutil.FormatUTC(s.now())
 	rows := make([]DoseRecord, 0, 24)
 	for _, tpl := range nipTemplates() {
 		rows = append(rows, buildTemplateDoseRecords(babyID, tpl, nowStr)...)
@@ -119,7 +132,8 @@ func (s *Store) GetOverview(ctx context.Context, profile *baby.Profile, loc *tim
 		return nil, err
 	}
 	loc = resolveLocation(loc)
-	if err := s.EnsureNIPSeeded(ctx, profile.ID); err != nil {
+	ts := s.sampleTime(loc)
+	if err := s.ensureNIPSeeded(ctx, profile.ID, ts.nowUTC); err != nil {
 		return nil, err
 	}
 
@@ -132,11 +146,7 @@ func (s *Store) GetOverview(ctx context.Context, profile *baby.Profile, loc *tim
 		return nil, err
 	}
 
-	todayKey := timeutil.LocalDateKey(s.now(), loc)
-	views := make([]DoseView, 0, len(records))
-	for _, rec := range records {
-		views = append(views, buildDoseView(rec, profile.BirthDate, todayKey))
-	}
+	views := projectDoseViews(records, profile.BirthDate, ts.todayKey)
 
 	clinics, err := s.readRecentClinics(ctx, profile.ID)
 	if err != nil {
@@ -144,7 +154,7 @@ func (s *Store) GetOverview(ctx context.Context, profile *baby.Profile, loc *tim
 	}
 
 	return &OverviewResponse{
-		Today:             todayKey,
+		Today:             ts.todayKey,
 		BirthDate:         profile.BirthDate,
 		Disclaimer:        medicalDisclaimer,
 		DefaultClinicName: strings.TrimSpace(profile.DefaultClinicName),
@@ -229,7 +239,7 @@ func (s *Store) AddFromTemplate(ctx context.Context, profile *baby.Profile, loc 
 	}
 
 	var created []DoseRecord
-	nowStr := timeutil.FormatUTC(s.now())
+	ts := s.sampleTime(loc)
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var existingCount int64
 		if err := tx.Model(&DoseRecord{}).
@@ -263,12 +273,12 @@ func (s *Store) AddFromTemplate(ctx context.Context, profile *baby.Profile, loc 
 					AgeLabel:     ageLabel,
 					PlannedDate:  plan.PlannedDate,
 					Status:       StatusPending,
-					CreatedAt:    nowStr,
-					UpdatedAt:    nowStr,
+					CreatedAt:    ts.nowUTC,
+					UpdatedAt:    ts.nowUTC,
 				})
 			}
 		} else {
-			rows = buildTemplateDoseRecords(profile.ID, tpl, nowStr)
+			rows = buildTemplateDoseRecords(profile.ID, tpl, ts.nowUTC)
 		}
 
 		if err := tx.Create(&rows).Error; err != nil {
@@ -284,12 +294,7 @@ func (s *Store) AddFromTemplate(ctx context.Context, profile *baby.Profile, loc 
 		return nil, err
 	}
 
-	todayKey := timeutil.LocalDateKey(s.now(), loc)
-	views := make([]DoseView, 0, len(created))
-	for _, rec := range created {
-		views = append(views, buildDoseView(rec, profile.BirthDate, todayKey))
-	}
-	return views, nil
+	return projectDoseViews(created, profile.BirthDate, ts.todayKey), nil
 }
 
 // CreateCustom 在单一事务内新增自定义疫苗（单剂或多剂序列，自动按顺序编号 1..N）。
@@ -303,7 +308,7 @@ func (s *Store) CreateCustom(ctx context.Context, profile *baby.Profile, loc *ti
 		return nil, err
 	}
 
-	nowStr := timeutil.FormatUTC(s.now())
+	ts := s.sampleTime(loc)
 	total := len(norm.Doses)
 	rows := make([]DoseRecord, 0, total)
 	for i, plan := range norm.Doses {
@@ -318,8 +323,8 @@ func (s *Store) CreateCustom(ctx context.Context, profile *baby.Profile, loc *ti
 			PlannedDate: plan.PlannedDate,
 			Status:      StatusPending,
 			Note:        norm.Note,
-			CreatedAt:   nowStr,
-			UpdatedAt:   nowStr,
+			CreatedAt:   ts.nowUTC,
+			UpdatedAt:   ts.nowUTC,
 		})
 	}
 
@@ -329,31 +334,24 @@ func (s *Store) CreateCustom(ctx context.Context, profile *baby.Profile, loc *ti
 		return nil, err
 	}
 
-	todayKey := timeutil.LocalDateKey(s.now(), loc)
-	views := make([]DoseView, 0, len(rows))
-	for _, rec := range rows {
-		views = append(views, buildDoseView(rec, profile.BirthDate, todayKey))
-	}
-	return views, nil
+	return projectDoseViews(rows, profile.BirthDate, ts.todayKey), nil
 }
 
 // UpdateDose 在单一事务内更新单剂状态、预约或接种信息（自费与自定义剂次亦支持调整适龄月龄）；
 // 校验失败返回 [*ValidationError]，记录不存在返回 [ErrNotFound]。
-// GORM 默认的 Updates(&struct) 会忽略零值与 nil 指针字段，因此必须显式列出 Select 列清单，
-// 确保跨状态切换时（例如已接种回退待接种）废弃的可空列在 SQLite 中被真正写为 NULL 或空串。
+// 状态流转与废弃列清空规则统一由 [DoseRecord.applySingleUpdate] 与 singleUpdateColumns 共同约束。
 func (s *Store) UpdateDose(ctx context.Context, profile *baby.Profile, id int64, loc *time.Location, in UpdateDoseInput) (*DoseView, error) {
 	if err := requireValidProfile(profile); err != nil {
 		return nil, err
 	}
 	loc = resolveLocation(loc)
-	todayKey := timeutil.LocalDateKey(s.now(), loc)
-	norm, err := validateUpdateInput(in, profile.BirthDate, todayKey)
+	ts := s.sampleTime(loc)
+	norm, err := validateUpdateInput(in, profile.BirthDate, ts.todayKey)
 	if err != nil {
 		return nil, err
 	}
 
 	var updated DoseRecord
-	nowStr := timeutil.FormatUTC(s.now())
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var existing DoseRecord
 		if err := tx.Where("id = ? AND baby_id = ?", id, profile.ID).First(&existing).Error; err != nil {
@@ -363,46 +361,13 @@ func (s *Store) UpdateDose(ctx context.Context, profile *baby.Profile, id int64,
 			return err
 		}
 
-		// 仅允许对自定义或自费剂次修改适龄月龄（对内置 NIP 剂次传入 age_months 静默保持既有月龄而非报错）；
-		// 仅当月龄确实变化时重算 AgeLabel，保留模板定制文案（如流感「6月龄起」）。
-		if norm.AgeMonths != nil && (existing.TemplateCode == nil || existing.Category == CategoryOptional) && *norm.AgeMonths != existing.AgeMonths {
-			existing.AgeMonths = *norm.AgeMonths
-			existing.AgeLabel = formatAgeLabel(*norm.AgeMonths)
-		}
+		existing.applySingleUpdate(norm, ts.nowUTC)
 
-		existing.Status = norm.Status
-		existing.PlannedDate = norm.PlannedDate
-		existing.ScheduledDate = norm.ScheduledDate
-		existing.ScheduledTime = norm.ScheduledTime
-		existing.ClinicName = norm.ClinicName
-		existing.VaccinatedAt = norm.VaccinatedAt
-		existing.Site = norm.Site
-		existing.Manufacturer = norm.Manufacturer
-		existing.BatchNo = norm.BatchNo
-		existing.Reaction = norm.Reaction
-		existing.Note = norm.Note
-		existing.UpdatedAt = nowStr
-
-		if err := tx.Model(&existing).Select(
-			"age_months",
-			"age_label",
-			"status",
-			"planned_date",
-			"scheduled_date",
-			"scheduled_time",
-			"clinic_name",
-			"vaccinated_at",
-			"site",
-			"manufacturer",
-			"batch_no",
-			"reaction",
-			"note",
-			"updated_at",
-		).Updates(&existing).Error; err != nil {
+		if err := tx.Model(&existing).Select(singleUpdateColumns).Updates(&existing).Error; err != nil {
 			return err
 		}
 
-		if err := baby.SyncDefaultClinicTx(tx, profile.ID, norm.ClinicName, norm.SetDefaultClinic, !isBirthHospitalDose(existing), nowStr); err != nil {
+		if err := baby.SyncDefaultClinicTx(tx, profile.ID, existing.ClinicName, norm.SetDefaultClinic, !existing.isBirthHospitalDose(), ts.nowUTC); err != nil {
 			return err
 		}
 		updated = existing
@@ -412,7 +377,7 @@ func (s *Store) UpdateDose(ctx context.Context, profile *baby.Profile, id int64,
 		return nil, err
 	}
 
-	view := buildDoseView(updated, profile.BirthDate, todayKey)
+	view := buildDoseView(updated, profile.BirthDate, ts.todayKey)
 	return &view, nil
 }
 
@@ -424,14 +389,13 @@ func (s *Store) BatchUpdate(ctx context.Context, profile *baby.Profile, loc *tim
 		return nil, err
 	}
 	loc = resolveLocation(loc)
-	todayKey := timeutil.LocalDateKey(s.now(), loc)
-	norm, err := validateBatchInput(in, profile.BirthDate, todayKey)
+	ts := s.sampleTime(loc)
+	norm, err := validateBatchInput(in, profile.BirthDate, ts.todayKey)
 	if err != nil {
 		return nil, err
 	}
 
 	var updated []DoseRecord
-	nowStr := timeutil.FormatUTC(s.now())
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var rows []DoseRecord
 		if err := tx.Where("baby_id = ? AND id IN ?", profile.ID, norm.DoseIDs).Find(&rows).Error; err != nil {
@@ -441,55 +405,20 @@ func (s *Store) BatchUpdate(ctx context.Context, profile *baby.Profile, loc *tim
 			return ErrNotFound
 		}
 
-		// hasNonBirthDose 确保纯产院出生两针批量确认时，不会把产院名称自动记为常去社区接种门诊；
-		// 批量预约清空接种细节（保留 PlannedDate）；批量标记已接种清空预约字段但刻意保留各剂已填的部位/厂家/批号/反应，
-		// 与单剂 UpdateDose 的全量覆写语义不同。
+		// hasNonBirthDose 确保纯产院出生两针批量确认时，不会把产院名称自动记为常去社区接种门诊。
 		hasNonBirthDose := false
 		for i := range rows {
-			if !isBirthHospitalDose(rows[i]) {
+			if !rows[i].isBirthHospitalDose() {
 				hasNonBirthDose = true
 			}
-			if norm.Action == BatchActionSchedule {
-				rows[i].Status = StatusScheduled
-				rows[i].ScheduledDate = norm.ScheduledDate
-				rows[i].ScheduledTime = norm.ScheduledTime
-				rows[i].VaccinatedAt = nil
-				rows[i].Site = ""
-				rows[i].Manufacturer = ""
-				rows[i].BatchNo = ""
-				rows[i].Reaction = ""
-			} else {
-				rows[i].Status = StatusCompleted
-				rows[i].VaccinatedAt = norm.VaccinatedAt
-				rows[i].ScheduledDate = nil
-				rows[i].ScheduledTime = nil
-			}
-			if norm.ClinicName != nil {
-				rows[i].ClinicName = *norm.ClinicName
-			}
-			if norm.Note != nil {
-				rows[i].Note = *norm.Note
-			}
-			rows[i].UpdatedAt = nowStr
+			rows[i].applyBatchUpdate(norm, ts.nowUTC)
 
-			if err := tx.Model(&rows[i]).Select(
-				"status",
-				"scheduled_date",
-				"scheduled_time",
-				"clinic_name",
-				"vaccinated_at",
-				"site",
-				"manufacturer",
-				"batch_no",
-				"reaction",
-				"note",
-				"updated_at",
-			).Updates(&rows[i]).Error; err != nil {
+			if err := tx.Model(&rows[i]).Select(batchUpdateColumns).Updates(&rows[i]).Error; err != nil {
 				return err
 			}
 		}
 		if norm.ClinicName != nil && *norm.ClinicName != "" {
-			if err := baby.SyncDefaultClinicTx(tx, profile.ID, *norm.ClinicName, norm.SetDefaultClinic, hasNonBirthDose, nowStr); err != nil {
+			if err := baby.SyncDefaultClinicTx(tx, profile.ID, *norm.ClinicName, norm.SetDefaultClinic, hasNonBirthDose, ts.nowUTC); err != nil {
 				return err
 			}
 		}
@@ -500,11 +429,7 @@ func (s *Store) BatchUpdate(ctx context.Context, profile *baby.Profile, loc *tim
 		return nil, err
 	}
 
-	views := make([]DoseView, 0, len(updated))
-	for _, rec := range updated {
-		views = append(views, buildDoseView(rec, profile.BirthDate, todayKey))
-	}
-	return views, nil
+	return projectDoseViews(updated, profile.BirthDate, ts.todayKey), nil
 }
 
 // DeleteDose 删除单剂自定义或自费模板剂次，并在同一事务内将同疫苗剩余剂次自动连续重排（1..N-1）；
@@ -519,7 +444,7 @@ func (s *Store) DeleteDose(ctx context.Context, babyID int64, id int64) error {
 			}
 			return err
 		}
-		if existing.TemplateCode != nil && existing.Category == CategoryNIP {
+		if existing.isProtectedNIP() {
 			return ErrCannotDeleteNIP
 		}
 
@@ -567,7 +492,7 @@ func (s *Store) DeleteTemplate(ctx context.Context, babyID int64, templateCode s
 	if !ok {
 		return ErrNotFound
 	}
-	if tpl.Category == CategoryNIP {
+	if tpl.isProtectedNIP() {
 		return ErrCannotDeleteNIP
 	}
 
