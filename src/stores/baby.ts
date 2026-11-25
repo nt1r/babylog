@@ -53,7 +53,9 @@ function resolveActiveBabyId(
 interface BabyStoreState {
   activeBabyId: number | null;
   syncedUserId: number | null;
+  addDialogOpen: boolean;
   setActiveBabyId: (userId: number | null, babyId: number | null) => void;
+  setAddDialogOpen: (open: boolean) => void;
   syncActiveBaby: (userId: number, babies: ReadonlyArray<{ readonly id: number }>) => number | null;
   reset: () => void;
 }
@@ -62,6 +64,7 @@ interface BabyStoreState {
 export const useBabyStore = create<BabyStoreState>((set, get) => ({
   activeBabyId: null,
   syncedUserId: null,
+  addDialogOpen: false,
 
   setActiveBabyId: (userId, babyId) => {
     const prev = get().activeBabyId;
@@ -73,6 +76,8 @@ export const useBabyStore = create<BabyStoreState>((set, get) => ({
     writePersistedActiveBabyId(userId, babyId);
     set({ activeBabyId: babyId, syncedUserId: userId });
   },
+
+  setAddDialogOpen: (open) => set({ addDialogOpen: open }),
 
   syncActiveBaby: (userId, babies) => {
     const state = get();
@@ -92,5 +97,5 @@ export const useBabyStore = create<BabyStoreState>((set, get) => ({
     return next;
   },
 
-  reset: () => set({ activeBabyId: null, syncedUserId: null }),
+  reset: () => set({ activeBabyId: null, syncedUserId: null, addDialogOpen: false }),
 }));

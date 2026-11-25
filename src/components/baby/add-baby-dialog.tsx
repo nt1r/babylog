@@ -15,25 +15,26 @@ import {
   BABY_GENDER_LABELS,
   type BabyFormValidationErrors,
   type BabyGender,
-  type BabyProfile,
   MAX_BABIES_PER_USER,
+  useActiveBaby,
   useCreateBabyMutation,
   validateBabyProfileForm,
 } from '@/lib/baby';
-
-interface AddBabyDialogProps {
-  readonly open: boolean;
-  readonly onOpenChange: (open: boolean) => void;
-  readonly currentCount: number;
-  readonly onCreated?: (baby: BabyProfile) => void;
-}
+import { useBabyStore } from '@/stores/baby';
 
 const GENDER_OPTIONS: ReadonlyArray<BabyGender> = ['male', 'female', 'unknown'];
 
-/** 新增宝宝档案弹窗，供全局宝宝切换器与设置页复用；提交中锁定关闭防误触。 */
-export function AddBabyDialog({ open, onOpenChange, currentCount, onCreated }: AddBabyDialogProps) {
+/**
+ * 全局新增宝宝档案弹窗：挂载在 AppShell 顶层并由 useBabyStore 驱动，
+ * 避免移动端侧边栏 Drawer 收起卸载子树时把已打开的弹窗一并卸载。
+ */
+export function AddBabyDialog() {
   const navigate = useNavigate();
+  const open = useBabyStore((state) => state.addDialogOpen);
+  const setOpen = useBabyStore((state) => state.setAddDialogOpen);
+  const { babies } = useActiveBaby();
   const createBaby = useCreateBabyMutation();
+  const currentCount = babies.length;
   const todayStr = format(new Date(), 'yyyy-MM-dd');
 
   const [nickname, setNickname] = useState('');
@@ -96,15 +97,14 @@ export function AddBabyDialog({ open, onOpenChange, currentCount, onCreated }: A
       } else {
         toast.success(`已添加 ${created.nickname}`, '已自动切换至新宝宝档案。');
       }
-      onOpenChange(false);
-      onCreated?.(created);
+      setOpen(false);
     } catch (cause) {
       setSubmitError(cause instanceof Error ? cause.message : '添加宝宝失败，请稍后重试。');
     }
   }
 
   return (
-    <Dialog open={open} pending={createBaby.isPending} onOpenChange={onOpenChange}>
+    <Dialog open={open} pending={createBaby.isPending} onOpenChange={setOpen}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <div className="flex items-center gap-2.5">
@@ -256,12 +256,7 @@ export function AddBabyDialog({ open, onOpenChange, currentCount, onCreated }: A
             ) : null}
 
             <div className="flex items-center justify-end gap-2 pt-1">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={createBaby.isPending}
-                onClick={() => onOpenChange(false)}
-              >
+              <Button type="button" variant="outline" disabled={createBaby.isPending} onClick={() => setOpen(false)}>
                 取消
               </Button>
               <Button type="submit" disabled={createBaby.isPending}>

@@ -22,7 +22,6 @@ import {
   Trash2,
 } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
-import { AddBabyDialog } from '@/components/baby/add-baby-dialog';
 import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog';
 import { PasswordLengthHint } from '@/components/password-length-hint';
 import { Alert, AlertTitle } from '@/components/ui/alert';
@@ -62,6 +61,7 @@ import { triggerPwaInstall, usePwaInstallState } from '@/lib/pwa';
 import { formatBabyAge } from '@/lib/time';
 import { cn, getInitials } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth';
+import { useBabyStore } from '@/stores/baby';
 import { type ThemeMode, usePreferencesStore } from '@/stores/preferences';
 
 export const Route = createFileRoute('/_app/settings')({
@@ -105,6 +105,7 @@ function SettingsPage() {
   const { confirmOpen, setConfirmOpen, pending, confirmLogout } = useLogoutAction();
 
   const { babies, activeBaby: baby, selectBaby } = useActiveBaby();
+  const setAddDialogOpen = useBabyStore((state) => state.setAddDialogOpen);
   const updateBaby = useUpdateBabyMutation();
   const deleteBaby = useDeleteBabyMutation();
   const { standalone, canPromptInstall, isIOS } = usePwaInstallState();
@@ -119,8 +120,7 @@ function SettingsPage() {
   const [hydratedKey, setHydratedKey] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<BabyFormValidationErrors>({});
 
-  // 新增宝宝、切娃未保存确认 & 删除宝宝确认弹窗（保留目标快照，避免退场动画标题闪烁）
-  const [addBabyOpen, setAddBabyOpen] = useState(false);
+  // 切娃未保存确认 & 删除宝宝确认弹窗（保留目标快照，避免退场动画标题闪烁）
   const [switchConfirmOpen, setSwitchConfirmOpen] = useState(false);
   const [pendingSwitchBaby, setPendingSwitchBaby] = useState<{ id: number; nickname: string } | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -317,7 +317,7 @@ function SettingsPage() {
                 variant="outline"
                 size="sm"
                 disabled={atBabyLimit}
-                onClick={() => setAddBabyOpen(true)}
+                onClick={() => setAddDialogOpen(true)}
               >
                 <PlusIcon className="size-3.5" />
                 {atBabyLimit ? '已达上限' : '添加宝宝'}
@@ -537,7 +537,7 @@ function SettingsPage() {
                 <p className="text-sm font-medium text-foreground">当前账号尚未创建宝宝档案</p>
                 <p className="text-xs text-muted-foreground">创建宝宝档案后即可开始记录喂养、睡眠、成长与疫苗接种。</p>
               </div>
-              <Button type="button" onClick={() => setAddBabyOpen(true)}>
+              <Button type="button" onClick={() => setAddDialogOpen(true)}>
                 <PlusIcon className="size-4" />
                 创建宝宝档案
               </Button>
@@ -877,8 +877,6 @@ function SettingsPage() {
           setSwitchConfirmOpen(false);
         }}
       />
-
-      <AddBabyDialog open={addBabyOpen} onOpenChange={setAddBabyOpen} currentCount={babies.length} />
 
       {/* 硬删除宝宝档案：要求准确输入宝宝昵称后方可确认 */}
       <Dialog open={deleteDialogOpen} pending={deleteBaby.isPending} onOpenChange={setDeleteDialogOpen}>
