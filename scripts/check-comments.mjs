@@ -5,13 +5,16 @@
  *    - 每个包具备规范中文 `// Package <name>` 包注释；
  *    - 顶层导出符号（导出函数、导出类型的导出方法、导出类型、单行导出 var/const）具备以符号名开头的中文 Go Doc；
  *    - 禁止英文分隔栏与非指令纯英文注释。
- * 2. 前端业务代码与脚本（src/ 排除自动生成文件与 components/ui/，含 vite.config.ts 与 scripts/*.mjs）：
+ * 2. Go 集成测试与 CLI 进程测试（backend/internal/integration/*_test.go 与 backend/cmd/babylog/cli_test.go）：
+ *    - 禁止英文分隔栏与非指令纯英文注释（不强制普通辅助函数写 Go Doc，顶层场景注释模板由 check-spec-refs.mjs 校验）。
+ * 3. 前端业务代码与脚本（src/ 排除自动生成文件与 components/ui/，含 vite.config.ts 与 scripts/*.mjs）：
  *    - 禁止英文分隔栏与非指令纯英文注释；
  *    - 导出符号紧上方若编写说明注释须使用 JSDoc，避免误用 // 行注释（无注释的导出保持放行）。
  * 支持 `--self-test` 运行纯内存解析器边界自检（零磁盘 IO、防回归）。
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { classifyLines } from './lib/go-lexer.mjs';
 
 const repoRoot = process.cwd();
 const CJK_RE = /[\u4e00-\u9fff]/;
@@ -52,173 +55,6 @@ function isAllowedNonCjkComment(commentText) {
     return true;
   }
   return !ENGLISH_WORD_RE.test(s);
-}
-
-/**
- * 轻量词法扫描整文件，精准识别每行的起始状态（跳过双引号/单引号/反引号多行字符串与块注释），
- * 避免多行字符串内的 `/*`、`//`、`type`、`export` 干扰注释与声明检查。
- * @returns {Array<{ lineNo: number, raw: string, kind: 'code' | 'line_comment' | 'block_comment' | 'string_cont', blockBody?: string }>}
- */
-function classifyLines(content, { supportSingleQuoteString }) {
-  const rawLines = content.split(/\r?\n/);
-  /** @type {Array<{ lineNo: number, raw: string, kind: 'code' | 'line_comment' | 'block_comment' | 'string_cont', blockBody?: string }>} */
-  const records = [];
-
-  let inBlockComment = false;
-  let inBacktick = false;
-  /** @type {string[]} */
-  let blockLines = [];
-  let blockStartLineNo = 0;
-
-  for (let i = 0; i < rawLines.length; i++) {
-    const raw = rawLines[i];
-    const trimmed = raw.trim();
-    const lineNo = i + 1;
-
-    if (inBacktick) {
-      records.push({ lineNo, raw, kind: 'string_cont' });
-      // 在反引号多行字符串内继续推进直到闭合反引号（TS 支持反斜杠转义，Go 原始字符串不支持转义）
-      for (let c = 0; c < raw.length; c++) {
-        if (supportSingleQuoteString && raw[c] === '\\') {
-          c++;
-          continue;
-        }
-        if (raw[c] === '`') {
-          inBacktick = false;
-          ({ inBlockComment, inBacktick, blockStartLineNo, blockLines } = scanRestOfLine(
-            raw,
-            c + 1,
-            lineNo,
-            supportSingleQuoteString,
-            { inBlockComment, inBacktick, blockStartLineNo, blockLines },
-          ));
-          break;
-        }
-      }
-      continue;
-    }
-
-    if (inBlockComment) {
-      blockLines.push(raw);
-      const endPos = raw.indexOf('*/');
-      if (endPos !== -1) {
-        inBlockComment = false;
-        records.push({ lineNo: blockStartLineNo, raw, kind: 'block_comment', blockBody: blockLines.join('\n') });
-        blockLines = [];
-        ({ inBlockComment, inBacktick, blockStartLineNo, blockLines } = scanRestOfLine(
-          raw,
-          endPos + 2,
-          lineNo,
-          supportSingleQuoteString,
-          { inBlockComment, inBacktick, blockStartLineNo, blockLines },
-        ));
-      } else {
-        records.push({ lineNo, raw, kind: 'block_comment' });
-      }
-      continue;
-    }
-
-    if (trimmed.startsWith('//')) {
-      records.push({ lineNo, raw, kind: 'line_comment' });
-      continue;
-    }
-
-    if (trimmed.startsWith('/*')) {
-      const endPos = raw.indexOf('*/', raw.indexOf('/*') + 2);
-      if (endPos !== -1) {
-        records.push({ lineNo, raw, kind: 'block_comment', blockBody: raw.slice(raw.indexOf('/*'), endPos + 2) });
-        ({ inBlockComment, inBacktick, blockStartLineNo, blockLines } = scanRestOfLine(
-          raw,
-          endPos + 2,
-          lineNo,
-          supportSingleQuoteString,
-          { inBlockComment, inBacktick, blockStartLineNo, blockLines },
-        ));
-      } else {
-        inBlockComment = true;
-        blockStartLineNo = lineNo;
-        blockLines = [raw];
-        records.push({ lineNo, raw, kind: 'block_comment' });
-      }
-      continue;
-    }
-
-    records.push({ lineNo, raw, kind: 'code' });
-    ({ inBlockComment, inBacktick, blockStartLineNo, blockLines } = scanRestOfLine(
-      raw,
-      0,
-      lineNo,
-      supportSingleQuoteString,
-      { inBlockComment, inBacktick, blockStartLineNo, blockLines },
-    ));
-  }
-
-  return records;
-}
-
-/** 扫描代码行内字符，更新跨行反引号字符串与多行块注释状态。 */
-function scanRestOfLine(raw, startCol, lineNo, supportSingleQuoteString, state) {
-  let { inBlockComment, inBacktick, blockStartLineNo, blockLines } = state;
-  let inDouble = false;
-  let inSingle = false;
-
-  for (let c = startCol; c < raw.length; c++) {
-    const ch = raw[c];
-    const next = raw[c + 1];
-
-    if (inBlockComment) {
-      if (ch === '*' && next === '/') {
-        inBlockComment = false;
-        blockLines = [];
-        c++;
-      }
-      continue;
-    }
-    if (inBacktick) {
-      if (supportSingleQuoteString && ch === '\\') {
-        c++;
-        continue;
-      }
-      if (ch === '`') inBacktick = false;
-      continue;
-    }
-    if (inDouble) {
-      if (ch === '\\') {
-        c++;
-        continue;
-      }
-      if (ch === '"') inDouble = false;
-      continue;
-    }
-    if (inSingle) {
-      if (ch === '\\') {
-        c++;
-        continue;
-      }
-      if (ch === "'") inSingle = false;
-      continue;
-    }
-
-    if (ch === '/' && next === '/') {
-      break;
-    }
-    if (ch === '/' && next === '*') {
-      inBlockComment = true;
-      blockStartLineNo = lineNo;
-      blockLines = [raw.slice(c)];
-      c++;
-      continue;
-    }
-    if (ch === '"') {
-      inDouble = true;
-    } else if (ch === "'") {
-      inSingle = true;
-    } else if (ch === '`') {
-      inBacktick = true;
-    }
-  }
-
-  return { inBlockComment, inBacktick, blockStartLineNo, blockLines };
 }
 
 /**
@@ -397,6 +233,26 @@ function checkGoProd(errors) {
   return goFiles.length;
 }
 
+/** 校验单个 Go 集成测试文件的中文注释纯度（拦截纯英文注释与英文分隔栏）。 */
+function inspectGoIntegrationTestContent(rel, content, errors) {
+  const classified = classifyLines(content, { supportSingleQuoteString: false });
+  checkCommentBlocks(rel, classified, errors);
+}
+
+/** 检查 Go 集成测试与 CLI 进程测试的中文注释规范，返回扫描文件数。 */
+function checkGoIntegrationTests(errors) {
+  const files = [
+    ...walkFiles(path.join(repoRoot, 'backend', 'internal', 'integration'), (f) => f.endsWith('_test.go')),
+    path.join(repoRoot, 'backend', 'cmd', 'babylog', 'cli_test.go'),
+  ].filter((f) => fs.existsSync(f));
+
+  for (const full of files) {
+    const rel = path.relative(repoRoot, full);
+    inspectGoIntegrationTestContent(rel, fs.readFileSync(full, 'utf8'), errors);
+  }
+  return files.length;
+}
+
 /** 检查前端业务代码与 Node 脚本，返回扫描文件数。 */
 function checkTsAndScripts(errors) {
   const uiDir = `${path.join(repoRoot, 'src', 'components', 'ui')}${path.sep}`;
@@ -466,6 +322,11 @@ function runSelfTest() {
     failPkgStats,
     failErrors,
   );
+  inspectGoIntegrationTestContent(
+    'integration/bad_test.go',
+    ['package integration_test', '', '// verify login response', 'func TestDemo() {}'].join('\n'),
+    failErrors,
+  );
   inspectTsContent(
     'src/bad.ts',
     ['// 误用行注释', '// biome-ignore lint/suspicious/noExplicitAny: test', 'export default function Foo() {}'].join(
@@ -474,7 +335,12 @@ function runSelfTest() {
     failErrors,
   );
   const joined = failErrors.join('\n');
-  if (!joined.includes('英文分隔栏') || !joined.includes('MissingDoc') || !joined.includes('JSDoc')) {
+  if (
+    !joined.includes('英文分隔栏') ||
+    !joined.includes('MissingDoc') ||
+    !joined.includes('纯英文行注释') ||
+    !joined.includes('JSDoc')
+  ) {
     console.error('check-comments --self-test 负向边界用例漏检：', failErrors);
     process.exit(1);
   }
@@ -488,10 +354,13 @@ if (process.argv.includes('--self-test')) {
 /** @type {string[]} */
 const errors = [];
 const goFileCount = checkGoProd(errors);
+const goIntTestCount = checkGoIntegrationTests(errors);
 const tsFileCount = checkTsAndScripts(errors);
 
-if (goFileCount === 0 || tsFileCount === 0) {
-  console.error(`中文注释门禁异常：扫描到的目标文件为空（Go=${goFileCount}, TS/JS=${tsFileCount}），请检查目录路径`);
+if (goFileCount === 0 || goIntTestCount === 0 || tsFileCount === 0) {
+  console.error(
+    `中文注释门禁异常：扫描到的目标文件为空（Go=${goFileCount}, GoIntTests=${goIntTestCount}, TS/JS=${tsFileCount}），请检查目录路径`,
+  );
   process.exit(1);
 }
 
@@ -503,4 +372,6 @@ if (errors.length > 0) {
   process.exit(1);
 }
 
-console.log(`check-comments: ok (${goFileCount} Go / ${tsFileCount} TS+JS files)`);
+console.log(
+  `check-comments: ok (${goFileCount} Go / ${goIntTestCount} Go integration tests / ${tsFileCount} TS+JS files)`,
+);

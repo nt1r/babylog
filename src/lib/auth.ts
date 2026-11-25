@@ -33,6 +33,5 @@ export async function loginWithCredentials(username: string, password: string): 
 export async function logoutSession(): Promise<void> {
   await apiRequest<SessionResponse>('/api/auth/logout', {
     method: 'POST',
-    body: {},
   });
 }

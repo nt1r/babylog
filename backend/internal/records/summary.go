@@ -76,9 +76,5 @@ func AccumulateHealthSummary(sum *HealthDailySummary, r HealthRecord) {
 		}
 	case HealthSubtypeMedicine:
 		sum.MedicineCount++
-	case HealthSubtypeGrowth:
-		sum.GrowthCount++
-	case HealthSubtypeTeeth:
-		sum.TeethCount++
 	}
 }

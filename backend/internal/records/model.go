@@ -215,12 +215,10 @@ type HealthInput struct {
 	Note           string   `json:"note"`
 }
 
-// HealthDailySummary 表示某一本地自然日的健康与生长记录小计。
+// HealthDailySummary 表示某一本地自然日的健康记录小计。
 type HealthDailySummary struct {
 	TotalCount    int      `json:"total_count"`
 	MedicineCount int      `json:"medicine_count"`
-	GrowthCount   int      `json:"growth_count"`
-	TeethCount    int      `json:"teeth_count"`
 	LatestTempC   *float64 `json:"latest_temp_c"`
 }
 

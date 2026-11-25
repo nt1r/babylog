@@ -2,6 +2,7 @@ package integration_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -14,21 +15,28 @@ import (
 /*
  * Spec: admin-auth / Administrator login and session creation / Reject cross-origin state-changing requests; Reject unsupported content type or oversized login body
  * Spec: daily-records / Authenticated access and baby-profile precondition for records
- * 场景：验证全局 API 安全中间件基线（跨源 403、非 JSON 415、超限请求体 413、畸形 JSON 400、方法不匹配 405、未知路由 404 及 Panic 统一 500 恢复）。
- * 前置：已登录并建档的隔离测试环境。
- * 目标：
- * 1. 验证认证接口与业务写接口均受 Same-Origin、Content-Type 与请求体大小限制保护。
- * 2. 验证畸形登录载荷返回 400，非法 HTTP 方法返回 405，未知 /api/* 返回 404 JSON。
- * 3. 验证未预期 panic 被恢复中间件捕获并返回统一中文 500 JSON。
+ * 测试场景：验证全局 API 安全中间件、严格 JSON 契约解码、HTTP 方法路由兜底与未预期 Panic 恢复。
+ * 业务背景：所有状态变更接口面临跨站 CSRF、超大载荷、非 JSON 伪造及前后端字段漂移风险，必须在路由中间件与解码层统一拦死并保证零脏写。
+ * 前置数据：
+ * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
+ * - 管理员与会话：已初始化并登录管理员
+ * - 宝宝档案：默认档案小汤圆（2026-07-15，female）
+ * - 前置业务记录：无（步骤 1 内为测试 PUT/DELETE 跨源先写入 1 条配方奶记录）
+ * 测试目标：
+ * 1. 验证 POST/PUT/DELETE 跨源请求均返回 403 且无脏写，而省略 Origin 请求头的同源/非浏览器写请求正常放行。
+ * 2. 验证非 JSON Content-Type 返回 415，超限请求体（登录 >16KiB、业务 >64KiB）返回 413。
+ * 3. 验证登录畸形载荷、业务接口未知字段（DisallowUnknownFields）与尾随多 JSON 均返回 400，非法方法返回 405，未知 /api/* 返回 404。
+ * 4. 验证未预期 panic 被恢复中间件捕获并统一返回中文 500 JSON。
  */
 func TestAPISecurityGuards(t *testing.T) {
 	t.Parallel()
 
 	app := NewTestApp(t)
-	app.Scenario().EnsureBaby()
+	s := app.Scenario()
+	s.EnsureBaby()
 	client := app.Client()
 
-	// 1. 认证接口与业务写接口受跨来源（403）、非 JSON（415）与请求体大小上限（413）三重门禁保护。
+	// 1. 跨来源保护覆盖 POST/PUT/DELETE 全部写方法且零脏写；无 Origin 头由 SameSite=Strict Cookie 兜底允许正常写入。
 	evilClient := client.WithOrigin("http://evil.example")
 	for _, tc := range []struct {
 		path string
@@ -38,19 +46,39 @@ func TestAPISecurityGuards(t *testing.T) {
 		{"/api/auth/logout", nil},
 		{"/api/records/feeding", map[string]any{"subtype": "formula", "amount_ml": 100, "recorded_at": "2026-11-23T01:00:00Z"}},
 	} {
-		evilClient.Post(t, tc.path, tc.body).RequireError(t, http.StatusForbidden, "")
+		evilClient.Post(t, tc.path, tc.body).RequireError(t, http.StatusForbidden, "跨来源")
 	}
 	if got := CountRows[records.FeedingRecord](t, app, ""); got != 0 {
-		t.Fatalf("expected 0 feeding rows after cross-origin 403, got %d", got)
+		t.Fatalf("跨源 POST 被拒后不应落库喂养记录，实际 %d", got)
 	}
 
-	// 非 JSON Content-Type 返回 415。
+	// 省略 Origin 头发起合法写入（模拟同源直调或非浏览器客户端），随后验证跨源 PUT/DELETE 同样返回 403 且记录完好。
+	noOriginResp := client.WithOrigin("").Post(t, "/api/records/feeding", records.FeedingInput{
+		Subtype:    records.FeedingSubtypeFormula,
+		AmountML:   ptr(100),
+		RecordedAt: "2026-11-23T01:00:00Z",
+	})
+	created := DecodeStatus[struct {
+		Record records.FeedingRecord `json:"record"`
+	}](t, noOriginResp, http.StatusCreated).Record
+
+	evilClient.Put(t, fmt.Sprintf("/api/records/feeding/%d", created.ID), records.FeedingInput{
+		Subtype:    records.FeedingSubtypeFormula,
+		AmountML:   ptr(180),
+		RecordedAt: "2026-11-23T01:00:00Z",
+	}).RequireError(t, http.StatusForbidden, "跨来源")
+	evilClient.Delete(t, fmt.Sprintf("/api/records/feeding/%d", created.ID)).
+		RequireError(t, http.StatusForbidden, "跨来源")
+	if row := FirstRow[records.FeedingRecord](t, app, "id = ?", created.ID); row.AmountML == nil || *row.AmountML != 100 {
+		t.Fatalf("跨源 PUT/DELETE 被拒后原记录不应被篡改或删除：%+v", row)
+	}
+
+	// 2. 非 JSON Content-Type 返回 415，超限请求体返回 413。
 	client.DoRaw(t, http.MethodPost, "/api/auth/login", "text/plain", []byte("username=admin")).
 		RequireError(t, http.StatusUnsupportedMediaType, "")
 	client.DoRaw(t, http.MethodPost, "/api/records/feeding", "text/plain", []byte("subtype=formula")).
 		RequireError(t, http.StatusUnsupportedMediaType, "")
 
-	// 超出请求体限制（登录 >16KiB，业务接口 >64KiB）返回 413。
 	oversizedLogin, _ := json.Marshal(map[string]string{
 		"username": defaultAdminUser,
 		"password": strings.Repeat("x", 20*1024),
@@ -67,7 +95,7 @@ func TestAPISecurityGuards(t *testing.T) {
 	client.DoRaw(t, http.MethodPost, "/api/records/feeding", "application/json", oversizedRecord).
 		RequireError(t, http.StatusRequestEntityTooLarge, "")
 
-	// 2. 畸形登录载荷返回 400，方法不匹配返回 405，未知 /api/* 返回 404 JSON。
+	// 3. 登录畸形 JSON、业务未知字段（防拼写漂移静默吞掉）、尾随多余 JSON、非法方法 405 与未知路由 404 全部精确拦截。
 	for _, raw := range []string{
 		`{invalid`,
 		`["admin","secret"]`,
@@ -78,10 +106,21 @@ func TestAPISecurityGuards(t *testing.T) {
 		client.DoRaw(t, http.MethodPost, "/api/auth/login", "application/json", []byte(raw)).
 			RequireError(t, http.StatusBadRequest, "")
 	}
+	for _, raw := range []string{
+		`{"subtype":"formula","amount_ml":120,"recorded_at":"2026-11-23T01:10:00Z","unknown_field":1}`,
+		`{"subtype":"formula","amount_ml":120,"recorded_at":"2026-11-23T01:10:00Z"}{"extra":true}`,
+	} {
+		client.DoRaw(t, http.MethodPost, "/api/records/feeding", "application/json", []byte(raw)).
+			RequireError(t, http.StatusBadRequest, "格式不正确")
+	}
+	if got := CountRows[records.FeedingRecord](t, app, ""); got != 1 {
+		t.Fatalf("非法 JSON 被拒后记录总数应仍为 1，实际 %d", got)
+	}
+
 	client.Delete(t, "/api/auth/session").RequireError(t, http.StatusMethodNotAllowed, "")
 	client.Get(t, "/api/unknown").RequireError(t, http.StatusNotFound, "")
 
-	// 3. 未预期 panic 由恢复中间件统一兜底为中文 500 JSON。
+	// 4. 挂载模拟 panic 路由，核对恢复中间件统一兜底为中文 500 JSON 且不崩溃进程。
 	app.Router.GET("/api/test-panic", func(_ *gin.Context) {
 		panic("simulated panic")
 	})
@@ -90,12 +129,17 @@ func TestAPISecurityGuards(t *testing.T) {
 
 /*
  * 范围：基础设施（无对应 OpenSpec 规格）
- * 场景：验证静态资源托管、SPA 路由回退、PWA 缓存头及路径穿越/符号链接逃逸防护。
- * 前置：启用 WithDistFixtures() 挂载隔离临时 dist 产物及指向外部敏感文件的符号链接。
- * 目标：
- * 1. 验证无扩展名 SPA 路由回退 index.html 且返回 text/html 与 Cache-Control: no-cache。
- * 2. 验证 manifest.webmanifest、sw.js 与带哈希静态资源的 MIME 类型和缓存头策略。
- * 3. 验证缺失资源、编码路径穿越（/%2e%2e/secret.txt）与符号链接逃逸（/escape.txt）均返回 404。
+ * 测试场景：验证静态资源托管、SPA 路由回退、PWA 缓存策略及路径穿越/符号链接逃逸防护。
+ * 业务背景：单二进制发布态由后端直接托管前端构建产物，既要确保刷新子路由能回退 index.html 并遵循 PWA 缓存头，也要防路径穿越读取宿主机敏感文件。
+ * 前置数据：
+ * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
+ * - 管理员与会话：未登录匿名客户端
+ * - 宝宝档案：无
+ * - 前置业务记录：启用 WithDistFixtures() 在临时目录构造 index.html、manifest.webmanifest、sw.js、带哈希 JS 与指向外部 secret.txt 的符号链接
+ * 测试目标：
+ * 1. 验证无扩展名 SPA 路由（/dashboard）回退 index.html，返回 text/html 与 Cache-Control: no-cache。
+ * 2. 验证 manifest.webmanifest、sw.js 与带哈希静态资源的 MIME 类型和缓存头策略（no-cache vs immutable）。
+ * 3. 验证缺失资源、编码路径穿越（/%2e%2e/secret.txt）与符号链接逃逸（/escape.txt）全部返回 404。
  */
 func TestStaticAssetsAndSPAFallback(t *testing.T) {
 	t.Parallel()
@@ -103,42 +147,42 @@ func TestStaticAssetsAndSPAFallback(t *testing.T) {
 	app := NewTestApp(t, WithoutAutoLogin(), WithDistFixtures())
 	anon := app.UnauthenticatedClient()
 
-	// 1. SPA 路由回退 index.html。
+	// 1. 刷新前端深层路由时必须回退 index.html 并禁止强缓存，防止发布后卡在旧入口 HTML。
 	spaResp := anon.Get(t, "/dashboard")
 	spaResp.RequireStatus(t, http.StatusOK)
 	if ct := spaResp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
-		t.Errorf("expected text/html content-type, got %q", ct)
+		t.Errorf("SPA 回退预期 text/html，实际 %q", ct)
 	}
 	if cc := spaResp.Header.Get("Cache-Control"); cc != "no-cache" {
-		t.Errorf("expected index.html Cache-Control=no-cache, got %q", cc)
+		t.Errorf("index.html 预期 Cache-Control=no-cache，实际 %q", cc)
 	}
 	if !strings.Contains(string(spaResp.Body), "BabyLog Test") {
-		t.Errorf("unexpected SPA html body: %q", string(spaResp.Body))
+		t.Errorf("SPA 回退 HTML 内容不符合预期：%q", string(spaResp.Body))
 	}
 
-	// 2. PWA manifest、Service Worker 与带哈希静态资源的 MIME 与缓存头校验。
+	// 2. 核对 PWA 清单、Service Worker 与内容哈希资源的 MIME 及缓存策略，避免 SW 缓存卡死更新。
 	manifestResp := anon.Get(t, "/manifest.webmanifest")
 	manifestResp.RequireStatus(t, http.StatusOK)
 	if ct := manifestResp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/manifest+json") {
-		t.Errorf("expected application/manifest+json, got %q", ct)
+		t.Errorf("manifest 预期 application/manifest+json，实际 %q", ct)
 	}
 	if cc := manifestResp.Header.Get("Cache-Control"); cc != "no-cache" {
-		t.Errorf("expected manifest Cache-Control=no-cache, got %q", cc)
+		t.Errorf("manifest 预期 Cache-Control=no-cache，实际 %q", cc)
 	}
 
 	swResp := anon.Get(t, "/sw.js")
 	swResp.RequireStatus(t, http.StatusOK)
 	if cc := swResp.Header.Get("Cache-Control"); cc != "no-cache" {
-		t.Errorf("expected sw.js Cache-Control=no-cache, got %q", cc)
+		t.Errorf("sw.js 预期 Cache-Control=no-cache，实际 %q", cc)
 	}
 
 	assetResp := anon.Get(t, "/assets/app-hash123.js")
 	assetResp.RequireStatus(t, http.StatusOK)
 	if cc := assetResp.Header.Get("Cache-Control"); !strings.Contains(cc, "immutable") {
-		t.Errorf("expected immutable Cache-Control for hashed asset, got %q", cc)
+		t.Errorf("带哈希静态资源预期 immutable 缓存头，实际 %q", cc)
 	}
 
-	// 3. 缺失静态资源、编码路径穿越与符号链接逃逸均返回 404。
+	// 3. 缺失静态资源、编码路径穿越与指向目录外敏感文件的符号链接均须返回 404，杜绝越界读文件。
 	for _, targetPath := range []string{"/assets/missing.js", "/%2e%2e/secret.txt", "/escape.txt"} {
 		anon.Get(t, targetPath).RequireStatus(t, http.StatusNotFound)
 	}

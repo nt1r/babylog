@@ -200,7 +200,7 @@ func TestAccumulateSleepAndHealthSummary(t *testing.T) {
 	AccumulateHealthSummary(&healthSum, HealthRecord{Subtype: HealthSubtypeGrowth})
 	AccumulateHealthSummary(&healthSum, HealthRecord{Subtype: HealthSubtypeTeeth})
 
-	if healthSum.TotalCount != 5 || healthSum.MedicineCount != 1 || healthSum.GrowthCount != 1 || healthSum.TeethCount != 1 {
+	if healthSum.TotalCount != 5 || healthSum.MedicineCount != 1 {
 		t.Fatalf("unexpected health counts: %#v", healthSum)
 	}
 	if healthSum.LatestTempC == nil || *healthSum.LatestTempC != 38.2 {

@@ -63,7 +63,6 @@ interface DashboardSummary {
 
 export interface DashboardTrends {
   days: number;
-  timezone: string;
   daily: Array<{
     date: string;
     label: string;

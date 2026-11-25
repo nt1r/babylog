@@ -49,7 +49,7 @@ export interface VaccineDose {
 }
 
 export interface VaccineNextFocus {
-  kind: VaccineAlertState;
+  kind: Exclude<VaccineAlertState, 'completed'>;
   target_date: string;
   days_until: number;
   age_label: string;

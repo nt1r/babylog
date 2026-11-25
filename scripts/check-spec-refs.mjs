@@ -1,24 +1,32 @@
 #!/usr/bin/env node
 /**
- * 零外部依赖的 OpenSpec 场景引用与集成测试中文场景注释模板校验：
- * 1. 校验 backend/internal/integration/*_test.go 中每条 `Spec: <capability> / <Requirement> [/ <Scenario1>; <Scenario2>]`
+ * 零外部依赖的 OpenSpec 场景引用、集成测试注释模板与场景索引表一致性校验：
+ * 1. 校验集成测试与 CLI 进程测试中每条 `Spec: <capability> / <Requirement> [/ <Scenario1>; <Scenario2>]`
  *    注释均能在 openspec/specs/<capability>/spec.md 中精确找到对应的 Requirement 与 Scenario；
- * 2. 校验业务与安全集成测试的顶层 `func Test*` 均具备完整中文场景注释块（`Spec:` 或 `范围：基础设施`、`场景：`、`前置：`、`目标：`）；
- * 3. 单函数（无 `t.Run`）严格校验顶部 `目标：` 从 1 连续递增并与函数体内 `// N.` 分段注释一一对应；
- *    聚合函数（含 `t.Run`）校验子测试内不再重启 `// N.` 数字前缀以免与顶层目标编号冲突。
+ * 2. 校验全部非前端 Web UI 的后端 OpenSpec Scenario 均至少被一条测试引用（零遗漏）；
+ * 3. 校验全部顶层 `func Test*` 具备完整五段中文场景注释块（`Spec:`/`范围：基础设施`、`测试场景：`、`业务背景：`、
+ *    `前置数据：` 清单、`测试目标：`），为单场景独立函数（无 `t.Run`）且 `测试目标` 与 `// N.` 中文步骤 1:1 对齐；
+ * 4. 校验 docs/testing-guide.md 场景索引表与实际测试函数声明名称及同文件顺序 1:1 双向一致（防索引表漂移）。
  * 支持 `--self-test` 运行纯内存解析器边界自检（零磁盘 IO、防回归）。
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { classifyLines } from './lib/go-lexer.mjs';
 
 const repoRoot = process.cwd();
 const specsRoot = path.resolve(repoRoot, 'openspec', 'specs');
 const integrationRoot = path.resolve(repoRoot, 'backend', 'internal', 'integration');
+const cliTestFile = path.resolve(repoRoot, 'backend', 'cmd', 'babylog', 'cli_test.go');
+const testingGuideFile = path.resolve(repoRoot, 'docs', 'testing-guide.md');
 const SUPPORT_TEST_FILES = new Set(['harness_test.go', 'scenario_test.go']);
+const CJK_RE = /[\u4e00-\u9fff]/;
 
-/** @returns {Map<string, Map<string, Set<string>>>} capability -> requirement -> scenarios */
+/**
+ * 加载全部 OpenSpec 主规格，区分后端自动化测试必覆盖的 Scenario 与仅人工验收的纯 Web UI Requirement。
+ * @returns {Map<string, Map<string, { scenarios: Set<string>, webOnly: boolean }>>}
+ */
 function loadSpecs() {
-  /** @type {Map<string, Map<string, Set<string>>>} */
+  /** @type {Map<string, Map<string, { scenarios: Set<string>, webOnly: boolean }>>} */
   const catalog = new Map();
   if (!fs.existsSync(specsRoot)) return catalog;
 
@@ -27,19 +35,25 @@ function loadSpecs() {
     const specFile = path.join(specsRoot, entry.name, 'spec.md');
     if (!fs.existsSync(specFile)) continue;
 
-    /** @type {Map<string, Set<string>>} */
+    /** @type {Map<string, { scenarios: Set<string>, webOnly: boolean }>} */
     const reqMap = new Map();
     let currentReq = null;
     for (const rawLine of fs.readFileSync(specFile, 'utf8').split(/\r?\n/)) {
       const reqMatch = rawLine.match(/^###\s+Requirement:\s+(.+?)\s*$/);
       if (reqMatch) {
         currentReq = reqMatch[1];
-        if (!reqMap.has(currentReq)) reqMap.set(currentReq, new Set());
+        if (!reqMap.has(currentReq)) reqMap.set(currentReq, { scenarios: new Set(), webOnly: false });
         continue;
       }
       const scenMatch = rawLine.match(/^####\s+Scenario:\s+(.+?)\s*$/);
       if (scenMatch && currentReq) {
-        reqMap.get(currentReq)?.add(scenMatch[1]);
+        reqMap.get(currentReq)?.scenarios.add(scenMatch[1]);
+        continue;
+      }
+      // 仅针对前端 Web 界面交互与布局的 Requirement（正文声明 The web application/dashboard SHALL）归维护者手动视觉验收，不纳入后端 Go 自动化必覆盖集。
+      if (currentReq && /^The web (?:application|dashboard) SHALL\b/.test(rawLine.trim())) {
+        const meta = reqMap.get(currentReq);
+        if (meta) meta.webOnly = true;
       }
     }
     catalog.set(entry.name, reqMap);
@@ -59,61 +73,42 @@ function extractLeadingBlockComment(lines, funcIdx) {
   return lines.slice(start, end + 1);
 }
 
-/**
- * 定位 Go 顶层函数体结束行（依赖 gofmt 规范下顶层函数以列 0 的 `}` 闭合，
- * 同时跳过多行块注释与原始字符串，避免把下一个测试函数的块注释吞进当前函数体）。
- */
-function findTopLevelFuncEnd(lines, funcIdx) {
-  let inBlock = false;
-  let inRawStr = false;
-  for (let i = funcIdx + 1; i < lines.length; i++) {
-    const raw = lines[i];
-    if (!inBlock && !inRawStr && raw.startsWith('}')) {
+/** 基于共用 Go 词法扫描结果定位顶层函数体闭合行（列 0 的 `}` 且处于有效代码态）。 */
+function findTopLevelFuncEnd(classified, funcIdx) {
+  for (let i = funcIdx + 1; i < classified.length; i++) {
+    if (classified[i].kind === 'code' && classified[i].raw.startsWith('}')) {
       return i;
     }
-    let inDouble = false;
-    for (let c = 0; c < raw.length; c++) {
-      const ch = raw[c];
-      const next = raw[c + 1];
-      if (inBlock) {
-        if (ch === '*' && next === '/') {
-          inBlock = false;
-          c++;
-        }
-        continue;
-      }
-      if (inRawStr) {
-        if (ch === '`') inRawStr = false;
-        continue;
-      }
-      if (inDouble) {
-        if (ch === '\\') {
-          c++;
-          continue;
-        }
-        if (ch === '"') inDouble = false;
-        continue;
-      }
-      if (ch === '/' && next === '/') break;
-      if (ch === '/' && next === '*') {
-        inBlock = true;
-        c++;
-        continue;
-      }
-      if (ch === '`') inRawStr = true;
-      else if (ch === '"') inDouble = true;
-    }
   }
-  return lines.length;
+  return classified.length;
 }
 
-/** 解析场景块注释「目标：」下的数字编号序列（支持首条与「目标：」同行或换行写法）。 */
+/** 解析场景块注释中「前置数据：」下的条目数，要求至少列出一条结构化 `- ` 前置数据。 */
+function countPreconditionBullets(blockLines) {
+  let inPre = false;
+  let count = 0;
+  for (const raw of blockLines) {
+    if (/^\s*\*?\s*前置数据：\s*$/.test(raw)) {
+      inPre = true;
+      continue;
+    }
+    if (inPre && /^\s*\*?\s*测试目标：/.test(raw)) {
+      break;
+    }
+    if (inPre && /^\s*\*?\s*-\s+\S/.test(raw)) {
+      count++;
+    }
+  }
+  return count;
+}
+
+/** 解析场景块注释「测试目标：」下的数字编号序列（支持首条与「测试目标：」同行或换行写法）。 */
 function parseGoalNumbers(blockLines) {
   /** @type {number[]} */
   const nums = [];
   let inGoals = false;
   for (const raw of blockLines) {
-    const goalHeader = raw.match(/^\s*\*?\s*目标：\s*(.*)$/);
+    const goalHeader = raw.match(/^\s*\*?\s*测试目标：\s*(.*)$/);
     if (goalHeader) {
       inGoals = true;
       const inlineNum = goalHeader[1].match(/^(\d+)\.\s+/);
@@ -127,64 +122,67 @@ function parseGoalNumbers(blockLines) {
   return nums;
 }
 
-/** 扫描函数体内的有效代码与整行分段注释，返回是否含真实 `t.Run(` 调用及 `// N.` 编号序列。 */
-function inspectFuncBody(bodyLines) {
+/** 基于共用 Go 词法扫描结果提取函数体内的真实 `t.Run(` 调用及独立整行 `// N.` 分段注释。 */
+function inspectFuncBody(bodyClassified) {
   let hasSubtests = false;
-  /** @type {number[]} */
-  const bodyStepNums = [];
-  let inBlock = false;
+  /** @type {Array<{ num: number, text: string, lineNo: number }>} */
+  const bodySteps = [];
 
-  for (const raw of bodyLines) {
-    const trimmed = raw.trim();
-    if (inBlock) {
-      if (trimmed.includes('*/')) inBlock = false;
+  for (const item of bodyClassified) {
+    if (item.kind === 'line_comment') {
+      const stepMatch = item.raw.trim().match(/^\/\/\s*(\d+)\.\s+(.*)$/);
+      if (stepMatch) {
+        bodySteps.push({
+          num: Number(stepMatch[1]),
+          text: stepMatch[2].trim(),
+          lineNo: item.lineNo,
+        });
+      }
       continue;
     }
-    if (trimmed.startsWith('/*')) {
-      if (!trimmed.includes('*/')) inBlock = true;
-      continue;
-    }
-    if (trimmed.startsWith('//')) {
-      const stepMatch = trimmed.match(/^\/\/\s*(\d+)\.\s+/);
-      if (stepMatch) bodyStepNums.push(Number(stepMatch[1]));
-      continue;
-    }
-    // 剔除行尾注释后再检测真实 t.Run( 调用，防止注释内提及 t.Run( 触发误判
-    const codePart = raw.replace(/\/\/.*$/, '');
-    if (/\bt\.Run\s*\(/.test(codePart)) {
+    if (item.codeOnly && /\bt\.Run\s*\(/.test(item.codeOnly)) {
       hasSubtests = true;
     }
   }
-  return { hasSubtests, bodyStepNums };
+  return { hasSubtests, bodySteps };
 }
 
-/** 校验单个集成测试文件内全部顶层 Test* 函数的中文场景注释模板与编号一致性，返回已检验测试函数数。 */
-function checkIntegrationTemplates(relPath, lines, errors) {
-  let checkedTests = 0;
-  for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+/** 校验单个测试文件内全部顶层 Test* 函数的中文场景注释模板与编号一致性，返回已发现函数名列表（按声明顺序）。 */
+function checkIntegrationTemplates(relPath, lines, classified, errors) {
+  /** @type {string[]} */
+  const testNames = [];
+  for (let lineIdx = 0; lineIdx < classified.length; lineIdx++) {
+    if (classified[lineIdx].kind !== 'code') continue;
     const m = lines[lineIdx].match(/^func\s+(Test\w+)\s*\(/);
     if (!m || m[1] === 'TestMain') continue;
 
-    checkedTests++;
     const name = m[1];
+    testNames.push(name);
     const lineNo = lineIdx + 1;
     const blockLines = extractLeadingBlockComment(lines, lineIdx);
     if (!blockLines) {
-      errors.push(`${relPath}:${lineNo} (${name}) - 缺少中文场景块注释（须含 Spec:/范围、场景、前置、目标）`);
+      errors.push(
+        `${relPath}:${lineNo} (${name}) - 缺少中文场景块注释（须含 Spec:/范围、测试场景、业务背景、前置数据、测试目标）`,
+      );
       continue;
     }
 
     const blockText = blockLines.join('\n');
-    // 要求 Spec: 必须带同行非空内容（使用 [ \t] 防止 \s 跨换行吞掉下一行的 `*`）
     const hasSpecOrInfra = /^[ \t]*\*?[ \t]*(?:Spec:[ \t]+\S|范围：[ \t]*基础设施)/m.test(blockText);
-    const hasScene = /^[ \t]*\*?[ \t]*场景：[ \t]*\S/m.test(blockText);
-    const hasPre = /^[ \t]*\*?[ \t]*前置：[ \t]*\S/m.test(blockText);
-    const hasGoal = /^[ \t]*\*?[ \t]*目标：/m.test(blockText);
+    const hasScene = /^[ \t]*\*?[ \t]*测试场景：[ \t]*\S/m.test(blockText);
+    const hasBg = /^[ \t]*\*?[ \t]*业务背景：[ \t]*\S/m.test(blockText);
+    const hasPre = /^[ \t]*\*?[ \t]*前置数据：/m.test(blockText);
+    const hasGoal = /^[ \t]*\*?[ \t]*测试目标：/m.test(blockText);
 
-    if (!hasSpecOrInfra || !hasScene || !hasPre || !hasGoal) {
+    if (!hasSpecOrInfra || !hasScene || !hasBg || !hasPre || !hasGoal) {
       errors.push(
-        `${relPath}:${lineNo} (${name}) - 中文场景块注释不完整（须同时包含非空 Spec:/范围：基础设施、场景：、前置：、目标：）`,
+        `${relPath}:${lineNo} (${name}) - 中文场景块注释不完整（须同时包含非空 Spec:/范围：基础设施、测试场景：、业务背景：、前置数据：、测试目标：）`,
       );
+      continue;
+    }
+
+    if (countPreconditionBullets(blockLines) === 0) {
+      errors.push(`${relPath}:${lineNo} (${name}) - 场景块注释「前置数据：」下须至少包含一条 "- ..." 结构化清单项`);
       continue;
     }
 
@@ -192,32 +190,43 @@ function checkIntegrationTemplates(relPath, lines, errors) {
     const expectedSequential = goalNums.map((_, idx) => idx + 1).join(',');
     if (goalNums.length === 0 || goalNums.join(',') !== expectedSequential) {
       errors.push(
-        `${relPath}:${lineNo} (${name}) - 场景块注释「目标：」编号须从 1 连续递增（当前为 [${goalNums.join(',')}]）`,
+        `${relPath}:${lineNo} (${name}) - 场景块注释「测试目标：」编号须从 1 连续递增（当前为 [${goalNums.join(',')}]）`,
       );
       continue;
     }
 
-    const bodyEnd = findTopLevelFuncEnd(lines, lineIdx);
-    const { hasSubtests, bodyStepNums } = inspectFuncBody(lines.slice(lineIdx + 1, bodyEnd));
+    const bodyEnd = findTopLevelFuncEnd(classified, lineIdx);
+    const { hasSubtests, bodySteps } = inspectFuncBody(classified.slice(lineIdx + 1, bodyEnd));
 
     if (hasSubtests) {
-      if (bodyStepNums.length > 0) {
-        errors.push(
-          `${relPath}:${lineNo} (${name}) - 含 t.Run 子测试的聚合用例内部请使用无编号中文步骤注释，避免与顶层「目标：」编号冲突（发现 // ${bodyStepNums.join(', ')}.）`,
-        );
-      }
-    } else if (goalNums.join(',') !== bodyStepNums.join(',')) {
       errors.push(
-        `${relPath}:${lineNo} (${name}) - 顶部目标编号 [${goalNums.join(',')}] 与方法体内分段注释编号 [${bodyStepNums.join(',')}] 不一致`,
+        `${relPath}:${lineNo} (${name}) - 集成测试请拆分为单场景独立顶层函数，不使用 t.Run 聚合多主题以免割裂前置数据与目标编号`,
+      );
+      continue;
+    }
+
+    const bodyStepNums = bodySteps.map((s) => s.num);
+    if (goalNums.join(',') !== bodyStepNums.join(',')) {
+      errors.push(
+        `${relPath}:${lineNo} (${name}) - 顶部测试目标编号 [${goalNums.join(',')}] 与方法体内分段注释编号 [${bodyStepNums.join(',')}] 不一致`,
       );
     }
+
+    for (const step of bodySteps) {
+      if (!CJK_RE.test(step.text)) {
+        errors.push(
+          `${relPath}:${step.lineNo} (${name}) - 步骤注释 "// ${step.num}. ${step.text}" 须使用中文说明业务意图`,
+        );
+      }
+    }
   }
-  return checkedTests;
+  return testNames;
 }
 
-/** 校验单个文件内容中的全部 Spec: 引用及（如非底座文件）中文场景注释模板。 */
-function inspectIntegrationFile(relPath, content, specs, checkTemplates, errors) {
+/** 校验单个文件内容中的全部 Spec: 引用及（如非底座文件）中文场景注释模板，记录已覆盖的 Scenario。 */
+function inspectIntegrationFile(relPath, content, specs, checkTemplates, coveredScenarios, errors) {
   const lines = content.split(/\r?\n/);
+  const classified = classifyLines(content, { supportSingleQuoteString: false });
   let refs = 0;
 
   // 1. 校验每条 Spec: 注释均格式合法且精确匹配现存 OpenSpec Requirement 与 Scenario（拦截空值与漏空格）
@@ -251,13 +260,13 @@ function inspectIntegrationFile(relPath, content, specs, checkTemplates, errors)
       errors.push(`${relPath}:${lineNo} - 未找到 OpenSpec capability "${capability}"`);
       continue;
     }
-    const scenarios = reqMap.get(requirement);
-    if (!scenarios) {
+    const reqMeta = reqMap.get(requirement);
+    if (!reqMeta) {
       errors.push(`${relPath}:${lineNo} - capability "${capability}" 中未找到 Requirement "${requirement}"`);
       continue;
     }
 
-    // 允许仅追溯到 Requirement 级（省略 Scenario 列表）
+    // 允许仅追溯到 Requirement 级（省略 Scenario 列表），但不自动标记其下全部 Scenario 为已覆盖
     if (!scenarioList) {
       refs++;
       continue;
@@ -268,41 +277,118 @@ function inspectIntegrationFile(relPath, content, specs, checkTemplates, errors)
       .map((s) => s.trim())
       .filter(Boolean)) {
       refs++;
-      if (!scenarios.has(scenario)) {
+      if (!reqMeta.scenarios.has(scenario)) {
         errors.push(`${relPath}:${lineNo} - "${capability} / ${requirement}" 中未找到 Scenario "${scenario}"`);
+      } else {
+        coveredScenarios.add(`${capability} / ${requirement} / ${scenario}`);
       }
     }
   }
 
   // 2. 校验业务与安全集成测试中文场景注释块模板及编号一致性
-  const tests = checkTemplates ? checkIntegrationTemplates(relPath, lines, errors) : 0;
-  return { refs, tests };
+  const testNames = checkTemplates ? checkIntegrationTemplates(relPath, lines, classified, errors) : [];
+  return { refs, testNames };
+}
+
+/** 解析 docs/testing-guide.md 场景索引表中的（规范化文件名 → 函数名列表），校验与实际声明 1:1 双向一致且同文件顺序一致。 */
+function checkTestingGuideIndex(guideContent, actualByFile, errors) {
+  /** @type {Map<string, string[]>} */
+  const indexedByFile = new Map();
+  let inIndexSection = false;
+  for (const line of guideContent.split(/\r?\n/)) {
+    if (/^###\s+4\.3\s+集成测试场景索引表/.test(line)) {
+      inIndexSection = true;
+      continue;
+    }
+    if (inIndexSection && /^##\s+/.test(line)) {
+      break;
+    }
+    if (!inIndexSection) continue;
+    const rowMatch = line.match(/^\|\s*I\d+\s*\|[^|]+\|\s*`([^`]+)`\s*\/\s*`(Test\w+)`\s*\|/);
+    if (!rowMatch) continue;
+    const fileKey = rowMatch[1];
+    const fnName = rowMatch[2];
+    if (!indexedByFile.has(fileKey)) indexedByFile.set(fileKey, []);
+    indexedByFile.get(fileKey)?.push(fnName);
+  }
+
+  for (const [fileKey, actualFns] of actualByFile.entries()) {
+    const docFns = indexedByFile.get(fileKey) ?? [];
+    if (actualFns.join(',') !== docFns.join(',')) {
+      errors.push(
+        `docs/testing-guide.md 索引表与 ${fileKey} 实际声明不一致或顺序漂移（代码=[${actualFns.join(', ')}]，文档=[${docFns.join(', ')}]）`,
+      );
+    }
+  }
+  for (const fileKey of indexedByFile.keys()) {
+    if (!actualByFile.has(fileKey)) {
+      errors.push(`docs/testing-guide.md 索引表引用了不存在的测试文件 "${fileKey}"`);
+    }
+  }
+}
+
+/** 校验全部后端（非 webOnly）OpenSpec Scenario 至少被一条测试的 Spec: 注释覆盖。 */
+function checkBackendSpecCoverage(specs, coveredScenarios, errors) {
+  for (const [capability, reqMap] of specs.entries()) {
+    for (const [requirement, meta] of reqMap.entries()) {
+      if (meta.webOnly) continue;
+      for (const scenario of meta.scenarios) {
+        const key = `${capability} / ${requirement} / ${scenario}`;
+        if (!coveredScenarios.has(key)) {
+          errors.push(`openspec/specs/${capability}/spec.md - 后端 Scenario "${key}" 缺少集成测试 Spec: 引用`);
+        }
+      }
+    }
+  }
 }
 
 /** 纯内存解析器边界自检（零磁盘 IO），防止后续调整引入漏报或误报回归。 */
 function runSelfTest() {
-  const mockSpecs = new Map([['demo', new Map([['Login', new Set(['Ok'])]])]]);
+  const mockSpecs = new Map([
+    [
+      'demo',
+      new Map([
+        ['Login', { scenarios: new Set(['Ok']), webOnly: false }],
+        ['WebUI', { scenarios: new Set(['Render']), webOnly: true }],
+      ]),
+    ],
+  ]);
 
   /** @type {string[]} */
   const passErrors = [];
-  inspectIntegrationFile(
+  const passCovered = new Set();
+  const okRes = inspectIntegrationFile(
     'demo_ok_test.go',
     [
       'package integration_test',
       '/*',
       ' * Spec: demo / Login / Ok',
-      ' * 场景：单函数注释提到 t.Run( 不误判。',
-      ' * 前置：无。',
-      ' * 目标：',
+      ' * 测试场景：单函数字符串与注释提到 t.Run( 不误判。',
+      ' * 业务背景：验证正常登录闭环并确保字符串字面量不触发误报。',
+      ' * 前置数据：',
+      ' * - 管理员与会话：已初始化管理员，未登录。',
+      ' * 测试目标：',
       ' * 1. 验证正常流程。',
       ' */',
       'func TestSingle(t *testing.T) {',
       '\t// 注意：此处不需要 t.Run(',
-      '\t// 1. 断言。',
+      '\t_ = `',
+      '// 9. raw string fake step',
+      't.Run("raw string fake subtest", nil)',
+      '`',
+      '\t_ = "t.Run(fake)"',
+      '\t// 1. 验证登录响应与落库。',
       '}',
     ].join('\n'),
     mockSpecs,
     true,
+    passCovered,
+    passErrors,
+  );
+  checkBackendSpecCoverage(mockSpecs, passCovered, passErrors);
+  checkTestingGuideIndex(
+    '### 4.3 集成测试场景索引表\n| I01 | 演示 | `demo_ok_test.go` / `TestSingle` | 正常 | 说明 |\n',
+    new Map([['demo_ok_test.go', okRes.testNames]]),
     passErrors,
   );
   if (passErrors.length > 0) {
@@ -318,11 +404,11 @@ function runSelfTest() {
       'package integration_test',
       '/*',
       ' * Spec:',
-      ' * 场景：空 Spec 与跳号目标。',
-      ' * 前置：无。',
-      ' * 目标：',
+      ' * 测试场景：缺业务背景与空 Spec。',
+      ' * 前置数据：',
+      ' * - 无。',
+      ' * 测试目标：',
       ' * 1. 第一项。',
-      ' * 3. 第三项。',
       ' */',
       'func TestBad(t *testing.T) {',
       '\t// 1. 断言。',
@@ -330,6 +416,7 @@ function runSelfTest() {
     ].join('\n'),
     mockSpecs,
     true,
+    new Set(),
     failErrors,
   );
   const joined = failErrors.join('\n');
@@ -339,29 +426,81 @@ function runSelfTest() {
   }
 
   /** @type {string[]} */
-  const skipNumErrors = [];
+  const extraFailErrors = [];
   inspectIntegrationFile(
-    'demo_skip_test.go',
+    'demo_extra_bad_test.go',
     [
       'package integration_test',
       '/*',
       ' * Spec: demo / Login / Ok',
-      ' * 场景：跳号目标。',
-      ' * 前置：无。',
-      ' * 目标：',
+      ' * 测试场景：前置数据无清单项。',
+      ' * 业务背景：验证前置数据必须分条列出。',
+      ' * 前置数据：无。',
+      ' * 测试目标：',
+      ' * 1. 第一项。',
+      ' */',
+      'func TestNoBullets(t *testing.T) {',
+      '\t// 1. 断言。',
+      '}',
+      '/*',
+      ' * Spec: demo / Login / Ok',
+      ' * 测试场景：跳号目标。',
+      ' * 业务背景：验证目标编号必须连续递增。',
+      ' * 前置数据：',
+      ' * - 管理员与会话：无。',
+      ' * 测试目标：',
       ' * 1. 第一项。',
       ' * 3. 第三项。',
       ' */',
       'func TestSkip(t *testing.T) {',
       '\t// 1. 断言。',
       '}',
+      '/*',
+      ' * Spec: demo / Login / Ok',
+      ' * 测试场景：纯英文步骤注释。',
+      ' * 业务背景：验证英文步骤注释被拦截。',
+      ' * 前置数据：',
+      ' * - 管理员与会话：无。',
+      ' * 测试目标：',
+      ' * 1. 第一项。',
+      ' */',
+      'func TestEnglishStep(t *testing.T) {',
+      '\t// 1. verify login status.',
+      '}',
+      '/*',
+      ' * Spec: demo / Login / Ok',
+      ' * 测试场景：使用 t.Run。',
+      ' * 业务背景：验证集成测试拒绝 t.Run 聚合。',
+      ' * 前置数据：',
+      ' * - 管理员与会话：无。',
+      ' * 测试目标：',
+      ' * 1. 第一项。',
+      ' */',
+      'func TestSubtest(t *testing.T) {',
+      '\tt.Run("sub", func(t *testing.T) {})',
+      '}',
     ].join('\n'),
     mockSpecs,
     true,
-    skipNumErrors,
+    new Set(),
+    extraFailErrors,
   );
-  if (!skipNumErrors.join('\n').includes('连续递增')) {
-    console.error('check-spec-refs --self-test 跳号目标漏检：', skipNumErrors);
+  checkBackendSpecCoverage(mockSpecs, new Set(), extraFailErrors);
+  checkTestingGuideIndex(
+    '### 4.3 集成测试场景索引表\n| I01 | 演示 | `demo_ok_test.go` / `TestWrongOrder` | 正常 | 说明 |\n',
+    new Map([['demo_ok_test.go', ['TestSingle']]]),
+    extraFailErrors,
+  );
+  const extraJoined = extraFailErrors.join('\n');
+  if (
+    !extraJoined.includes('结构化清单项') ||
+    !extraJoined.includes('连续递增') ||
+    !extraJoined.includes('须使用中文说明业务意图') ||
+    !extraJoined.includes('不使用 t.Run') ||
+    !extraJoined.includes('缺少集成测试 Spec: 引用') ||
+    !extraJoined.includes('实际声明不一致或顺序漂移')
+  ) {
+    console.error('check-spec-refs --self-test 扩展规则漏检：', extraFailErrors);
     process.exit(1);
   }
 }
@@ -374,6 +513,9 @@ if (process.argv.includes('--self-test')) {
 const specs = loadSpecs();
 /** @type {string[]} */
 const errors = [];
+const coveredScenarios = new Set();
+/** @type {Map<string, string[]>} */
+const actualByFile = new Map();
 let checkedRefs = 0;
 let checkedTests = 0;
 
@@ -382,20 +524,45 @@ if (fs.existsSync(integrationRoot)) {
     if (!entry.isFile() || !entry.name.endsWith('_test.go')) continue;
     const fullPath = path.join(integrationRoot, entry.name);
     const relPath = path.relative(repoRoot, fullPath);
+    const checkTemplates = !SUPPORT_TEST_FILES.has(entry.name);
     const res = inspectIntegrationFile(
       relPath,
       fs.readFileSync(fullPath, 'utf8'),
       specs,
-      !SUPPORT_TEST_FILES.has(entry.name),
+      checkTemplates,
+      coveredScenarios,
       errors,
     );
     checkedRefs += res.refs;
-    checkedTests += res.tests;
+    checkedTests += res.testNames.length;
+    if (checkTemplates) {
+      actualByFile.set(entry.name, res.testNames);
+    }
   }
 }
 
+if (fs.existsSync(cliTestFile)) {
+  const relPath = path.relative(repoRoot, cliTestFile);
+  const res = inspectIntegrationFile(
+    relPath,
+    fs.readFileSync(cliTestFile, 'utf8'),
+    specs,
+    true,
+    coveredScenarios,
+    errors,
+  );
+  checkedRefs += res.refs;
+  checkedTests += res.testNames.length;
+  actualByFile.set('cmd/babylog/cli_test.go', res.testNames);
+}
+
+checkBackendSpecCoverage(specs, coveredScenarios, errors);
+if (fs.existsSync(testingGuideFile)) {
+  checkTestingGuideIndex(fs.readFileSync(testingGuideFile, 'utf8'), actualByFile, errors);
+}
+
 if (errors.length > 0) {
-  console.error('集成测试 OpenSpec 引用或中文场景注释模板校验未通过：');
+  console.error('集成测试 OpenSpec 引用、场景索引表或中文场景注释模板校验未通过：');
   for (const err of errors) {
     console.error(`  ${err}`);
   }
@@ -403,10 +570,10 @@ if (errors.length > 0) {
 }
 
 if (checkedRefs === 0 || checkedTests === 0) {
-  console.error(
-    `backend/internal/integration/*_test.go 校验异常：Spec 引用=${checkedRefs}、集成测试=${checkedTests}，请检查目录路径`,
-  );
+  console.error(`集成测试校验异常：Spec 引用=${checkedRefs}、集成测试=${checkedTests}，请检查目录路径`);
   process.exit(1);
 }
 
-console.log(`check-spec-refs: ok (${checkedRefs} Spec refs / ${checkedTests} integration tests)`);
+console.log(
+  `check-spec-refs: ok (${checkedRefs} Spec refs / ${coveredScenarios.size} unique backend scenarios / ${checkedTests} integration tests)`,
+);
