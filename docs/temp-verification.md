@@ -61,7 +61,7 @@ if (new URLSearchParams(window.location.search).get('theme') === 'dark') {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <div className="min-h-screen bg-background p-6 text-foreground">
+    <div className="min-h-svh bg-background p-6 text-foreground">
       <Checkbox checked />
     </div>
   </StrictMode>,
@@ -137,6 +137,7 @@ fi
   3. **Recharts 默认入场动画**：`<Line>` / `<Area>` 开启默认入场动画时，无头截屏可能只绘出散点而未完成折线描边；业务曲线或预览核验时显式设置 `isAnimationActive={false}`，既避免切换 Tab 闪烁也确保截屏稳定。
   4. **单次脚本批量出图**：将亮/暗色与桌面/移动端多个视口放进同一份 Node 脚本循环调用 Chrome 后在 `finally` 统一关闭 Vite server，避免反复启动服务和重复生成样板脚本。
   5. **侧边栏折叠态存储键**：本仓桌面侧边栏展开状态持久化在 `localStorage` 的 `babylog_sidebar_open`（非 shadcn 默认 Cookie）；核验折叠态（图标态）须在渲染前显式写入 `localStorage.setItem('babylog_sidebar_open', 'false')`。
+  6. **虚拟时钟下的交互断言与 `data-slot` 选择器**：`--dump-dom --virtual-time-budget` 会快进 JS 定时器而不按虚拟时间推进 CSS 过渡帧，交互回归断言应检查 Zustand 状态及 Base UI 的 `data-open`/`data-closed`/`data-ending-style` 属性，不以 `getComputedStyle().opacity` 或退场 `transitionend` 卸载作为判据；本仓 UI 原语统一使用 `data-slot="..."` 属性（如 `data-slot="sidebar-trigger"`、`data-slot="drawer-content"`、`data-slot="dialog-content"`），而非上游 `data-sidebar` 等属性。
 - **整页路由 + Mock `fetch` 预览最小骨架**（需要审视含 `AppShell` 与真实路由页的布局时，替换 `preview.tsx` 挂载段即可）：
 
 ```tsx

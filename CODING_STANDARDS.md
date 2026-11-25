@@ -10,6 +10,7 @@
 - 响应式宽度与布局断点与 `useIsMobile`（`768px` = `md:`）保持一致；含内部滚动区的底部 `Drawer` 在滚动容器标注 `data-base-ui-swipe-ignore`，浮层与抽屉（`Popover`/`Drawer`）在 `disabled` 时仅拦截打开、始终放行关闭并在转为 `disabled` 时自动收起。
 - 亮/暗双色语义变量在 `src/styles/tokens.css` 中成对维护：亮色覆写限定在 `:root:not(.dark):not([data-theme="dark"]), .light, [data-theme="light"]`，暗色覆写限定在 `.dark, [data-theme="dark"]`。
 - 所有无障碍文案（`Spinner`、抽屉/弹窗关闭按钮、面包屑、步进按钮的 `aria-label`）使用中文；按钮内的 `Spinner` 标注 `aria-hidden="true" role="presentation"`，避免嵌套 live region 或中英文混播。
+- 界面可见文案面向非技术家长，用日常中文表达操作与可感知的结果；工程与实现概念（如实例、元数据、CLI、明文、文件扩展名 `.ics`、HTTP/Cookie/接口字段）保留在代码注释与运维文档中。
 - 375px 窄屏下关键提醒与医疗/安全提示文案允许自然换行或 `line-clamp-2`，避免单行 `truncate` 截断；3 列及以上数值磁贴须核对单格可用宽度与 `whitespace-nowrap`，防止带徽章或小数数值异常折行。
 - 中文输入法与全局快捷键守卫：在 `<input>` 上自定义 `Enter` 快捷键行为时须跳过 IME 组合态（`event.nativeEvent.isComposing || event.keyCode === 229`）；全局快捷键（如 `⌘K` / 单键快记）须检测并拦截活跃的弹窗、抽屉、Popover 与下拉菜单，防止叠开或打断提交中（`pending`）抽屉。
 
@@ -21,6 +22,7 @@
 - 提交或删除进行中（`isPending`）时，抽屉与弹窗须锁定关闭操作（遮罩点击 / `Esc` / 返回键 / 下滑手势 / 顶部关闭按钮）：表单弹窗统一使用 `<Dialog pending={isPending}>`、危险确认复用 `<DeleteConfirmDialog pending={isPending}>`、实体抽屉复用 `<EntityDrawer pending={isPending}>`，同步禁用影响草稿的表单控件，防止异步失败错误丢失反馈。
 - 高频直记按钮除禁用态外须配备 `useRef` 同步防重入锁；一次性撤销回调（如 Toast 撤销按钮）须配备单次执行守卫，防止连点重复请求导致误报 404。
 - 抽屉关闭动画期间保持当前意图稳定，由下次打开动作写入新意图，避免标题与表单区在滑出瞬间闪烁；表单初始化 `useEffect` 仅依赖 `[open, entityId]`（其余默认值通过 `useRef` 读取），避免后台 Query 刷新冲掉未保存编辑，且校验与提交仅覆盖当前激活状态下可见的字段。
+- 由可关闭浮层/抽屉（特别是移动端渲染为 `<Drawer>` 的 `Sidebar`，以及 `DropdownMenu` / `Popover`）触发的弹窗或抽屉，须提升挂载到 `AppShell` 等常驻根节点并由 Zustand 驱动显隐，避免触发容器退场卸载子树时连带销毁刚打开的浮层（`Sidebar` 内直接挂载已由 `scripts/lint-guardrails.sh` 自动拦截）。
 - React 19 Ref 写入时机：最新回调或快照 Ref 统一在 `useLayoutEffect` 中同步，避免在渲染体直接改写 `ref.current`；跨渲染稳定的惰性单例用 `useState(() => ...)` 初始化。
 
 ### 表单受控、步进单调性与智能默认值
