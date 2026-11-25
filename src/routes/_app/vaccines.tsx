@@ -58,6 +58,13 @@ function VaccinesPage() {
   const [confirmingBirth, setConfirmingBirth] = useState(false);
   // 同步防重入锁：防止产院疫苗一键确认按钮在禁用态生效前被连续点击发出重复请求。
   const birthConfirmLockRef = useRef(false);
+  const timelineAnchorRef = useRef<HTMLDivElement>(null);
+
+  function jumpToFilteredTimeline(nextStatus: VaccineStatusFilter) {
+    setStatusFilter(nextStatus);
+    setCategoryFilter('all');
+    timelineAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
   const overview = overviewQuery.data;
   const baby = babyQuery.data;
@@ -71,6 +78,29 @@ function VaccinesPage() {
     if (!overview) return [];
     return filterVaccineDoses(overview.doses, statusFilter, categoryFilter);
   }, [overview, statusFilter, categoryFilter]);
+
+  // 交叉统计各筛选维度命中剂次，点击前即可直观看到目标分组数量。
+  const statusCounts = useMemo(() => {
+    if (!overview) return {} as Record<VaccineStatusFilter, number>;
+    return {
+      all: filterVaccineDoses(overview.doses, 'all', categoryFilter).length,
+      attention: filterVaccineDoses(overview.doses, 'attention', categoryFilter).length,
+      scheduled: filterVaccineDoses(overview.doses, 'scheduled', categoryFilter).length,
+      pending: filterVaccineDoses(overview.doses, 'pending', categoryFilter).length,
+      completed: filterVaccineDoses(overview.doses, 'completed', categoryFilter).length,
+    };
+  }, [overview, categoryFilter]);
+
+  const categoryCounts = useMemo(() => {
+    if (!overview) return {} as Record<VaccineCategoryFilter, number>;
+    return {
+      all: filterVaccineDoses(overview.doses, statusFilter, 'all').length,
+      nip: filterVaccineDoses(overview.doses, statusFilter, 'nip').length,
+      optional: filterVaccineDoses(overview.doses, statusFilter, 'optional').length,
+    };
+  }, [overview, statusFilter]);
+
+  const hasActiveFilter = statusFilter !== 'all' || categoryFilter !== 'all';
 
   function openDoseDetail(dose: VaccineDose) {
     setSelectedDoseId(dose.id);
@@ -194,71 +224,93 @@ function VaccinesPage() {
             onOpenBatchCompleteFocus={(doseIds, label, defaultDate, defaultClinic) =>
               openBatchDrawer('complete', doseIds, label, defaultDate, defaultClinic)
             }
+            onSelectStatusFilter={jumpToFilteredTimeline}
           />
 
-          <ListPageCard
-            title="按月龄接种计划"
-            badge={
-              <span className="flex size-7 items-center justify-center rounded-lg bg-health-soft text-health-soft-foreground">
-                <Syringe className="size-4" strokeWidth={1.8} />
-              </span>
-            }
-            headerAction={
-              <Button size="sm" onClick={() => setCatalogOpen(true)}>
-                <PlusIcon className="size-4" />
-                添加疫苗
-              </Button>
-            }
-          >
-            <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
-              <fieldset aria-label="疫苗状态筛选" className="flex flex-wrap items-center gap-1.5 border-0 p-0">
-                {STATUS_FILTER_OPTIONS.map((opt) => (
-                  <QuickChip
-                    key={opt.value}
-                    variant="outline"
-                    active={statusFilter === opt.value}
-                    onClick={() => setStatusFilter(opt.value)}
-                  >
-                    {opt.label}
-                  </QuickChip>
-                ))}
-              </fieldset>
-
-              <div className="flex flex-wrap items-center justify-between gap-2 sm:justify-end">
-                <fieldset aria-label="疫苗类别筛选" className="flex flex-wrap items-center gap-1.5 border-0 p-0">
-                  {CATEGORY_FILTER_OPTIONS.map((opt) => (
-                    <QuickChip
-                      key={opt.value}
-                      variant="outline"
-                      tone="health"
-                      active={categoryFilter === opt.value}
-                      onClick={() => setCategoryFilter(opt.value)}
-                    >
-                      {opt.label}
-                    </QuickChip>
-                  ))}
-                </fieldset>
-
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-xs md:hidden"
-                  onClick={() => setCatalogOpen(true)}
-                >
-                  <PlusIcon className="size-3.5" />
+          <div ref={timelineAnchorRef} className="scroll-mt-20">
+            <ListPageCard
+              title="按月龄接种计划"
+              badge={
+                <span className="flex size-7 items-center justify-center rounded-lg bg-health-soft text-health-soft-foreground">
+                  <Syringe className="size-4" strokeWidth={1.8} />
+                </span>
+              }
+              headerAction={
+                <Button size="sm" onClick={() => setCatalogOpen(true)}>
+                  <PlusIcon className="size-4" />
                   添加疫苗
                 </Button>
-              </div>
-            </div>
+              }
+            >
+              <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+                <fieldset aria-label="疫苗状态筛选" className="flex flex-wrap items-center gap-1.5 border-0 p-0">
+                  {STATUS_FILTER_OPTIONS.map((opt) => {
+                    const count = statusCounts[opt.value] ?? 0;
+                    return (
+                      <QuickChip
+                        key={opt.value}
+                        variant="outline"
+                        active={statusFilter === opt.value}
+                        onClick={() => setStatusFilter(opt.value)}
+                        className="gap-1"
+                      >
+                        <span>{opt.label}</span>
+                        {opt.value !== 'all' && count > 0 ? (
+                          <span className="text-xs opacity-75 tabular-nums">{count}</span>
+                        ) : null}
+                      </QuickChip>
+                    );
+                  })}
+                </fieldset>
 
-            <VaccineTimeline
-              doses={filteredDoses}
-              today={overview.today}
-              onSelectDose={openDoseDetail}
-              onBatchSchedule={(ids, label, defaultDate) => openBatchDrawer('schedule', ids, label, defaultDate)}
-              onBatchComplete={(ids, label, defaultDate) => openBatchDrawer('complete', ids, label, defaultDate)}
-            />
-          </ListPageCard>
+                <div className="flex flex-wrap items-center justify-between gap-2 sm:justify-end">
+                  <fieldset aria-label="疫苗类别筛选" className="flex flex-wrap items-center gap-1.5 border-0 p-0">
+                    {CATEGORY_FILTER_OPTIONS.map((opt) => {
+                      const count = categoryCounts[opt.value] ?? 0;
+                      return (
+                        <QuickChip
+                          key={opt.value}
+                          variant="outline"
+                          tone="health"
+                          active={categoryFilter === opt.value}
+                          onClick={() => setCategoryFilter(opt.value)}
+                          className="gap-1"
+                        >
+                          <span>{opt.label}</span>
+                          {opt.value !== 'all' && count > 0 ? (
+                            <span className="text-xs opacity-75 tabular-nums">{count}</span>
+                          ) : null}
+                        </QuickChip>
+                      );
+                    })}
+                  </fieldset>
+
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs md:hidden"
+                    onClick={() => setCatalogOpen(true)}
+                  >
+                    <PlusIcon className="size-3.5" />
+                    添加疫苗
+                  </Button>
+                </div>
+              </div>
+
+              <VaccineTimeline
+                doses={filteredDoses}
+                today={overview.today}
+                hasActiveFilter={hasActiveFilter}
+                onResetFilters={() => {
+                  setStatusFilter('all');
+                  setCategoryFilter('all');
+                }}
+                onSelectDose={openDoseDetail}
+                onBatchSchedule={(ids, label, defaultDate) => openBatchDrawer('schedule', ids, label, defaultDate)}
+                onBatchComplete={(ids, label, defaultDate) => openBatchDrawer('complete', ids, label, defaultDate)}
+              />
+            </ListPageCard>
+          </div>
 
           <VaccineDetailDrawer
             open={detailOpen}

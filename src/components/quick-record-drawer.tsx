@@ -225,6 +225,8 @@ export function QuickRecordDrawer() {
             dateStr={draft.dateStr}
             timeStr={draft.timeStr}
             maxDate={todayMaxDate}
+            defaultExpanded={isEdit}
+            resetKey={`${open ? '1' : '0'}-${intent.mode}-${intent.mode === 'edit' ? intent.target.record.id : draft.category}`}
             onChange={(dateStr, timeStr) => updateDraft((prev) => ({ ...prev, dateStr, timeStr }))}
           />
         ) : null}

@@ -26,7 +26,7 @@
 
 - 新增或修改系统对外行为、接口契约、认证逻辑或数据结构时，按 `openspec/` 流程（`proposal` -> `specs` -> `design` -> `test-plan` -> `tasks`）推进，并保持 `openspec/specs/` 为系统行为的单一事实来源（`pnpm lint` 已内置 `openspec validate --all --strict`，无需重复串联）。
 - 涉及后端框架、数据库或整体架构切换等重大工程重构前，先与维护者确认是否需要通过 `openspec/` 留档。
-- 纯样式微调、文案修正、工程配置或局部缺陷修复可直接实施，但仍须执行对应验证；若 `openspec/changes/` 存在覆盖相同页面或接口的未归档活动变更，后续交互或布局改版须同轮同步该变更文档。
+- 纯样式微调、文案修正、工程配置或局部缺陷修复可直接实施，但仍须执行对应验证；若 `openspec/changes/` 存在覆盖相同页面或接口的未归档活动变更，或 UI 交互/布局改版涉及 `openspec/specs/` 已记录的页面核心区块与强制提示形态，须同轮同步规格或先与维护者确认。
 - 仓库内 `.omp/` 与 `.pi/` 为不同客户端工具的 OpenSpec 目录；调整 OpenSpec 工作流时保持一致，不单边删除。
 - 每个 OpenSpec 变更均须生成 `test-plan.md`（编写计划本身不启动实施）；具体编写与任务编排规则见 `openspec/config.yaml`。
 
@@ -36,5 +36,5 @@
 
 ## 执行与记录
 
-- 只运行本次变更需要的验证，优先复用 `package.json` 现有命令（`pnpm lint`、`pnpm format`、`pnpm check`、`pnpm test`、`pnpm build`），不默认执行全仓测试或完整构建。
+- 只运行本次变更需要的验证，优先复用 `package.json` 现有命令（`pnpm lint`、`pnpm format`、`pnpm check`、`pnpm test`、`pnpm build`），不默认执行全仓测试或完整构建；参考明确的外部公开 GitHub 仓库时，优先通过只读 GitHub API 直取目标文件，减少无效网页搜索。
 - 验证结论如实记录实际执行的命令与观察结果，未验证部分明确说明；PR 保留简短测试与验证说明。

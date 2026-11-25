@@ -12,13 +12,13 @@ import {
   X,
 } from 'lucide-react';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
-import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { QuickChip } from '@/components/ui/choice-controls';
 import { DatePicker } from '@/components/ui/date-picker';
+import { InfoPopover } from '@/components/ui/info-popover';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { Spinner } from '@/components/ui/spinner';
@@ -31,6 +31,7 @@ import {
   getAlertBadgeMeta,
   type VaccineDose,
   type VaccineOverviewResponse,
+  type VaccineStatusFilter,
 } from '@/lib/vaccines';
 
 export interface BirthConfirmItem {
@@ -55,6 +56,7 @@ interface VaccineOverviewProps {
     defaultDate: string,
     defaultClinic?: string,
   ) => void;
+  readonly onSelectStatusFilter?: (filter: VaccineStatusFilter) => void;
 }
 
 /** 根据出生日期推导卡介苗默认接种日（常规为出生次日，若今天即出生当天则取出生当天）。 */
@@ -82,6 +84,7 @@ export function VaccineOverview({
   onOpenDose,
   onOpenBatchScheduleFocus,
   onOpenBatchCompleteFocus,
+  onSelectStatusFilter,
 }: VaccineOverviewProps) {
   const { summary, doses, today } = overview;
   const focus = summary.next_focus;
@@ -142,11 +145,45 @@ export function VaccineOverview({
 
   return (
     <div className="flex flex-col gap-3.5">
-      {/* 单行紧凑风险提示：精简不占屏，始终强调须自行核实 */}
-      <Alert variant="warning" size="compact" role="note">
-        <ShieldAlert aria-hidden="true" />
-        <span>{overview.disclaimer}</span>
-      </Alert>
+      {/* 精简常驻风险提示条：保持免责声明可见，同时将完整声明与通用接种须知收敛至点击式帮助浮层 */}
+      <div
+        role="note"
+        className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/75 bg-muted/35 px-3.5 py-2 text-xs text-muted-foreground"
+      >
+        <div className="flex min-w-0 flex-1 items-start gap-2 sm:items-center">
+          <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-warning-soft-foreground sm:mt-0" aria-hidden="true" />
+          <span className="leading-relaxed">排期仅供参考，接种前请以纸质《预防接种证》及接种医生医嘱为准。</span>
+        </div>
+        <InfoPopover
+          title="疫苗接种通用须知"
+          label="接种须知"
+          triggerVariant="pill"
+          tone="warning"
+          align="end"
+          triggerClassName="h-6 px-2"
+        >
+          <div className="space-y-3">
+            <p className="rounded-xl border border-warning/25 bg-warning-soft/55 px-3 py-2 text-warning-soft-foreground">
+              {overview.disclaimer}
+            </p>
+            <div className="space-y-1">
+              <p className="font-medium text-foreground">接种前准备</p>
+              <ul className="list-disc space-y-1 pl-4">
+                <li>携带纸质《预防接种证》，给宝宝穿宽松易穿脱的衣物。</li>
+                <li>发热、急性疾病或严重腹泻期应提前告知医生并遵医嘱暂缓。</li>
+                <li>主动告知既往过敏史、上次接种反应及近期用药情况。</li>
+              </ul>
+            </div>
+            <div className="space-y-1">
+              <p className="font-medium text-foreground">接种后观察</p>
+              <ul className="list-disc space-y-1 pl-4">
+                <li>现场留观满 30 分钟无异常再离开，当日避免揉搓针眼或久泡。</li>
+                <li>48 小时内留意精神、食欲与体温，持续高热或明显不适请及时就医。</li>
+              </ul>
+            </div>
+          </div>
+        </InfoPopover>
+      </div>
 
       {/* 产院出生疫苗确认：单层紧凑内边距，自适应胶囊宽度避免宽屏出现大块空洞 */}
       {summary.birth_confirm_pending && !birthConfirmDismissed ? (
@@ -407,31 +444,55 @@ export function VaccineOverview({
             ) : null}
 
             <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-xl border border-border/70 bg-muted/35 px-2 py-2 text-center">
-                <p className="text-base font-semibold text-info-soft-foreground tabular-nums">
-                  {summary.scheduled_count}
-                </p>
-                <p className="text-xs text-muted-foreground">已预约</p>
-              </div>
-              <div className="rounded-xl border border-border/70 bg-muted/35 px-2 py-2 text-center">
-                <p className="text-base font-semibold text-warning-soft-foreground tabular-nums">
-                  {summary.due_soon_count + summary.scheduled_soon_count}
-                </p>
-                <p className="text-xs text-muted-foreground">近期</p>
-              </div>
-              <div className="rounded-xl border border-border/70 bg-muted/35 px-2 py-2 text-center">
-                <p
-                  className={cn(
-                    'text-base font-semibold tabular-nums',
-                    summary.overdue_count + summary.scheduled_overdue_count > 0
-                      ? 'text-destructive'
-                      : 'text-muted-foreground',
-                  )}
-                >
-                  {summary.overdue_count + summary.scheduled_overdue_count}
-                </p>
-                <p className="text-xs text-muted-foreground">待补种</p>
-              </div>
+              {(() => {
+                const dueSoonTotal = summary.due_soon_count + summary.scheduled_soon_count;
+                const overdueTotal = summary.overdue_count + summary.scheduled_overdue_count;
+                return (
+                  <>
+                    <button
+                      type="button"
+                      disabled={summary.scheduled_count === 0}
+                      onClick={() => onSelectStatusFilter?.('scheduled')}
+                      aria-label={`筛选已预约疫苗（${summary.scheduled_count} 剂）`}
+                      className="cursor-pointer rounded-xl border border-border/70 bg-muted/35 px-2 py-2 text-center transition-colors outline-none hover:border-info/50 hover:bg-info-soft/35 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-75 disabled:hover:border-border/70 disabled:hover:bg-muted/35"
+                    >
+                      <p className="text-base font-semibold text-info-soft-foreground tabular-nums">
+                        {summary.scheduled_count}
+                      </p>
+                      <p className="text-xs text-muted-foreground">已预约</p>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={dueSoonTotal === 0}
+                      onClick={() => onSelectStatusFilter?.('attention')}
+                      aria-label={`筛选待关注疫苗（含 ${dueSoonTotal} 剂近期）`}
+                      className="cursor-pointer rounded-xl border border-border/70 bg-muted/35 px-2 py-2 text-center transition-colors outline-none hover:border-warning/55 hover:bg-warning-soft/35 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-75 disabled:hover:border-border/70 disabled:hover:bg-muted/35"
+                    >
+                      <p className="text-base font-semibold text-warning-soft-foreground tabular-nums">
+                        {dueSoonTotal}
+                      </p>
+                      <p className="text-xs text-muted-foreground">近期</p>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={overdueTotal === 0}
+                      onClick={() => onSelectStatusFilter?.('attention')}
+                      aria-label={`筛选待关注疫苗（含 ${overdueTotal} 剂待补种）`}
+                      className="cursor-pointer rounded-xl border border-border/70 bg-muted/35 px-2 py-2 text-center transition-colors outline-none hover:border-destructive/50 hover:bg-destructive-soft/35 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-75 disabled:hover:border-border/70 disabled:hover:bg-muted/35"
+                    >
+                      <p
+                        className={cn(
+                          'text-base font-semibold tabular-nums',
+                          overdueTotal > 0 ? 'text-destructive' : 'text-muted-foreground',
+                        )}
+                      >
+                        {overdueTotal}
+                      </p>
+                      <p className="text-xs text-muted-foreground">待补种</p>
+                    </button>
+                  </>
+                );
+              })()}
             </div>
 
             {/* 常去接种门诊快速查看与行内设置：预约/打卡与导出日历均自动带出 */}

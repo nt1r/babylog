@@ -1,4 +1,14 @@
-import { CalendarCheck2, CheckCheck, CheckCircle2, ChevronDown, ChevronRight, MapPin } from 'lucide-react';
+import {
+  CalendarCheck2,
+  CheckCheck,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  MapPin,
+  RotateCcw,
+} from 'lucide-react';
 import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,6 +25,8 @@ import {
 interface VaccineTimelineProps {
   readonly doses: readonly VaccineDose[];
   readonly today: string;
+  readonly hasActiveFilter?: boolean;
+  readonly onResetFilters?: () => void;
   readonly onSelectDose: (dose: VaccineDose) => void;
   readonly onBatchSchedule: (doseIds: number[], stageLabel: string, defaultDate: string) => void;
   readonly onBatchComplete: (doseIds: number[], stageLabel: string, defaultDate: string) => void;
@@ -24,6 +36,8 @@ interface VaccineTimelineProps {
 export function VaccineTimeline({
   doses,
   today,
+  hasActiveFilter = false,
+  onResetFilters,
   onSelectDose,
   onBatchSchedule,
   onBatchComplete,
@@ -43,17 +57,64 @@ export function VaccineTimeline({
     setToggledStages((prev) => ({ ...prev, [ageMonths]: !currentExpanded }));
   }
 
+  const completedStages = stages.filter((s) => s.allCompleted);
+  const allCompletedExpanded =
+    completedStages.length > 0 && completedStages.every((s) => isStageExpanded(s.ageMonths, true));
+
+  function handleToggleAllCompleted() {
+    const nextExpanded = !allCompletedExpanded;
+    setToggledStages((prev) => {
+      const next = { ...prev };
+      for (const s of completedStages) {
+        next[s.ageMonths] = nextExpanded;
+      }
+      return next;
+    });
+  }
+
   if (stages.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-border/80 bg-muted/20 px-6 py-12 text-center">
-        <p className="text-sm font-medium text-foreground">当前筛选条件下没有匹配的疫苗剂次</p>
-        <p className="mt-1 text-xs text-muted-foreground">尝试切换上方状态或免费/自费筛选条件查看全部计划。</p>
+      <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border/80 bg-muted/20 px-6 py-12 text-center">
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-foreground">当前筛选条件下没有匹配的疫苗剂次</p>
+          <p className="text-xs text-muted-foreground">尝试切换上方状态或免费/自费筛选条件查看全部计划。</p>
+        </div>
+        {hasActiveFilter && onResetFilters ? (
+          <Button type="button" variant="outline" size="sm" onClick={onResetFilters}>
+            <RotateCcw className="size-3.5" />
+            重置筛选
+          </Button>
+        ) : null}
       </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-3.5">
+      {completedStages.length > 0 ? (
+        <div className="flex items-center justify-between gap-2 px-0.5 text-xs text-muted-foreground">
+          <span className="tabular-nums">共 {completedStages.length} 个过往月龄阶段已全部接种完成</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={handleToggleAllCompleted}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            {allCompletedExpanded ? (
+              <>
+                <ChevronsDownUp className="size-3.5" />
+                折叠已完成
+              </>
+            ) : (
+              <>
+                <ChevronsUpDown className="size-3.5" />
+                展开已完成
+              </>
+            )}
+          </Button>
+        </div>
+      ) : null}
       {stages.map((stage) => {
         const expanded = isStageExpanded(stage.ageMonths, stage.allCompleted);
         const canBatchAct = stage.pendingDoseIds.length > 0;

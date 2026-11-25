@@ -1,66 +1,81 @@
-import { ChevronDown, Info, ShieldAlert } from 'lucide-react';
-import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { InfoPopover } from '@/components/ui/info-popover';
 import type { VaccineDose } from '@/lib/vaccines';
 
 interface VaccineKnowledgeSectionProps {
   readonly dose: VaccineDose;
+  readonly disabled?: boolean;
 }
 
-/** 疫苗详情抽屉的精简科普与风险区：默认只展示核心预防疾病与风险提示，前后注意事项折叠按需展开。 */
-export function VaccineKnowledgeSection({ dose }: VaccineKnowledgeSectionProps) {
+/**
+ * 疫苗详情抽屉顶部的紧凑参考信息条：
+ * 默认仅展示免费/自费标识与预防疾病一句话摘要，长段风险提示、本剂说明与接种前后注意事项收敛至点击式帮助浮层。
+ */
+export function VaccineKnowledgeSection({ dose, disabled = false }: VaccineKnowledgeSectionProps) {
   const hasPrecautions = dose.precautions_before.length > 0 || dose.precautions_after.length > 0;
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <Info className="size-4 text-primary" />
-        <h3 className="text-sm font-semibold text-foreground">参考说明</h3>
-        <Badge variant={dose.category === 'nip' ? 'secondary' : 'health'}>
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/75 bg-muted/30 px-3 py-2">
+      <div className="flex min-w-0 flex-1 items-center gap-2 text-xs">
+        <Badge variant={dose.category === 'nip' ? 'secondary' : 'health'} className="shrink-0">
           {dose.category === 'nip' ? '免费' : '自费'}
         </Badge>
+        <p className="line-clamp-2 min-w-0 leading-relaxed text-muted-foreground">
+          {dose.prevents ? (
+            <>
+              <span className="font-medium text-foreground">预防：</span>
+              {dose.prevents}
+            </>
+          ) : (
+            '查看本剂接种提示与通用注意事项'
+          )}
+        </p>
       </div>
 
-      {dose.prevents || dose.dose_tip ? (
-        <div className="space-y-1 rounded-xl border border-border/70 bg-muted/30 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
-          {dose.prevents ? (
-            <p>
-              <strong className="text-foreground">预防：</strong>
-              {dose.prevents}
-            </p>
+      <InfoPopover
+        title={`${dose.vaccine_name} · 注意事项`}
+        description={dose.prevents ? `预防：${dose.prevents}${dose.route ? `（${dose.route}）` : ''}` : undefined}
+        label="注意事项"
+        triggerVariant="pill"
+        tone="warning"
+        align="end"
+        disabled={disabled}
+        contentClassName="w-88"
+      >
+        <div className="space-y-3">
+          {dose.dose_tip ? (
+            <div className="space-y-1">
+              <p className="font-medium text-foreground">本剂说明</p>
+              <p>{dose.dose_tip}</p>
+            </div>
           ) : null}
-          {dose.dose_tip ? <p>{dose.dose_tip}</p> : null}
-        </div>
-      ) : null}
 
-      <Alert variant="warning" size="compact" role="note">
-        <ShieldAlert aria-hidden="true" />
-        <span>{dose.risk_warning}</span>
-      </Alert>
+          {dose.risk_warning ? (
+            <div className="space-y-1">
+              <p className="font-medium text-foreground">风险与选型提示</p>
+              <p className="rounded-xl border border-warning/25 bg-warning-soft/55 px-3 py-2 text-warning-soft-foreground">
+                {dose.risk_warning}
+              </p>
+            </div>
+          ) : null}
 
-      {hasPrecautions ? (
-        <Collapsible className="rounded-xl border border-border/70 bg-muted/20 px-3 py-2 text-xs">
-          <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg py-0.5 text-left font-medium text-foreground">
-            <span>接种前后注意事项（留观 30 分钟等）</span>
-            <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-panel-open/collapsible-trigger:rotate-180" />
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="mt-2.5 space-y-2.5 border-t border-border/60 pt-2.5 text-muted-foreground">
+          {hasPrecautions ? (
+            <div className="space-y-2.5 border-t border-border/60 pt-2.5">
               {dose.precautions_before.length > 0 ? (
                 <div className="space-y-1">
-                  <p className="font-medium text-foreground">接种前</p>
-                  <ul className="list-disc space-y-1 pl-4 leading-relaxed">
+                  <p className="font-medium text-foreground">接种前准备</p>
+                  <ul className="list-disc space-y-1 pl-4">
                     {dose.precautions_before.map((item) => (
                       <li key={item}>{item}</li>
                     ))}
                   </ul>
                 </div>
               ) : null}
+
               {dose.precautions_after.length > 0 ? (
                 <div className="space-y-1">
-                  <p className="font-medium text-foreground">接种后</p>
-                  <ul className="list-disc space-y-1 pl-4 leading-relaxed">
+                  <p className="font-medium text-foreground">接种后护理</p>
+                  <ul className="list-disc space-y-1 pl-4">
                     {dose.precautions_after.map((item) => (
                       <li key={item}>{item}</li>
                     ))}
@@ -68,11 +83,13 @@ export function VaccineKnowledgeSection({ dose }: VaccineKnowledgeSectionProps) 
                 </div>
               ) : null}
             </div>
-          </CollapsibleContent>
-        </Collapsible>
-      ) : null}
+          ) : null}
 
-      <p className="text-xs text-muted-foreground">仅供参考，请以疫苗说明书及接种医生医嘱为准。</p>
+          <p className="border-t border-border/60 pt-2 text-xs text-muted-foreground">
+            仅供参考，请以疫苗说明书及接种医生医嘱为准。
+          </p>
+        </div>
+      </InfoPopover>
     </div>
   );
 }

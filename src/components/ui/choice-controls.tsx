@@ -79,6 +79,7 @@ export function SegmentedControl<T extends string>({
 
 interface ChoiceCardButtonProps {
   readonly active: boolean;
+  readonly disabled?: boolean;
   readonly tone?: ControlTone;
   readonly onClick: () => void;
   readonly children: ReactNode;
@@ -89,14 +90,22 @@ interface ChoiceCardButtonProps {
  * 表单单选块：默认 40px 高度（与标准输入框等高）和 14px 字号，
  * 统一全站表单内的二选一 / 三选一交互、焦点环与选中态配色。
  */
-export function ChoiceCardButton({ active, tone = 'primary', onClick, children, className }: ChoiceCardButtonProps) {
+export function ChoiceCardButton({
+  active,
+  disabled,
+  tone = 'primary',
+  onClick,
+  children,
+  className,
+}: ChoiceCardButtonProps) {
   return (
     <button
       type="button"
+      disabled={disabled}
       aria-pressed={active}
       onClick={onClick}
       className={cn(
-        'flex h-10 cursor-pointer items-center justify-center rounded-xl border px-3 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+        'flex h-10 cursor-pointer items-center justify-center rounded-xl border px-3 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50',
         active
           ? ACTIVE_TONE_CLASSES[tone]
           : 'border-border/80 bg-background/60 text-muted-foreground hover:bg-muted/50 hover:text-foreground',

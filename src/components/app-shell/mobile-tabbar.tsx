@@ -1,7 +1,7 @@
 import { Link, useRouterState } from '@tanstack/react-router';
 import { PlusIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { findNavItemByPath, MOBILE_NAV_ITEMS } from '@/navigation/menu';
+import { MOBILE_NAV_ITEMS, resolveContextualCreateTarget } from '@/navigation/menu';
 import { useGrowthRecordStore } from '@/stores/growth-record';
 import { useQuickRecordStore } from '@/stores/quick-record';
 
@@ -9,8 +9,15 @@ export function MobileTabBar() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const openCreate = useQuickRecordStore((state) => state.openCreate);
   const openGrowthCreate = useGrowthRecordStore((state) => state.openCreate);
-  const isGrowthPage = pathname === '/growth' || pathname.startsWith('/growth/');
-  const currentCategory = findNavItemByPath(pathname)?.category ?? 'feeding';
+  const createAction = resolveContextualCreateTarget(pathname);
+
+  function handleCenterCreate() {
+    if (createAction.target === 'growth') {
+      openGrowthCreate('growth');
+    } else {
+      openCreate(createAction.category, createAction.subtype);
+    }
+  }
 
   const leftItems = MOBILE_NAV_ITEMS.slice(0, 2);
   const rightItems = MOBILE_NAV_ITEMS.slice(2, 4);
@@ -42,8 +49,8 @@ export function MobileTabBar() {
         <div className="flex justify-center">
           <button
             type="button"
-            onClick={() => (isGrowthPage ? openGrowthCreate('growth') : openCreate(currentCategory))}
-            aria-label={isGrowthPage ? '记录生长发育' : '快速记一笔'}
+            onClick={handleCenterCreate}
+            aria-label={createAction.ariaLabel}
             className="flex size-11 cursor-pointer items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm transition-transform active:scale-95"
           >
             <PlusIcon className="size-5" strokeWidth={2.2} />

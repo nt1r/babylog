@@ -1,5 +1,6 @@
 import { Link, useRouterState } from '@tanstack/react-router';
-import { PlusIcon } from 'lucide-react';
+import { PlusIcon, Search } from 'lucide-react';
+import { getShortcutModifierSymbol } from '@/components/app-shell/command-palette';
 import { ThemeSwitcher } from '@/components/app-shell/theme-switcher';
 import { UserMenu } from '@/components/app-shell/user-menu';
 import {
@@ -11,17 +12,33 @@ import {
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
+import { Kbd } from '@/components/ui/kbd';
 import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger } from '@/components/ui/sidebar';
-import { findNavItemByPath } from '@/navigation/menu';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { findNavItemByPath, resolveContextualCreateTarget } from '@/navigation/menu';
+import { useCommandPaletteStore } from '@/stores/command-palette';
+import { useGrowthRecordStore } from '@/stores/growth-record';
 import { useQuickRecordStore } from '@/stores/quick-record';
 
 export function AdminHeader() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const openCreate = useQuickRecordStore((state) => state.openCreate);
+  const openGrowthCreate = useGrowthRecordStore((state) => state.openCreate);
+  const openCommandPalette = useCommandPaletteStore((state) => state.setOpen);
   const currentItem = findNavItemByPath(pathname);
   // 记录列表页（含生长发育页）自身卡片头部已提供带子类型上下文的主按钮，避免桌面端上下双主色按钮重复。
   const showGlobalQuickRecord = !currentItem?.category && currentItem?.id !== 'growth';
+  const modSymbol = getShortcutModifierSymbol();
+
+  function handleQuickCreate() {
+    const action = resolveContextualCreateTarget(pathname);
+    if (action.target === 'growth') {
+      openGrowthCreate('growth');
+    } else {
+      openCreate(action.category, action.subtype);
+    }
+  }
 
   return (
     <header className="sticky top-0 z-10 shrink-0 border-b border-border/75 bg-background/85 pt-[env(safe-area-inset-top)] backdrop-blur-md md:rounded-t-2xl md:pt-0">
@@ -43,11 +60,42 @@ export function AdminHeader() {
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  aria-label="打开快捷操作面板"
+                  onClick={() => openCommandPalette(true)}
+                  className="hidden h-8 gap-2 px-2.5 text-muted-foreground hover:text-foreground md:inline-flex"
+                />
+              }
+            >
+              <Search className="size-3.5" />
+              <span className="hidden lg:inline">快捷操作</span>
+              <span className="inline-flex items-center gap-0.5">
+                <Kbd>{modSymbol}</Kbd>
+                <Kbd>K</Kbd>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>搜索页面或快速记录（{modSymbol}+K）</TooltipContent>
+          </Tooltip>
+
           {showGlobalQuickRecord ? (
-            <Button size="sm" className="hidden sm:inline-flex" onClick={() => openCreate('feeding')}>
-              <PlusIcon className="size-4" />
-              记一笔
-            </Button>
+            <Tooltip>
+              <TooltipTrigger
+                render={<Button size="sm" className="hidden sm:inline-flex" onClick={handleQuickCreate} />}
+              >
+                <PlusIcon className="size-4" />
+                <span>记一笔</span>
+                <Kbd className="hidden border-primary-foreground/25 bg-primary-foreground/15 text-primary-foreground lg:inline-flex">
+                  N
+                </Kbd>
+              </TooltipTrigger>
+              <TooltipContent>快速记一笔（快捷键 N）</TooltipContent>
+            </Tooltip>
           ) : null}
           <ThemeSwitcher />
           <UserMenu />

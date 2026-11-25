@@ -115,3 +115,27 @@ export function findNavItemByPath(pathname: string): NavItem | undefined {
     (item) => pathname === item.url || pathname.startsWith(`${item.url}/`),
   );
 }
+
+type ContextualCreateTarget =
+  | { readonly target: 'growth'; readonly ariaLabel: string }
+  | {
+      readonly target: 'quick';
+      readonly category: RecordCategory;
+      readonly subtype?: string;
+      readonly ariaLabel: string;
+    };
+
+/**
+ * 统一解析当前路由对应的「快速记一笔」目标抽屉与子类型，
+ * 供桌面头部按钮、移动端底部 + 按钮与全局快捷键 N 共享，避免三处派发口径漂移。
+ */
+export function resolveContextualCreateTarget(pathname: string): ContextualCreateTarget {
+  const current = findNavItemByPath(pathname);
+  if (current?.id === 'growth') {
+    return { target: 'growth', ariaLabel: '记录生长发育' };
+  }
+  if (current?.id === 'vaccines') {
+    return { target: 'quick', category: 'health', subtype: 'temperature', ariaLabel: '记录接种后体温' };
+  }
+  return { target: 'quick', category: current?.category ?? 'feeding', ariaLabel: '快速记一笔' };
+}

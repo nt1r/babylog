@@ -1,4 +1,4 @@
-import { AlertTriangle, HeartPulse, SaveIcon, Syringe, Trash2 } from 'lucide-react';
+import { AlertTriangle, ChevronDown, HeartPulse, SaveIcon, Syringe, Trash2 } from 'lucide-react';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { DateTimeInputRow } from '@/components/date-time-input-row';
 import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog';
@@ -7,10 +7,10 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ChoiceCardButton, QuickChip } from '@/components/ui/choice-controls';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
-import { Separator } from '@/components/ui/separator';
 import { Spinner } from '@/components/ui/spinner';
 import { toast } from '@/components/ui/toast';
 import { ClinicInputField } from '@/components/vaccines/clinic-input-field';
@@ -82,6 +82,7 @@ export function VaccineDetailDrawer({
   const [manufacturer, setManufacturer] = useState('');
   const [batchNo, setBatchNo] = useState('');
   const [reaction, setReaction] = useState('');
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [note, setNote] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [deleteMode, setDeleteMode] = useState<'dose' | 'template' | null>(null);
@@ -89,6 +90,8 @@ export function VaccineDetailDrawer({
   // 仅在抽屉打开或切换不同剂次 ID 时重置表单，防止窗口重连触发后台 refetch 覆盖未保存编辑。
   const latestDoseRef = useRef(dose);
   latestDoseRef.current = dose;
+  const allDosesRef = useRef(allDoses);
+  allDosesRef.current = allDoses;
   const todayRef = useRef(today);
   todayRef.current = today;
   const defaultClinicRef = useRef(defaultClinicName);
@@ -122,6 +125,11 @@ export function VaccineDetailDrawer({
     setManufacturer(currentDose.manufacturer);
     setBatchNo(currentDose.batch_no);
     setReaction(currentDose.reaction);
+    // 已有绿本厂家/批号/反应或同疫苗存在历史推荐厂家时默认展开补充区，确保同苗厂家建议立即可见。
+    const hasSiblingMakers = getSuggestedManufacturers(currentDose, allDosesRef.current).length > 0;
+    setDetailsOpen(
+      Boolean(currentDose.manufacturer || currentDose.batch_no || currentDose.reaction || hasSiblingMakers),
+    );
     setNote(currentDose.note);
     setFormError(null);
     setDeleteMode(null);
@@ -149,6 +157,9 @@ export function VaccineDetailDrawer({
         setClinicName(preferred);
         setClinicAutoFilled(true);
       }
+    }
+    if (nextStatus === 'completed' && active && getSuggestedManufacturers(active, allDosesRef.current).length > 0) {
+      setDetailsOpen(true);
     }
   }
 
@@ -319,7 +330,9 @@ export function VaccineDetailDrawer({
         }
       >
         {active ? (
-          <div className="flex flex-col gap-5">
+          <div className="flex flex-col gap-4">
+            <VaccineKnowledgeSection dose={active} disabled={busy} />
+
             <form id="vaccine-dose-form" onSubmit={handleSubmit} noValidate className="space-y-4">
               <div className="space-y-2">
                 <p className="text-[13px] font-medium text-foreground">接种状态</p>
@@ -327,6 +340,7 @@ export function VaccineDetailDrawer({
                   {STATUS_OPTIONS.map((opt) => (
                     <ChoiceCardButton
                       key={opt.value}
+                      disabled={busy}
                       active={status === opt.value}
                       onClick={() => handleStatusChange(opt.value)}
                     >
@@ -470,6 +484,7 @@ export function VaccineDetailDrawer({
                             key={preset}
                             variant="outline"
                             tone={isRecommended ? 'primary' : 'health'}
+                            disabled={busy}
                             active={site === preset}
                             onClick={() => setSite(preset)}
                             className={isRecommended ? 'border-primary/60 text-primary' : undefined}
@@ -482,66 +497,92 @@ export function VaccineDetailDrawer({
                     </div>
                   </Field>
 
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <Field>
-                      <FieldLabel htmlFor="vac-maker">疫苗品牌 / 厂家（可选）</FieldLabel>
-                      <Input
-                        id="vac-maker"
-                        value={manufacturer}
-                        maxLength={60}
-                        placeholder="对照绿本选填"
-                        onChange={(e) => setManufacturer(e.target.value)}
-                      />
-                      {suggestedManufacturers.length > 0 ? (
-                        <div className="flex flex-wrap gap-1.5 pt-1">
-                          {suggestedManufacturers.map((maker) => (
-                            <QuickChip
-                              key={maker}
-                              variant="outline"
-                              active={manufacturer === maker}
-                              onClick={() => setManufacturer(maker)}
-                            >
-                              {maker}
-                            </QuickChip>
-                          ))}
-                        </div>
-                      ) : null}
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor="vac-batch">疫苗批号（可选）</FieldLabel>
-                      <Input
-                        id="vac-batch"
-                        value={batchNo}
-                        maxLength={60}
-                        placeholder="对照绿本选填"
-                        className="tabular-nums"
-                        onChange={(e) => setBatchNo(e.target.value)}
-                      />
-                    </Field>
-                  </div>
+                  <Collapsible
+                    open={detailsOpen}
+                    onOpenChange={setDetailsOpen}
+                    className="rounded-xl border border-border/75 bg-muted/20 px-3 py-2.5"
+                  >
+                    <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 text-left text-[13px] font-medium text-foreground">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span>补充绿本与反应记录</span>
+                        <span className="truncate text-xs font-normal text-muted-foreground">
+                          {manufacturer || batchNo || reaction
+                            ? [manufacturer, batchNo && `批号 ${batchNo}`, reaction].filter(Boolean).join(' · ')
+                            : suggestedManufacturers.length > 0
+                              ? '可快捷选曾用厂家 · 批号与反应（选填）'
+                              : '厂家、批号、反应观察（选填）'}
+                        </span>
+                      </span>
+                      <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-panel-open/collapsible-trigger:rotate-180" />
+                    </CollapsibleTrigger>
 
-                  <Field>
-                    <FieldLabel htmlFor="vac-reaction">接种后反应观察（可选）</FieldLabel>
-                    <Input
-                      id="vac-reaction"
-                      value={reaction}
-                      maxLength={200}
-                      placeholder="如 无异常 / 低热 37.6℃"
-                      onChange={(e) => setReaction(e.target.value)}
-                    />
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      {VACCINE_REACTION_PRESETS.map((preset) => (
-                        <QuickChip
-                          key={preset}
-                          variant="outline"
-                          active={reaction === preset}
-                          onClick={() => setReaction(preset)}
-                        >
-                          {preset}
-                        </QuickChip>
-                      ))}
-                    </div>
-                  </Field>
+                    <CollapsibleContent>
+                      <div className="mt-3 space-y-3 border-t border-border/60 pt-3">
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          <Field>
+                            <FieldLabel htmlFor="vac-maker">疫苗品牌 / 厂家（可选）</FieldLabel>
+                            <Input
+                              id="vac-maker"
+                              value={manufacturer}
+                              maxLength={60}
+                              placeholder="对照绿本选填"
+                              onChange={(e) => setManufacturer(e.target.value)}
+                            />
+                            {suggestedManufacturers.length > 0 ? (
+                              <div className="flex flex-wrap gap-1.5 pt-1">
+                                {suggestedManufacturers.map((maker) => (
+                                  <QuickChip
+                                    key={maker}
+                                    variant="outline"
+                                    disabled={busy}
+                                    active={manufacturer === maker}
+                                    onClick={() => setManufacturer(maker)}
+                                  >
+                                    {maker}
+                                  </QuickChip>
+                                ))}
+                              </div>
+                            ) : null}
+                          </Field>
+                          <Field>
+                            <FieldLabel htmlFor="vac-batch">疫苗批号（可选）</FieldLabel>
+                            <Input
+                              id="vac-batch"
+                              value={batchNo}
+                              maxLength={60}
+                              placeholder="对照绿本选填"
+                              className="tabular-nums"
+                              onChange={(e) => setBatchNo(e.target.value)}
+                            />
+                          </Field>
+                        </div>
+
+                        <Field>
+                          <FieldLabel htmlFor="vac-reaction">接种后反应观察（可选）</FieldLabel>
+                          <Input
+                            id="vac-reaction"
+                            value={reaction}
+                            maxLength={200}
+                            placeholder="如 无异常 / 低热 37.6℃"
+                            onChange={(e) => setReaction(e.target.value)}
+                          />
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            {VACCINE_REACTION_PRESETS.map((preset) => (
+                              <QuickChip
+                                key={preset}
+                                variant="outline"
+                                disabled={busy}
+                                active={reaction === preset}
+                                onClick={() => setReaction(preset)}
+                              >
+                                {preset}
+                              </QuickChip>
+                            ))}
+                          </div>
+                        </Field>
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
 
                   {/* 接种后与既有「健康记录」体温快捷联动 */}
                   <div className="flex items-center justify-between gap-2 rounded-xl border border-health/30 bg-health-soft/35 px-3 py-2.5">
@@ -576,10 +617,6 @@ export function VaccineDetailDrawer({
                 />
               </Field>
             </form>
-
-            <Separator />
-
-            <VaccineKnowledgeSection dose={active} />
           </div>
         ) : null}
       </EntityDrawer>

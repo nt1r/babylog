@@ -3,7 +3,9 @@ import { useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { InfoPopover } from '@/components/ui/info-popover';
 import { toast } from '@/components/ui/toast';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { exportVaccineVisitIcs } from '@/lib/ics';
 import { cn } from '@/lib/utils';
 import {
@@ -134,21 +136,56 @@ export function VaccineCalendar({
     <Card className="flex h-full flex-col gap-3">
       <CardHeader className="flex flex-col gap-2.5 pb-0 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-2">
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle className="flex items-center gap-1.5 text-base">
             <CalendarDays className="size-4 text-health" />
-            接种日历
+            <span>接种日历</span>
+            <InfoPopover title="日历与导出说明" ariaLabel="查看接种日历与导出说明">
+              <div className="space-y-2">
+                <p>点选日历中的具体日期可筛选当天安排；再次点击已选中日期可切回整月视图。</p>
+                <p>
+                  点击「导出日历」会生成标准 <span className="font-medium text-foreground">.ics</span>{' '}
+                  日程文件（含接种时间、门诊地点、注意事项与提前提醒），打开即可导入手机系统日历。
+                </p>
+              </div>
+            </InfoPopover>
           </CardTitle>
 
           <div className="flex items-center gap-1">
-            <Button type="button" variant="outline" size="icon-sm" aria-label="上个月" onClick={() => shiftMonth(-1)}>
-              <ChevronLeft className="size-4" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon-sm"
+                    aria-label="上个月"
+                    onClick={() => shiftMonth(-1)}
+                  />
+                }
+              >
+                <ChevronLeft className="size-4" />
+              </TooltipTrigger>
+              <TooltipContent>上个月</TooltipContent>
+            </Tooltip>
             <span className="min-w-24 text-center text-sm font-semibold text-foreground tabular-nums">
               {year}年{monthIndex + 1}月
             </span>
-            <Button type="button" variant="outline" size="icon-sm" aria-label="下个月" onClick={() => shiftMonth(1)}>
-              <ChevronRight className="size-4" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon-sm"
+                    aria-label="下个月"
+                    onClick={() => shiftMonth(1)}
+                  />
+                }
+              >
+                <ChevronRight className="size-4" />
+              </TooltipTrigger>
+              <TooltipContent>下个月</TooltipContent>
+            </Tooltip>
           </div>
         </div>
 
@@ -161,23 +198,29 @@ export function VaccineCalendar({
               下次接种
             </Button>
           ) : null}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={!exportTarget}
-            title={
-              exportTarget
-                ? `导出 ${formatShortCnDate(exportTarget.date, today)} 的接种日程（.ics）`
-                : selectedDateKey
-                  ? '所选日期暂无未完成的接种日程'
-                  : '当前暂无可导出的接种日程'
-            }
-            onClick={handleExportCalendar}
-          >
-            <CalendarPlus className="size-3.5" />
-            {exportTarget?.isFallbackFocus ? '导出下次' : '导出日历'}
-          </Button>
+          {exportTarget ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={<Button type="button" variant="outline" size="sm" onClick={handleExportCalendar} />}
+              >
+                <CalendarPlus className="size-3.5" />
+                {exportTarget.isFallbackFocus ? '导出下次' : '导出日历'}
+              </TooltipTrigger>
+              <TooltipContent>导出 {formatShortCnDate(exportTarget.date, today)} 的接种日程（.ics）</TooltipContent>
+            </Tooltip>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger render={<span className="inline-flex" />}>
+                <Button type="button" variant="outline" size="sm" disabled>
+                  <CalendarPlus className="size-3.5" />
+                  导出日历
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {selectedDateKey ? '所选日期暂无未完成的接种日程' : '当前暂无可导出的接种日程'}
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
       </CardHeader>
 

@@ -149,6 +149,26 @@ interface BatchVaccineInput {
 export type VaccineStatusFilter = 'all' | 'attention' | 'scheduled' | 'pending' | 'completed';
 export type VaccineCategoryFilter = 'all' | VaccineCategory;
 
+export const VACCINE_OVERVIEW_STALE_MS = 5 * 60_000;
+
+/**
+ * 计算疫苗导航角标待关注数量与紧急程度：
+ * 产院出生疫苗待确认与逾期/临期统计可能重叠，取两者较大值避免同一剂重复累加。
+ */
+export function computeVaccineAttentionBadge(summary: VaccineSummary | undefined): {
+  readonly count: number;
+  readonly urgent: boolean;
+} {
+  if (!summary) {
+    return { count: 0, urgent: false };
+  }
+  const overdueTotal = summary.overdue_count + summary.scheduled_overdue_count;
+  const dueSoonTotal = summary.due_soon_count + summary.scheduled_soon_count;
+  const baseCount = overdueTotal + dueSoonTotal;
+  const count = summary.birth_confirm_pending ? Math.max(summary.birth_pending_dose_ids.length, baseCount) : baseCount;
+  return { count, urgent: overdueTotal > 0 };
+}
+
 export const VACCINE_SITE_PRESETS = ['左上臂', '右上臂', '左大腿前外侧', '右大腿前外侧', '口服'] as const;
 
 export const VACCINE_REACTION_PRESETS = ['无异常', '针眼微红/轻微硬结', '低热（<38.5℃）', '轻度哭闹/嗜睡'] as const;

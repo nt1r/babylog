@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, PlusIcon, ShieldAlert, Syringe, Trash2 } from 'lucide-react';
+import { ChevronUp, PlusIcon, SlidersHorizontal, Syringe, Trash2 } from 'lucide-react';
 import { type FormEvent, useRef, useState } from 'react';
 import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog';
 import { EntityDrawer } from '@/components/entity-drawer';
@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ChoiceCardButton } from '@/components/ui/choice-controls';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { InfoPopover } from '@/components/ui/info-popover';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
@@ -18,6 +19,7 @@ import {
   nextDoseRowKey,
   parseEditableDoseRows,
 } from '@/components/vaccines/dose-schedule-editor';
+import { cn } from '@/lib/utils';
 import {
   useAddVaccineTemplateMutation,
   useCreateCustomVaccineMutation,
@@ -71,8 +73,21 @@ export function VaccineCatalogDrawer({ open, onOpenChange }: VaccineCatalogDrawe
 
   const busy = addTemplateMutation.isPending || deleteTemplateMutation.isPending || createCustomMutation.isPending;
 
+  function clearTemplateDraft(code: string) {
+    setTemplateDrafts((prev) => {
+      if (!(code in prev)) return prev;
+      const next = { ...prev };
+      delete next[code];
+      return next;
+    });
+  }
+
   function handleOpenChange(nextOpen: boolean) {
     if (!nextOpen && busy) return;
+    if (!nextOpen) {
+      setExpandedCode(null);
+      setTemplateError(null);
+    }
     onOpenChange(nextOpen);
   }
 
@@ -80,10 +95,30 @@ export function VaccineCatalogDrawer({ open, onOpenChange }: VaccineCatalogDrawe
     setTemplateError(null);
     if (expandedCode === tpl.code) {
       setExpandedCode(null);
+      clearTemplateDraft(tpl.code);
       return;
     }
-    setTemplateDrafts((prev) => (prev[tpl.code] ? prev : { ...prev, [tpl.code]: createRowsFromTemplate(tpl) }));
+    setTemplateDrafts((prev) => ({ ...prev, [tpl.code]: createRowsFromTemplate(tpl) }));
     setExpandedCode(tpl.code);
+  }
+
+  async function handleQuickAddTemplate(tpl: VaccineCatalogItem) {
+    if (addLockRef.current || busy) return;
+    addLockRef.current = true;
+    setTemplateError(null);
+    setAddingCode(tpl.code);
+    try {
+      await addTemplateMutation.mutateAsync({ templateCode: tpl.code });
+      toast.success(`已将「${tpl.name}（共 ${tpl.dose_count} 剂）」加入计划`);
+      if (expandedCode === tpl.code) {
+        setExpandedCode(null);
+      }
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : '加入失败，请稍后重试');
+    } finally {
+      addLockRef.current = false;
+      setAddingCode(null);
+    }
   }
 
   async function handleConfirmAddTemplate(tpl: VaccineCatalogItem) {
@@ -109,6 +144,7 @@ export function VaccineCatalogDrawer({ open, onOpenChange }: VaccineCatalogDrawe
       });
       toast.success(`已将「${tpl.name}（共 ${parsed.plans.length} 剂）」加入计划`);
       setExpandedCode(null);
+      clearTemplateDraft(tpl.code);
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : '加入失败，请稍后重试');
     } finally {
@@ -122,6 +158,7 @@ export function VaccineCatalogDrawer({ open, onOpenChange }: VaccineCatalogDrawe
     const target = removingTemplate;
     try {
       await deleteTemplateMutation.mutateAsync(target.code);
+      clearTemplateDraft(target.code);
       setRemovingTemplate(null);
       toast.success(`已将「${target.name}」整套移出计划`);
     } catch (cause) {
@@ -184,35 +221,58 @@ export function VaccineCatalogDrawer({ open, onOpenChange }: VaccineCatalogDrawe
           </TabsList>
 
           <TabsContent value="templates" className="mt-3 space-y-3">
-            <Alert variant="warning" size="compact" role="note">
-              <ShieldAlert aria-hidden="true" />
+            <div className="flex flex-wrap items-center justify-between gap-2 px-0.5 text-xs text-muted-foreground">
               <span>
-                {catalogQuery.data?.disclaimer ??
-                  '自费疫苗因品牌与起始月龄不同，剂次间隔差异较大；加入后请按门诊排期及说明书核对。'}
+                {catalogQuery.data
+                  ? `共 ${catalogQuery.data.templates.length} 种常见自费疫苗，按需配置加入`
+                  : '按门诊排期及说明书按需加入计划'}
               </span>
-            </Alert>
+              <InfoPopover
+                title="自费疫苗选型须知"
+                label="选苗须知"
+                triggerVariant="pill"
+                tone="warning"
+                align="end"
+                disabled={busy}
+              >
+                <div className="space-y-2.5">
+                  <p className="rounded-xl border border-warning/25 bg-warning-soft/55 px-3 py-2 text-warning-soft-foreground">
+                    {catalogQuery.data?.disclaimer ??
+                      '自费疫苗因品牌与起始月龄不同，剂次间隔差异较大；加入后请按门诊排期及说明书核对。'}
+                  </p>
+                  <p>展开任意疫苗卡片可按门诊实际方案调整月龄或增删剂次；加入后也可随时在详情或此处整套移出。</p>
+                </div>
+              </InfoPopover>
+            </div>
 
             {catalogQuery.isLoading ? (
               <div className="space-y-3">
-                <Skeleton className="h-28 w-full rounded-2xl" />
-                <Skeleton className="h-28 w-full rounded-2xl" />
+                <Skeleton className="h-24 w-full rounded-2xl" />
+                <Skeleton className="h-24 w-full rounded-2xl" />
               </div>
             ) : catalogQuery.isError ? (
               <div className="rounded-xl border border-destructive/30 bg-destructive-soft/30 p-4 text-xs text-destructive-soft-foreground">
                 {catalogQuery.error instanceof Error ? catalogQuery.error.message : '加载自费疫苗库失败'}
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-2.5">
                 {(catalogQuery.data?.templates ?? []).map((tpl) => {
                   const isExpanded = expandedCode === tpl.code;
                   const isAdding = addingCode === tpl.code;
                   // 仅在卡片展开时读取草稿（toggleTemplateEditor 已在展开时初始化），避免折叠卡片渲染期产生副作用。
                   const draftRows = isExpanded ? (templateDrafts[tpl.code] ?? []) : [];
+                  const doseTips = tpl.doses.filter((d) => Boolean(d.dose_tip));
 
                   return (
-                    <div key={tpl.code} className="space-y-2.5 rounded-2xl border border-border/80 bg-card p-3.5">
+                    <div
+                      key={tpl.code}
+                      className={cn(
+                        'space-y-2.5 rounded-2xl border p-3.5 transition-colors',
+                        tpl.added ? 'border-border/65 bg-muted/20' : 'border-border/80 bg-card',
+                      )}
+                    >
                       <div className="flex items-start justify-between gap-2">
-                        <div className="space-y-1">
+                        <div className="min-w-0 space-y-1">
                           <div className="flex flex-wrap items-center gap-1.5">
                             <h3 className="text-sm font-semibold text-foreground">{tpl.name}</h3>
                             {tpl.added ? (
@@ -221,9 +281,50 @@ export function VaccineCatalogDrawer({ open, onOpenChange }: VaccineCatalogDrawe
                               <Badge variant="health">默认 {tpl.dose_count} 剂</Badge>
                             )}
                           </div>
-                          <p className="text-xs text-muted-foreground">
-                            预防：{tpl.prevents}（{tpl.route}）
-                          </p>
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <p className="text-xs text-muted-foreground">
+                              预防：{tpl.prevents} · {tpl.route}
+                            </p>
+                            <InfoPopover
+                              title={`${tpl.name} · 注意事项`}
+                              description={`预防：${tpl.prevents}（${tpl.route}）`}
+                              label="注意事项"
+                              triggerVariant="pill"
+                              tone="warning"
+                              align="start"
+                              disabled={busy}
+                              triggerClassName="h-6 px-2"
+                            >
+                              <div className="space-y-3">
+                                <div className="space-y-1">
+                                  <p className="font-medium text-foreground">风险与选型提示</p>
+                                  <p className="rounded-xl border border-warning/25 bg-warning-soft/55 px-3 py-2 text-warning-soft-foreground">
+                                    {tpl.risk_warning}
+                                  </p>
+                                </div>
+
+                                {doseTips.length > 0 ? (
+                                  <div className="space-y-1.5">
+                                    <p className="font-medium text-foreground">各剂次参考说明</p>
+                                    <ul className="space-y-1.5">
+                                      {doseTips.map((d) => (
+                                        <li key={d.dose_number} className="flex items-start gap-1.5">
+                                          <span className="mt-0.5 shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-foreground tabular-nums">
+                                            第{d.dose_number}剂 · {d.age_label}
+                                          </span>
+                                          <span>{d.dose_tip}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                ) : null}
+
+                                <p className="border-t border-border/60 pt-2 text-xs text-muted-foreground">
+                                  仅供参考，请以疫苗说明书及接种门诊医嘱为准。
+                                </p>
+                              </div>
+                            </InfoPopover>
+                          </div>
                         </div>
 
                         {tpl.added ? (
@@ -238,27 +339,45 @@ export function VaccineCatalogDrawer({ open, onOpenChange }: VaccineCatalogDrawe
                             <Trash2 className="size-3.5" />
                             移出计划
                           </Button>
-                        ) : (
+                        ) : isExpanded ? (
                           <Button
                             type="button"
                             size="sm"
-                            variant={isExpanded ? 'secondary' : 'default'}
+                            variant="secondary"
                             disabled={busy}
                             onClick={() => toggleTemplateEditor(tpl)}
                             className="shrink-0"
                           >
-                            {isExpanded ? (
-                              <>
-                                收起
-                                <ChevronUp className="size-3.5" />
-                              </>
-                            ) : (
-                              <>
-                                配置 / 加入
-                                <ChevronDown className="size-3.5" />
-                              </>
-                            )}
+                            收起
+                            <ChevronUp className="size-3.5" />
                           </Button>
+                        ) : (
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={busy}
+                              onClick={() => toggleTemplateEditor(tpl)}
+                              className="px-2.5 text-muted-foreground hover:text-foreground"
+                            >
+                              <SlidersHorizontal className="size-3.5" />
+                              自定义
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={busy}
+                              onClick={() => void handleQuickAddTemplate(tpl)}
+                            >
+                              {isAdding ? (
+                                <Spinner className="size-3.5" aria-hidden="true" role="presentation" />
+                              ) : (
+                                <PlusIcon className="size-3.5" />
+                              )}
+                              {isAdding ? '加入中…' : '加入'}
+                            </Button>
+                          </div>
                         )}
                       </div>
 
@@ -275,10 +394,6 @@ export function VaccineCatalogDrawer({ open, onOpenChange }: VaccineCatalogDrawe
                           ))}
                         </div>
                       ) : null}
-
-                      <p className="rounded-xl bg-warning-soft/55 px-2.5 py-2 text-xs leading-relaxed text-warning-soft-foreground">
-                        {tpl.risk_warning}
-                      </p>
 
                       {isExpanded && !tpl.added ? (
                         <div className="space-y-3 border-t border-border/70 pt-3">
@@ -307,7 +422,10 @@ export function VaccineCatalogDrawer({ open, onOpenChange }: VaccineCatalogDrawe
                               size="sm"
                               variant="outline"
                               disabled={busy}
-                              onClick={() => setExpandedCode(null)}
+                              onClick={() => {
+                                setExpandedCode(null);
+                                clearTemplateDraft(tpl.code);
+                              }}
                             >
                               取消
                             </Button>
