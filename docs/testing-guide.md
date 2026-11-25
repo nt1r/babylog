@@ -1,6 +1,6 @@
 # BabyLog 测试体系与编写指南
 
-本文档是 BabyLog 测试分层、编写规范、环境隔离、数据生成与 OpenSpec 场景追溯的单一权威指南，适用于常驻后端测试、临时验证及 OpenSpec `test-plan.md`。
+本文档是 BabyLog 测试分层、编写规范、环境隔离、数据生成、中文场景注释模板与 OpenSpec 场景追溯的单一权威指南，适用于常驻后端测试、临时验证及 OpenSpec `test-plan.md`。
 
 ## 1. 测试范围与边界
 
@@ -16,45 +16,94 @@
 | --- | --- | --- |
 | **1. 纯单元测试（无 DB/IO）** | `backend/internal/<domain>/*_test.go` | 高密度输入校验表驱动、时区与跨午夜切分算法、疫苗月龄钳位与 7 态提醒边界、内置目录完整性、环境变量加载、纯累加函数。 |
 | **2. 底层持久化/基础设施专项** | `backend/internal/<domain>/store_test.go`（极少量） | 仅覆盖 HTTP 层无法直接表达的底层不变量：SQLite 目录 `0700`/文件 `0600` 权限与 WAL 模式、旧版 Node.js scrypt 哈希兼容、`ReadWindow` 底层窗口边界与多 `babyID` 隔离等。常规 CRUD、筛选与业务流不在此层重复测试。 |
-| **3. API 全链路集成测试（核心主力）** | `backend/internal/integration/*_test.go` | 以黑盒 App 视角经真实 `httpapi.NewRouter` + 独立临时 SQLite 验证全部 OpenSpec Given-When-Then 业务流程、跨模块联动、事务原子回滚、权限/建档门禁、安全中间件及落库终态。 |
-| **4. CLI 与进程集成测试** | `backend/cmd/babylog/cli_test.go` | 验证真实编译产物的 `admin init`、`serve` 监听与 `SIGTERM` 优雅退出、`version` 输出。 |
+| **3. API 全链路集成测试（核心主力）** | `backend/internal/integration/*_test.go` | 以黑盒 App 视角经真实 `httpapi.NewRouter` + 独立临时 SQLite 验证全部 OpenSpec Given-When-Then 业务流程、跨模块真实使用闭环、并发唯一键、事务原子回滚、权限/建档门禁、安全中间件及落库终态。 |
+| **4. CLI 与进程集成测试** | `backend/cmd/babylog/cli_test.go` | 验证真实编译产物的 `admin init`、`serve` 监听、重启持久化与 `SIGTERM` 优雅退出、`version` 输出。 |
 
 ## 3. 断言、时间与造数红线
 
+- **从真实业务/使用场景出发**：围绕家长或管理员的真实使用闭环设计用例，用场景生成器准备该场景必需的前置数据，再对关键业务结果、跨模块联动与落库终态做完整查证；不写空洞的“为覆盖率凑数”调用。
 - **断言真实可观察结果**：验证 HTTP 状态码、关键响应头/Cookie 属性、JSON 契约字段、具体中文错误语义与持久化终态；不以刚写入的内存结构体作为唯一断言，也不冻结无关动态 ID。
 - **写操作必须回读验证落库终态**：测试 `Update`（尤其跨子类型切换清空可空列为 `NULL`）、`Delete`、`BatchUpdate` 事务回滚、会话过期清理时，须通过 API 回读或只读 SQLite 查询核验落库终态。
 - **业务前置数据 100% 经真实对外 HTTP API 构造**：使用 `internal/integration` 的 `Scenario` 生成器通过真实 API 建立宝宝档案、日常记录与疫苗上下文；**严禁通过测试 SQL 直接插入业务行伪造上下文**。数据库直接访问仅限两种场景：① `NewTestApp` 初始化管理员账号；② 写操作后的**只读落库终态断言**。
-- **确定性时间，严禁 `sleep`**：凡涉及跨零点、多日趋势、未来时钟偏移、疫苗提醒窗口与 7 天会话过期的用例，统一使用 `FakeClock`（`WithClock` / `Advance`）注入全部 Store 与 Service，彻底消除宿主机日期依赖与等待抖动。
-- **先核对 Handler 契约再写集成断言**：编写或迁移 API 集成测试前，先核对目标 `backend/internal/httpapi/*_handler.go` 的真实入参校验与错误映射，不按底层 Service 内部兜底逻辑推断 HTTP 行为。
-- **判空防 panic 与克制底座**：测试断言解引用可空指针前须先判空并 `t.Fatalf`；测试底座不提前预留零调用选项或辅助函数（按需引入、及时清理）。
+- **确定性时间，严禁 `sleep`**：凡涉及跨零点、多日趋势、未来时钟偏移、疫苗 7 态提醒窗口演进与 7 天会话过期的用例，统一使用 `FakeClock`（`WithClock` / `Advance`）注入全部 Store 与 Service，彻底消除宿主机日期依赖与等待抖动；累计 `Advance` 超过 7 天（会话 TTL）后须调用 `app.Relogin()` 按真实流程续期会话。
+- **先核对接口与领域契约再写集成断言**：编写或迁移 API 集成测试前，先核对目标 `backend/internal/httpapi/*_handler.go` 及对应领域 `backend/internal/<domain>/{model,validate,catalog}.go` 中的真实 JSON 字段、合法枚举、模板码与错误映射，不凭记忆猜测，也不按底层 Service 内部兜底逻辑推断 HTTP 行为。
+- **防错解码与判空防 panic**：响应体反序列化统一使用 `DecodeOK` / `DecodeStatus`（先断言 HTTP 状态码再解包，禁止跳过状态码直接反序列化）；断言解引用可空指针或访问切片末项前须先判空/判长并 `t.Fatalf`；测试底座不提前预留零调用选项或辅助函数（按需引入、及时清理）。
 - **禁止源码文本测试**：严禁通过读取源码文本、正则匹配或 AST 特征推断业务逻辑正确性，也不得以读取单个 SQL 迁移文件代替 `database.Open` 真实迁移执行。
 
-## 4. 目录结构、命名规范与用例顺序
+## 4. 目录结构、命名规范与阅读顺序
 
 ### 4.1 集成测试目录与 OpenSpec 映射
 
 `backend/internal/integration/`（`package integration_test`，仅包含 `*_test.go` 文件，零生产二进制体积开销）遵循统一命名约定：
 
-- **业务场景文件**：`<capability>_test.go` 与 `openspec/specs/<capability>/spec.md` 一一对应（`capability` 连字符转为下划线，如 `baby-profile` → `baby_profile_test.go`）。
+- **单能力业务场景文件**：`<capability>_test.go` 与 `openspec/specs/<capability>/spec.md` 一一对应（`capability` 连字符转为下划线，如 `baby-profile` → `baby_profile_test.go`）。
+- **跨模块真实使用闭环文件**：`cross_module_journeys_test.go`，覆盖跨越认证、宝宝档案、日常记录、首页看板与疫苗管理的端到端用户旅程。
 - **共用支撑与基础设施文件**：`harness_test.go`（`FakeClock`、`TestApp`、`AppClient`、泛型只读 SQLite 回读断言）、`scenario_test.go`（纯真实 API 的 `Scenario` 数据生成器）、`security_and_static_test.go`（全局安全中间件与 SPA/路径穿越防护）。
-- `scripts/check-spec-refs.mjs`（已接入 `pnpm lint`）自动校验全部 `Spec:` 注释均精确匹配现存 `openspec/specs/` 中的 Requirement 与 Scenario。
+- `scripts/check-spec-refs.mjs` 与 `scripts/check-comments.mjs`（均已接入 `pnpm lint`）自动校验全部 `Spec:` 引用、场景注释模板、步骤编号一致性与集成测试中文注释规范。
 
-### 4.2 命名与阅读顺序
+### 4.2 用例粒度与阅读顺序
 
-- 顶层测试函数按业务能力聚合命名（如 `TestAuthSessionLifecycle`、`TestFeedingCRUDAndValidation`、`TestVaccinesBatchAtomicity`），避免数百行多主题混杂的“巨型流水账”函数。
-- 同一主题下的用例及 `t.Run(...)` 子测试统一按 **「正常主流程 → 边界/变体 → 失败/拒绝」** 排列。
-- 每个独立测试（或需要独立状态的子测试）独占各自的 `NewTestApp(t, ...)` 并启用 `t.Parallel()`，用例间严禁共享状态或依赖执行顺序。
+- **单场景单函数**：每个顶层 `func Test...` 对应一个独立完整的业务场景并启用 `t.Parallel()`，独占各自的 `NewTestApp(t, ...)`，用例间严禁共享状态或依赖执行顺序；**不在集成测试顶层函数内用 `t.Run` 拼接多主题巨型聚合用例**，确保每条用例都拥有独立的前置数据清单与 1:1 对应的编号步骤（同类负向输入表驱动可在对应步骤内使用 `for _, tc := range ...`）。
+- **统一排列顺序**：同一文件内按 **「正常主流程 → 边界/变体 → 失败/拒绝」** 排列，函数声明顺序与下方索引表保持一致。
 
-## 5. 中文场景注释模板
+### 4.3 集成测试场景索引表（推荐阅读顺序）
 
-`backend/internal/integration/` 中的业务与安全集成测试用例（排除 `harness_test.go`、`scenario_test.go`）在 `func Test...` 前使用中文块注释标明四项：
+| 编号 | 分组 | 文件与测试函数 | 类别 | 中文场景说明 |
+| --- | --- | --- | --- | --- |
+| I01 | 管理员认证 | `auth_test.go` / `TestAuthLoginRestoreAndLogoutClosedLoop` | 正常主流程 | 匿名探测、登录签发安全 Cookie、会话恢复与登出吊销清理 |
+| I02 | 管理员认证 | `auth_test.go` / `TestAuthSessionRotationOnRelogin` | 边界/变体 | 持有效会话重复登录轮换令牌并吊销旧 Cookie |
+| I03 | 管理员认证 | `auth_test.go` / `TestAuthSessionExpirationCleanup` | 边界/变体 | 推进时钟超 7 天后受保护接口 401 清 Cookie 且会话探测清理过期行 |
+| I04 | 管理员认证 | `auth_test.go` / `TestAuthInvalidCredentialsMalformedCookieAndUninit` | 失败/拒绝 | 错误凭据、未初始化管理员拒绝 401 零脏会话及畸形/未知 Cookie 清除 |
+| I05 | 宝宝档案 | `baby_profile_test.go` / `TestBabyProfileOnboardingAndUpdateClosedLoop` | 正常主流程 | 未建档探测、首次建档、回读核验、更新刷新 `updated_at` 与清空可选出生体格落库 `NULL` |
+| I06 | 宝宝档案 | `baby_profile_test.go` / `TestBabyProfileTimezoneTodayBirthDateBoundary` | 边界/变体 | 同一 UTC 时刻按 UTC 与 Asia/Shanghai 校验本地当天出生日及省略出生体格建档 |
+| I07 | 宝宝档案 | `baby_profile_test.go` / `TestBabyProfileDefaultClinicTriStateUpdate` | 边界/变体 | `default_clinic_name` 裁剪设置、省略保留、超 80 字拒绝与空串清空 |
+| I08 | 宝宝档案 | `baby_profile_test.go` / `TestBabyProfileAuthOnboardingValidationAndDuplicateGuards` | 失败/拒绝 | 未认证 401、未建档更新 404、非法入参 400 零脏写与重复建档 409 |
+| I09 | 日常记录 | `daily_records_test.go` / `TestFeedingCRUDSubtypeClearingAndNotFound` | 正常主流程 | 四类喂养形态创建、跨子类型切换清零可空列与删除 404 |
+| I10 | 日常记录 | `daily_records_test.go` / `TestSleepCRUDDurationRecalcAndCrossMidnightList` | 正常主流程 | 睡眠创建算时长、更新重算、删除 404 及跨夜列表交集与双日小计切分 |
+| I11 | 日常记录 | `daily_records_test.go` / `TestCareCRUDSubtypeClearingAndFilteredList` | 正常主流程 | 尿布/洗澡/其他护理 CRUD、便便改嘘嘘清零列及列表筛选分页与每日小计 |
+| I12 | 日常记录 | `daily_records_test.go` / `TestHealthAndGrowthCRUDSubtypeClearing` | 正常主流程 | 体温/用药/生长/长牙 CRUD、多方向跨子类型清零废弃列与删除 404 |
+| I13 | 日常记录 | `daily_records_test.go` / `TestFeedingAndHealthFilteredPaginationSummaries` | 边界/变体 | 喂养跨 UTC 日界线与稀疏跨月分页不截断小计、健康逗号多子类型隔离与非法 token 400 |
+| I14 | 日常记录 | `daily_records_test.go` / `TestRecordsSmartDefaultsStarterAndEvolution` | 边界/变体 | 空历史冷启动默认值与多品类历史演进（Top-3 奶量破平局、亲喂换侧、辅食/用药去重保最新份量剂量、睡眠中位数、护理去重限 5 条） |
+| I15 | 日常记录 | `daily_records_test.go` / `TestRecordsAuthOnboardingAndQueryParamGuards` | 失败/拒绝 | 未认证 401、未建档读写 409 与非法列表查询参数/`:id` 400 |
+| I16 | 日常记录 | `daily_records_test.go` / `TestRecordsFutureClockSkewAndInvalidPayloads` | 失败/拒绝 | 超前 5 分钟未来时间与四大品类非法载荷全部 400 零脏写 |
+| I17 | 首页看板 | `dashboard_insights_test.go` / `TestDashboardSummaryTimezoneSplitAndMedicine` | 正常主流程 | 跨 UTC 日界线喂养、跨夜睡眠切分、多条今日用药聚合与跨时区查询对比 |
+| I18 | 首页看板 | `dashboard_insights_test.go` / `TestDashboardSevenDayTrendsAndCareRhythm` | 正常主流程 | 7 日连续趋势空日零填充、跨夜双日切分、瓶喂与亲喂分列、5 时段全覆盖、窗口起点边界与 `days` 参数校验 |
+| I19 | 首页看板 | `dashboard_insights_test.go` / `TestDashboardGrowthPartialResolutionAndColdStart` | 边界/变体 | 无记录冷启动全零校验、出生体格兜底与体重/身高/头围跨记录独立解析及出牙统计 |
+| I20 | 首页看板 | `dashboard_insights_test.go` / `TestDashboardAuthOnboardingAndTimezoneGuards` | 失败/拒绝 | `summary`/`trends` 未认证 401、未建档 409 与非法时区 400 |
+| I21 | 疫苗管理 | `vaccine_management_test.go` / `TestVaccinesSeedClampingAndSevenAlertStates` | 正常主流程 | 幂等初始化 22 剂 NIP、月末 1/31→2/28 钳位、推进时钟演进 7 态提醒及 `next_focus` 优先级与同日合并 |
+| I22 | 疫苗管理 | `vaccine_management_test.go` / `TestVaccinesOptionalTemplatesCustomAndDeletion` | 正常主流程 | 默认/定制模板导入、重复 409、`flu` 阶段文案、单剂改月龄契约（自费重算 vs NIP 保护）、删中间剂重排、整套移出及非法/404 拒绝 |
+| I23 | 疫苗管理 | `vaccine_management_test.go` / `TestVaccinesSingleDoseTransitionsAndValidation` | 正常主流程 | 单剂 `pending → scheduled → completed → pending` 清空废弃列、`recent_clinics` 更新与越界接种日期 400 |
+| I24 | 疫苗管理 | `vaccine_management_test.go` / `TestVaccinesBatchOperationsAtomicityAndDetailSemantics` | 边界/变体 | 产院两针批量确认不污染默认门诊、批量三态字段保留/清空、批量完成保细节 vs 预约清细节、含非法 ID 整事务回滚 |
+| I25 | 疫苗管理 | `vaccine_management_test.go` / `TestVaccinesDefaultClinicAndAutoRemember` | 边界/变体 | 常去门诊独立接口（设置/同步/超长 400/清空）、产院不污染 → 首次常规自动记住 → 偶发不覆盖 → 显式置顶覆写 → 批量预约自动记住 |
+| I26 | 疫苗管理 | `vaccine_management_test.go` / `TestVaccinesConcurrentSeedAndTemplateGuards` | 边界/变体 | 并发首访 NIP 初始化幂等 22 剂、并发重复导入自费模板严格一成 201 一败 409 |
+| I27 | 疫苗管理 | `vaccine_management_test.go` / `TestVaccinesAuthOnboardingAndTimezoneGuards` | 失败/拒绝 | 疫苗读写端点未认证 401、未建档 409 与非法时区 400 |
+| I28 | 跨模块闭环 | `cross_module_journeys_test.go` / `TestNewParentFirstDayClosedLoop` | 跨模块主流程 | 登录 → 建档 → 首页首访初始化疫苗 → 全天多品类照护 → 看板/趋势/默认值联动 → 预约常规疫苗同步默认门诊 |
+| I29 | 跨模块闭环 | `cross_module_journeys_test.go` / `TestRecordEditAndDeleteCrossModuleRollback` | 跨模块边界 | 修改/删除发烧体温、删除最新亲喂、删除唯一手工体重后，看板健康观察、出生体格兜底与默认值换侧建议实时回退 |
+| I30 | 跨模块闭环 | `cross_module_journeys_test.go` / `TestBabyBirthDateCorrectionRecalculatesVaccines` | 跨模块边界 | 更正宝宝出生日期后，未手填 `planned_date` 的待接种疫苗自动按新出生日重算排期与状态，手动 `planned_date` 与已接种剂次不变 |
+| I31 | 安全与基础设施 | `security_and_static_test.go` / `TestAPISecurityGuards` | 安全防线 | POST/PUT/DELETE 跨源 403、无 Origin 放行、415、413、未知字段与尾随 JSON 400、405、404 与 Panic 500 恢复 |
+| I32 | 安全与基础设施 | `security_and_static_test.go` / `TestStaticAssetsAndSPAFallback` | 基础设施 | SPA 回退 `index.html`、PWA manifest/SW/哈希资源缓存策略及路径穿越/符号链接逃逸 404 |
+| I33 | CLI 与进程 | `cmd/babylog/cli_test.go` / `TestCLIAdminInitSuccessAndDuplicateGuard` | 正常主流程 | 真实二进制 `admin init` 保留密码空格仅裁单个 CRLF、自定义用户名、重复拒绝保留原账号及相对路径默认 `admin` 初始化认证 |
+| I34 | CLI 与进程 | `cmd/babylog/cli_test.go` / `TestCLIAdminInitInvalidPasswordAndArgsGuards` | 失败/拒绝 | 拒绝过短/超长密码文件、目录路径、非法参数与非法用户名，并验证 SQLite 零管理员落库 |
+| I35 | CLI 与进程 | `cmd/babylog/cli_test.go` / `TestCLIServeRestartPersistenceLifecycle` | 正常主流程 | 编译产物启动监听、登录建档写入记录、`SIGTERM` 优雅退出并复用同目录重启回读数据完好 |
+| I36 | CLI 与进程 | `cmd/babylog/cli_test.go` / `TestCLIVersionMetadata` | 基础设施 | 验证开发态默认版本输出、非法参数用法提示及 `-ldflags` 注入发布版本元数据 |
+
+## 5. 中文场景注释模板与用例内注释规范
+
+### 5.1 顶层中文场景块注释模板
+
+`backend/internal/integration/` 中的全部业务与安全集成测试用例（排除 `harness_test.go`、`scenario_test.go`）在 `func Test...` 前必须使用如下中文块注释：
 
 ```go
 /*
  * Spec: <capability> / <Requirement> / <Scenario>
- * 场景：简述本次端到端业务场景。
- * 前置：已登录管理员、宝宝档案参数、通过 Scenario 准备的前置业务记录（无则写「无」）。
- * 目标：
+ * 测试场景：一句话概括本次端到端业务场景。
+ * 业务背景：从家长/管理员真实使用出发，说明该场景为何发生及要守护的核心不变量。
+ * 前置数据：
+ * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
+ * - 管理员与会话：已初始化并登录管理员
+ * - 宝宝档案：小汤圆（2026-07-15，female，出生 3.35kg / 50.2cm）
+ * - 前置业务记录：通过 Scenario 准备的记录或疫苗状态（无则写「无」）
+ * 测试目标：
  * 1. 验证被测动作的 HTTP 状态码、响应契约或拒绝错误语义。
  * 2. 验证回读 API 或 SQLite 落库终态符合业务规则（拒绝场景写明无脏写/已回滚）。
  */
@@ -62,10 +111,14 @@
 
 - **多 Scenario 引用**：单个函数覆盖同一 Requirement 下多个关联 Scenario 时，可在 `Spec:` 行用 `;` 分隔或分多行 `Spec:` 列出。
 - **无 OpenSpec 基础设施用例**：若集成测试覆盖全局基础设施（如静态资源托管与 SPA 回退），以 `范围：基础设施（无对应 OpenSpec 规格）` 替代 `Spec:` 行，避免触发 `Spec:` 引用校验报错。
-- **步骤编号约定（`scripts/check-spec-refs.mjs` 自动校验）**：
-  - **单函数（无 `t.Run`）**：`目标：` 编号（`1.`、`2.`…）与方法体内的 `// 1.`、`// 2.` 分段注释严格一一对应；前置造数使用普通中文注释（如 `// 前置造数：...`），不占用目标编号。
-  - **聚合函数（含多个 `t.Run`）**：顶层块注释归纳总体 `Spec / 场景 / 前置 / 目标`，各 `t.Run` 子测试内部使用简洁中文步骤注释（不重启 `// 1.`、`// 2.` 与顶层目标编号冲突）。
-- **纯单元测试**：保持简洁表驱动命名（中文 `name` 字段与中文 `t.Run` 名称），仅在复杂夹具或非直观边界补充意图注释，不强制套用上述块模板。
+
+### 5.2 测试用例内的中文注释要求
+
+1. **前置造数段**：在验证步骤前准备基础数据时，统一使用普通中文注释（如 `// 前置造数：...`），不占用 `// 1.` 编号。
+2. **分段步骤注释与目标严格 1:1 对应**：每个 `测试目标` 编号（`1.`、`2.`…）必须在方法体内有且仅有一条对应的中文分段注释（`// 1. ...`、`// 2. ...`），由 `scripts/check-spec-refs.mjs` 自动校验。
+3. **写清“意图与防漏点”而非复述代码**：步骤注释和关键断言注释重点写明业务意图、为什么在此刻查证或排除什么隐患（如跨 UTC 日界线归日、跨子类型清空可空列为 `NULL`、事务回滚零脏写、并发唯一索引保护）。
+4. **全中文注释与清晰中文失败提示**：集成测试与 CLI 进程测试内禁止纯英文注释与英文分隔栏（由 `scripts/check-comments.mjs` 自动拦截）；`t.Fatalf`/`t.Errorf` 失败消息优先使用中文业务语义并附带实际观测值，便于排障一眼定位问题环节。
+5. **纯单元测试**：保持简洁表驱动命名（中文 `name` 字段与中文 `t.Run` 名称），仅在复杂夹具或非直观边界补充意图注释，不强制套用集成测试块模板。
 
 ## 6. 环境隔离与数据清理
 
@@ -77,7 +130,7 @@
 编写 OpenSpec 变更的 `test-plan.md` 与执行 `apply` 验收时遵守：
 
 - **Unit Tests**：仅列出纯计算、校验规则、状态机或底层不变量用例；若本次变更属于常规接口编排或 CRUD，无新增纯算法时写 `None` 并说明原因，不为普通 CRUD 重复新增 `store_test.go`。
-- **Integration Tests**：直接映射到 `backend/internal/integration/<capability>_test.go`，明确引用的 `capability / requirement / scenario`、使用的 `Scenario` 前置数据、真实 HTTP 请求与落库回读断言。
+- **Integration Tests**：直接映射到 `backend/internal/integration/<capability>_test.go`（或 `cross_module_journeys_test.go`），明确引用的 `capability / requirement / scenario`、使用的 `Scenario` 前置数据、真实 HTTP 请求与落库回读断言。
 - **审查核对**：勾选含测试的 task 前，逐条比对 `test-plan.md` 与 `Spec:` 注释及断言实现，确认断言来自真实写入数据而非冷启动兜底值。
 
 ## 8. 常用验证命令
@@ -88,9 +141,12 @@ pnpm test
 
 # 仅运行后端 API 集成测试（按需传 -v / -run 查看明细）
 pnpm test:integration
-cd backend && CGO_ENABLED=0 go test -v -run TestAuthSessionLifecycle ./internal/integration/...
+cd backend && CGO_ENABLED=0 go test -v -run TestAuthLoginRestoreAndLogoutClosedLoop ./internal/integration/...
 
-# 全仓静态检查（含 staticcheck、Spec 引用校验与 OpenSpec 校验）与类型检查
+# 运行集成测试与 CLI 进程测试竞态检测（需本机支持 CGO，CI 默认执行）
+pnpm test:race
+
+# 全仓静态检查（含 staticcheck、Spec 引用与模板校验、中文注释门禁与 OpenSpec 校验）与类型检查
 pnpm lint && pnpm check
 
 # 可选：启用本地 Git pre-commit 门禁钩子

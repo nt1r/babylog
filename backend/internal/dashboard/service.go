@@ -104,10 +104,9 @@ type SlotDistributionPoint struct {
 
 // TrendsResponse 表示 GET /api/dashboard/trends 的完整响应体。
 type TrendsResponse struct {
-	Days     int                     `json:"days"`
-	Timezone string                  `json:"timezone"`
-	Daily    []DailyTrendPoint       `json:"daily"`
-	Slots    []SlotDistributionPoint `json:"slots"`
+	Days  int                     `json:"days"`
+	Daily []DailyTrendPoint       `json:"daily"`
+	Slots []SlotDistributionPoint `json:"slots"`
 }
 
 // Service 负责通过 [records.Store] 读取时间窗口快照与最近标记，并聚合首页看板数据。
@@ -375,9 +374,8 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 	}
 
 	return &TrendsResponse{
-		Days:     days,
-		Timezone: loc.String(),
-		Daily:    daily,
-		Slots:    slots,
+		Days:  days,
+		Daily: daily,
+		Slots: slots,
 	}, nil
 }

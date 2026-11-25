@@ -143,8 +143,6 @@ export interface HealthInput {
 export interface HealthDailySummary {
   total_count: number;
   medicine_count: number;
-  growth_count: number;
-  teeth_count: number;
   latest_temp_c: number | null;
 }
 

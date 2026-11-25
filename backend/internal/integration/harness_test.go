@@ -268,11 +268,24 @@ func (a *TestApp) UnauthenticatedClient() *AppClient {
 	return a.client.WithoutCookie()
 }
 
-// Scenario 返回绑定当前客户端的场景数据生成器；所有前置业务数据均经真实 HTTP API 创建。
+// Relogin 经真实 POST /api/auth/login 重新登录并刷新内部客户端会话，供跨 7 天时钟推进用例续期使用。
+func (a *TestApp) Relogin() {
+	a.t.Helper()
+	resp := a.UnauthenticatedClient().Login(a.t, defaultAdminUser, defaultAdminPass)
+	resp.RequireStatus(a.t, http.StatusOK)
+	cookiePair, ok := resp.CookiePair(auth.SessionCookieName)
+	if !ok {
+		a.t.Fatalf("重新登录未返回 %s Cookie：Set-Cookie=%q", auth.SessionCookieName, resp.SetCookieHeader())
+	}
+	a.client = a.client.WithCookie(cookiePair)
+}
+
+// Scenario 返回绑定当前测试应用的场景数据生成器；内部动态读取 app.Client()，
+// 即使中途调用 app.Relogin() 轮换会话也不会残留过期 Cookie。
 func (a *TestApp) Scenario() *Scenario {
 	return &Scenario{
-		t:      a.t,
-		client: a.client,
+		t:        a.t,
+		clientFn: a.Client,
 	}
 }
 
@@ -379,17 +392,30 @@ func (c *AppClient) Delete(t *testing.T, path string) *Response {
 	return c.doJSON(t, http.MethodDelete, path, nil)
 }
 
-// DoRaw 发起自定义 Content-Type 与原始字节载荷的请求，用于验证 415、413、400 畸形 JSON 及 405 等边界。
-func (c *AppClient) DoRaw(t *testing.T, method, path, contentType string, rawBody []byte) *Response {
-	t.Helper()
+// ExecuteJSON 发起并发安全的 JSON HTTP 请求并返回错误而非调用 t.Fatalf，
+// 供并发测试的 worker goroutine 采集结果并在 wg.Wait() 后由主 goroutine 统一断言。
+func (c *AppClient) ExecuteJSON(method, path string, body any) (*Response, error) {
+	var contentType string
+	var rawBody []byte
+	if body != nil {
+		var err error
+		rawBody, err = json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		contentType = "application/json"
+	}
+	return c.executeRaw(method, path, contentType, rawBody)
+}
 
+func (c *AppClient) executeRaw(method, path, contentType string, rawBody []byte) (*Response, error) {
 	var bodyReader io.Reader
 	if rawBody != nil {
 		bodyReader = bytes.NewReader(rawBody)
 	}
 	req, err := http.NewRequest(method, c.baseURL+path, bodyReader)
 	if err != nil {
-		t.Fatalf("build %s %s request: %v", method, path, err)
+		return nil, err
 	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
@@ -404,13 +430,13 @@ func (c *AppClient) DoRaw(t *testing.T, method, path, contentType string, rawBod
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		t.Fatalf("execute %s %s: %v", method, path, err)
+		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		t.Fatalf("read %s %s response body: %v", method, path, err)
+		return nil, err
 	}
 	return &Response{
 		Method:     method,
@@ -419,7 +445,18 @@ func (c *AppClient) DoRaw(t *testing.T, method, path, contentType string, rawBod
 		Header:     resp.Header.Clone(),
 		Cookies:    resp.Cookies(),
 		Body:       raw,
+	}, nil
+}
+
+// DoRaw 发起自定义 Content-Type 与原始字节载荷的请求，用于验证 415、413、400 畸形 JSON 及 405 等边界。
+func (c *AppClient) DoRaw(t *testing.T, method, path, contentType string, rawBody []byte) *Response {
+	t.Helper()
+
+	resp, err := c.executeRaw(method, path, contentType, rawBody)
+	if err != nil {
+		t.Fatalf("execute %s %s: %v", method, path, err)
 	}
+	return resp
 }
 
 func (c *AppClient) doJSON(t *testing.T, method, path string, body any) *Response {
@@ -486,12 +523,20 @@ func (r *Response) CookiePair(name string) (string, bool) {
 	return "", false
 }
 
-// DecodeJSON 将响应体反序列化为目标泛型结构 T，解析失败时立即终止当前用例并附带原始响应体。
-func DecodeJSON[T any](t *testing.T, resp *Response) T {
+// DecodeStatus 先断言 HTTP 状态码为 wantStatus，再将响应体反序列化为目标泛型结构 T，
+// 从接口签名层面杜绝“漏检状态码直接解包”掩盖服务端错误。
+func DecodeStatus[T any](t *testing.T, resp *Response, wantStatus int) T {
 	t.Helper()
+	resp.RequireStatus(t, wantStatus)
 	var out T
 	if err := json.Unmarshal(resp.Body, &out); err != nil {
 		t.Fatalf("%s %s: decode JSON into %T failed: %v (body=%s)", resp.Method, resp.Path, out, err, string(resp.Body))
 	}
 	return out
+}
+
+// DecodeOK 是 DecodeStatus(..., http.StatusOK) 的快捷封装，用于绝大多数 200 响应体解包。
+func DecodeOK[T any](t *testing.T, resp *Response) T {
+	t.Helper()
+	return DecodeStatus[T](t, resp, http.StatusOK)
 }

@@ -1,6 +1,7 @@
 package integration_test
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"testing"
@@ -13,18 +14,29 @@ import (
 // Scenario 是基于真实对外 HTTP API 的可配置场景数据生成器。
 // 每个步骤使用合理业务默认值并允许按需覆写关键字段，前置步骤失败时立即终止当前用例，绝不直接向 SQLite 插行造数。
 type Scenario struct {
-	t      *testing.T
-	client *AppClient
+	t        *testing.T
+	client   *AppClient
+	clientFn func() *AppClient
+}
+
+// activeClient 返回当前生效的客户端视图；优先通过 clientFn 动态读取，确保 app.Relogin() 后自动衔接新会话。
+func (s *Scenario) activeClient() *AppClient {
+	if s.clientFn != nil {
+		return s.clientFn()
+	}
+	return s.client
 }
 
 // BabyParams 定义创建宝宝档案时的可选覆写参数；零值字段沿用默认档案（小汤圆、2026-07-15、female、3.35kg / 50.2cm）。
+// 设置 WithoutBirthMeasurements=true 可跳过出生体重与身高默认值，用于冷启动无出生体格兜底场景。
 type BabyParams struct {
-	Nickname      string
-	BirthDate     string
-	Gender        string
-	BirthWeightKg *float64
-	BirthHeightCm *float64
-	Timezone      string
+	Nickname                 string
+	BirthDate                string
+	Gender                   string
+	BirthWeightKg            *float64
+	BirthHeightCm            *float64
+	WithoutBirthMeasurements bool
+	Timezone                 string
 }
 
 // EnsureBaby 经 POST /api/baby 创建单宝宝档案并断言返回 201（仅用于首次建档，非幂等、不可重复调用）。
@@ -44,37 +56,46 @@ func (s *Scenario) EnsureBaby(params ...BabyParams) baby.Profile {
 	if p.Gender == "" {
 		p.Gender = "female"
 	}
-	if p.BirthWeightKg == nil {
-		p.BirthWeightKg = ptr(3.35)
-	}
-	if p.BirthHeightCm == nil {
-		p.BirthHeightCm = ptr(50.2)
+	if !p.WithoutBirthMeasurements {
+		if p.BirthWeightKg == nil {
+			p.BirthWeightKg = ptr(3.35)
+		}
+		if p.BirthHeightCm == nil {
+			p.BirthHeightCm = ptr(50.2)
+		}
 	}
 	tz := p.Timezone
 	if tz == "" {
 		tz = defaultTimezone
 	}
 
-	resp := s.client.Post(s.t, "/api/baby?tz="+url.QueryEscape(tz), baby.UpsertInput{
+	resp := s.activeClient().Post(s.t, "/api/baby?tz="+url.QueryEscape(tz), baby.UpsertInput{
 		Nickname:      p.Nickname,
 		BirthDate:     p.BirthDate,
 		Gender:        p.Gender,
 		BirthWeightKg: p.BirthWeightKg,
 		BirthHeightCm: p.BirthHeightCm,
 	})
-	resp.RequireStatus(s.t, http.StatusCreated)
-	return DecodeJSON[struct {
+	return DecodeStatus[struct {
+		Baby baby.Profile `json:"baby"`
+	}](s.t, resp, http.StatusCreated).Baby
+}
+
+// UpdateBaby 经 PUT /api/baby 更新宝宝档案并断言返回 200，用于跨模块联动（如更正出生日期）场景。
+func (s *Scenario) UpdateBaby(in baby.UpsertInput, tz ...string) baby.Profile {
+	s.t.Helper()
+	resp := s.activeClient().Put(s.t, "/api/baby?tz="+url.QueryEscape(resolveTZ(tz)), in)
+	return DecodeOK[struct {
 		Baby baby.Profile `json:"baby"`
 	}](s.t, resp).Baby
 }
 
 func (s *Scenario) AddFeeding(in records.FeedingInput) records.FeedingRecord {
 	s.t.Helper()
-	resp := s.client.Post(s.t, "/api/records/feeding", in)
-	resp.RequireStatus(s.t, http.StatusCreated)
-	return DecodeJSON[struct {
+	resp := s.activeClient().Post(s.t, "/api/records/feeding", in)
+	return DecodeStatus[struct {
 		Record records.FeedingRecord `json:"record"`
-	}](s.t, resp).Record
+	}](s.t, resp, http.StatusCreated).Record
 }
 
 func (s *Scenario) AddFormula(amountML int, recordedAt string, note ...string) records.FeedingRecord {
@@ -129,25 +150,23 @@ func (s *Scenario) AddSolid(food, amount, acceptance, recordedAt string) records
 
 func (s *Scenario) AddSleep(subtype, startedAt, endedAt string, note ...string) records.SleepRecord {
 	s.t.Helper()
-	resp := s.client.Post(s.t, "/api/records/sleep", records.SleepInput{
+	resp := s.activeClient().Post(s.t, "/api/records/sleep", records.SleepInput{
 		Subtype:   subtype,
 		StartedAt: startedAt,
 		EndedAt:   endedAt,
 		Note:      firstString(note),
 	})
-	resp.RequireStatus(s.t, http.StatusCreated)
-	return DecodeJSON[struct {
+	return DecodeStatus[struct {
 		Record records.SleepRecord `json:"record"`
-	}](s.t, resp).Record
+	}](s.t, resp, http.StatusCreated).Record
 }
 
 func (s *Scenario) AddCare(in records.CareInput) records.CareRecord {
 	s.t.Helper()
-	resp := s.client.Post(s.t, "/api/records/care", in)
-	resp.RequireStatus(s.t, http.StatusCreated)
-	return DecodeJSON[struct {
+	resp := s.activeClient().Post(s.t, "/api/records/care", in)
+	return DecodeStatus[struct {
 		Record records.CareRecord `json:"record"`
-	}](s.t, resp).Record
+	}](s.t, resp, http.StatusCreated).Record
 }
 
 // AddDiaper 写入换尿布记录；stoolConsistency 与 stoolColor 留空时按未填写处理。
@@ -186,11 +205,10 @@ func (s *Scenario) AddOtherCare(title, recordedAt string) records.CareRecord {
 
 func (s *Scenario) AddHealth(in records.HealthInput) records.HealthRecord {
 	s.t.Helper()
-	resp := s.client.Post(s.t, "/api/records/health", in)
-	resp.RequireStatus(s.t, http.StatusCreated)
-	return DecodeJSON[struct {
+	resp := s.activeClient().Post(s.t, "/api/records/health", in)
+	return DecodeStatus[struct {
 		Record records.HealthRecord `json:"record"`
-	}](s.t, resp).Record
+	}](s.t, resp, http.StatusCreated).Record
 }
 
 func (s *Scenario) AddTemperature(tempC float64, recordedAt string) records.HealthRecord {
@@ -246,22 +264,26 @@ func (s *Scenario) AddTooth(toothNote, recordedAt string) records.HealthRecord {
 	})
 }
 
-// SeedVaccines 经 GET /api/vaccines 触发宝宝 NIP 疫苗基线的幂等懒初始化并返回完整总览。
+// GetVaccinesOverview 经 GET /api/vaccines 查询当前疫苗计划总览（首次访问时自动幂等初始化 NIP 基线）。
+func (s *Scenario) GetVaccinesOverview(tz ...string) vaccines.OverviewResponse {
+	s.t.Helper()
+	resp := s.activeClient().Get(s.t, "/api/vaccines?tz="+url.QueryEscape(resolveTZ(tz)))
+	return DecodeOK[vaccines.OverviewResponse](s.t, resp)
+}
+
+// SeedVaccines 语义化别名，用于在用例前置阶段显式表达首次触发宝宝 NIP 疫苗基线的懒初始化。
 func (s *Scenario) SeedVaccines(tz ...string) vaccines.OverviewResponse {
 	s.t.Helper()
-	resp := s.client.Get(s.t, "/api/vaccines?tz="+url.QueryEscape(resolveTZ(tz)))
-	resp.RequireStatus(s.t, http.StatusOK)
-	return DecodeJSON[vaccines.OverviewResponse](s.t, resp)
+	return s.GetVaccinesOverview(tz...)
 }
 
 // AddVaccineTemplateInput 按完整参数与可选时区加入自费疫苗模板（支持定制 planned_date）。
 func (s *Scenario) AddVaccineTemplateInput(in vaccines.AddTemplateInput, tz ...string) []vaccines.DoseView {
 	s.t.Helper()
-	resp := s.client.Post(s.t, "/api/vaccines/from-template?tz="+url.QueryEscape(resolveTZ(tz)), in)
-	resp.RequireStatus(s.t, http.StatusCreated)
-	return DecodeJSON[struct {
+	resp := s.activeClient().Post(s.t, "/api/vaccines/from-template?tz="+url.QueryEscape(resolveTZ(tz)), in)
+	return DecodeStatus[struct {
 		Doses []vaccines.DoseView `json:"doses"`
-	}](s.t, resp).Doses
+	}](s.t, resp, http.StatusCreated).Doses
 }
 
 // AddVaccineTemplate 快捷加入自费模板；不传 customAgeMonths 时采用模板默认排期，传入则按指定月龄定制剂次。
@@ -276,11 +298,19 @@ func (s *Scenario) AddVaccineTemplate(code string, customAgeMonths ...int) []vac
 
 func (s *Scenario) AddCustomVaccine(in vaccines.CreateCustomInput, tz ...string) []vaccines.DoseView {
 	s.t.Helper()
-	resp := s.client.Post(s.t, "/api/vaccines?tz="+url.QueryEscape(resolveTZ(tz)), in)
-	resp.RequireStatus(s.t, http.StatusCreated)
-	return DecodeJSON[struct {
+	resp := s.activeClient().Post(s.t, "/api/vaccines?tz="+url.QueryEscape(resolveTZ(tz)), in)
+	return DecodeStatus[struct {
 		Doses []vaccines.DoseView `json:"doses"`
-	}](s.t, resp).Doses
+	}](s.t, resp, http.StatusCreated).Doses
+}
+
+// UpdateVaccineDose 经 PUT /api/vaccines/:id 更新单剂疫苗并返回最新视图，便于构造预约或已接种前置上下文。
+func (s *Scenario) UpdateVaccineDose(id int64, in vaccines.UpdateDoseInput, tz ...string) vaccines.DoseView {
+	s.t.Helper()
+	resp := s.activeClient().Put(s.t, fmt.Sprintf("/api/vaccines/%d?tz=%s", id, url.QueryEscape(resolveTZ(tz))), in)
+	return DecodeOK[struct {
+		Dose vaccines.DoseView `json:"dose"`
+	}](s.t, resp).Dose
 }
 
 // firstString 与 resolveTZ 配合方法签名中的可变参数（...string）模拟 Go 可选参数：未传时回退空串或默认时区。

@@ -80,6 +80,12 @@ if grep -rnE --include='*.go' --exclude='*_test.go' '\.Table\("' backend/interna
   exit 1
 fi
 
+# 10.1 集成测试禁止硬编码会话 Cookie 名称，须统一复用 auth.SessionCookieName 常量
+if grep -rn '"babylog_session"' backend/internal/integration/ backend/cmd/babylog/; then
+  echo 'Use auth.SessionCookieName instead of hardcoded "babylog_session" in integration/CLI tests' >&2
+  exit 1
+fi
+
 # 11. 测试与临时验证产物防误提交门禁（前端不保留常驻自动化测试，临时预览与 SQLite 文件严禁入仓）
 bad_frontend_tests=$(find src -type f \( -name '*.test.ts' -o -name '*.test.tsx' -o -name '*.spec.ts' -o -name '*.spec.tsx' -o -name '*.test.js' -o -name '*.spec.js' -o -name '*__temp_preview__*' \) -o -type d -name '__tests__')
 if [ -n "$bad_frontend_tests" ]; then

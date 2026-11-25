@@ -51,5 +51,8 @@ jobs:
       - name: Backend vet & tests
         run: pnpm test
 
+      - name: Backend race tests
+        run: pnpm test:race
+
       - name: Build frontend & single binary
         run: pnpm build
