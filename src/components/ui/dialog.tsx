@@ -1,11 +1,33 @@
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog';
 import { XIcon } from 'lucide-react';
-import type * as React from 'react';
+import * as React from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
-function Dialog({ ...props }: DialogPrimitive.Root.Props) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />;
+const DialogPendingContext = React.createContext(false);
+
+interface DialogProps extends DialogPrimitive.Root.Props {
+  /** 提交或删除进行中时设为 true：自动禁用遮罩关闭、拦截 Esc 退出并禁用顶部关闭按钮。 */
+  pending?: boolean;
+}
+
+function Dialog({ pending = false, disablePointerDismissal, onOpenChange, ...props }: DialogProps) {
+  return (
+    <DialogPendingContext.Provider value={pending}>
+      <DialogPrimitive.Root
+        data-slot="dialog"
+        disablePointerDismissal={pending || disablePointerDismissal}
+        onOpenChange={(nextOpen, eventDetails) => {
+          if (!nextOpen && pending) {
+            eventDetails.cancel();
+            return;
+          }
+          onOpenChange?.(nextOpen, eventDetails);
+        }}
+        {...props}
+      />
+    </DialogPendingContext.Provider>
+  );
 }
 
 function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {
@@ -41,6 +63,8 @@ function DialogContent({
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
 }) {
+  const pending = React.useContext(DialogPendingContext);
+
   return (
     <DialogPortal>
       <DialogOverlay />
@@ -56,11 +80,13 @@ function DialogContent({
         {showCloseButton ? (
           <DialogPrimitive.Close
             data-slot="dialog-close"
+            disabled={pending}
             render={
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-sm"
+                disabled={pending}
                 className="absolute top-3 right-3 text-muted-foreground hover:text-foreground"
                 aria-label="关闭弹窗"
               />

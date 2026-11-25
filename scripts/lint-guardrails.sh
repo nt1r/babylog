@@ -75,6 +75,15 @@ if grep -rnE '<details\b' src/; then
   exit 1
 fi
 
+# 6.1 移动端 Sidebar 以 Base UI Drawer 渲染并在关闭时卸载子树，侧边栏内组件禁止直接挂载弹窗/抽屉（须提升至 AppShell 根节点由 Store 驱动）
+bad_sidebar_overlays=$(find src -type f \( -name '*.ts' -o -name '*.tsx' \) ! -path 'src/components/ui/*' -exec grep -l 'useSidebar(' {} + | while IFS= read -r f; do
+  grep -HnE '<[A-Za-z0-9_]*(Dialog|Drawer)\b|@/components/ui/(dialog|drawer)' "$f" || true
+done)
+if [ -n "$bad_sidebar_overlays" ]; then
+  printf 'Do not mount Dialog/Drawer inside mobile-unmounted Sidebar subtrees (hoist to AppShell with Zustand state):\n%s\n' "$bad_sidebar_overlays" >&2
+  exit 1
+fi
+
 # 7. 前端业务模块未使用导出（死导出）检查
 node scripts/check-unused-exports.mjs
 

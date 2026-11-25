@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nt1r/babylog/backend/internal/auth"
 	"github.com/nt1r/babylog/backend/internal/baby"
 	"github.com/nt1r/babylog/backend/internal/database"
 	"github.com/nt1r/babylog/backend/internal/records"
@@ -27,8 +28,12 @@ func openTestStores(t *testing.T, now time.Time) (*records.Store, int64) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	clock := func() time.Time { return now }
+	authStore := auth.NewStore(db.Gorm()).WithClock(clock)
+	if err := authStore.InitializeAdministrator(context.Background(), "admin", "records-store-secret-123"); err != nil {
+		t.Fatalf("init admin: %v", err)
+	}
 	babyStore := baby.NewStore(db.Gorm()).WithClock(clock)
-	profile, err := babyStore.Create(context.Background(), baby.UpsertInput{
+	profile, err := babyStore.CreateForUser(context.Background(), 1, baby.UpsertInput{
 		Nickname:  "小团子",
 		BirthDate: "2026-08-01",
 		Gender:    "female",
@@ -167,7 +172,7 @@ func TestListSleepSub30sCrossMidnightDateKey(t *testing.T) {
 	}
 }
 
-// TestCrossBabyIDMutationIsolation 验证单宝宝模式之外的底层 baby_id 越权写入隔离契约（HTTP 层无法构造第二个 babyID）。
+// TestCrossBabyIDMutationIsolation 验证记录存储层底层按 baby_id 隔离写入与删除的防越权契约。
 func TestCrossBabyIDMutationIsolation(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)

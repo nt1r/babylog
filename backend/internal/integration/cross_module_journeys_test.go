@@ -15,7 +15,7 @@ import (
 
 /*
  * Spec: admin-auth / Administrator login and session creation / Successful administrator login
- * Spec: baby-profile / Single baby profile creation / Create baby profile successfully
+ * Spec: baby-profile / Multi-baby profile creation / Create multiple baby profiles for the same user
  * Spec: daily-records / Smart defaults endpoint for low-friction entry / Compute smart defaults from recent history
  * Spec: dashboard-insights / Timezone-aware daily KPI summary and recency indicators / Compute today summary in specified timezone
  * Spec: vaccine-management / Dose status transitions and record updates / Auto-remember first non-birth clinic and respect explicit default clinic pin
@@ -29,7 +29,7 @@ import (
  * 测试目标：
  * 1. 验证匿名管理员登录并建档后，首访疫苗概览触发 22 剂 NIP 懒初始化，首页看板自动以出生体格兜底。
  * 2. 验证录入跨夜整觉、配方奶、左侧亲喂、尿布、体温与用药后，首页 summary、7 日 trends 与智能默认值（换侧推荐右侧）全部同步联动。
- * 3. 验证预约常规 4 月龄疫苗自动记住常去门诊，且 GET /api/vaccines 与 GET /api/baby 跨端点同步回显该门诊。
+ * 3. 验证预约常规疫苗自动记住常去门诊，且疫苗总览与宝宝列表跨端点同步回显该门诊。
  */
 func TestNewParentFirstDayClosedLoop(t *testing.T) {
 	t.Parallel()
@@ -57,7 +57,7 @@ func TestNewParentFirstDayClosedLoop(t *testing.T) {
 	if len(ovInit.Doses) != 22 || !ovInit.Summary.BirthConfirmPending {
 		t.Fatalf("首访疫苗初始化异常：doses=%d birthPending=%v", len(ovInit.Doses), ovInit.Summary.BirthConfirmPending)
 	}
-	sumInitResp := client.Get(t, "/api/dashboard/summary?tz=Asia/Shanghai")
+	sumInitResp := client.Get(t, babyPath(profile.ID, "/dashboard/summary?tz=Asia/Shanghai"))
 	sumInitResp.RequireStatus(t, http.StatusOK)
 	sumInit := DecodeOK[dashboard.SummaryResponse](t, sumInitResp)
 	if sumInit.Growth.LatestWeightKg == nil || *sumInit.Growth.LatestWeightKg != 3.4 || !sumInit.Growth.WeightIsBirth {
@@ -72,7 +72,7 @@ func TestNewParentFirstDayClosedLoop(t *testing.T) {
 	s.AddTemperature(36.8, "2026-11-23T05:00:00Z")                                        // 13:00+08
 	s.AddMedicine("维生素 D3", "1 粒", "2026-11-23T05:30:00Z")                                // 13:30+08
 
-	sumResp := client.Get(t, "/api/dashboard/summary?tz=Asia/Shanghai")
+	sumResp := client.Get(t, babyPath(profile.ID, "/dashboard/summary?tz=Asia/Shanghai"))
 	sumResp.RequireStatus(t, http.StatusOK)
 	sum := DecodeOK[dashboard.SummaryResponse](t, sumResp)
 	if sum.Feeding.TotalML != 150 || sum.Feeding.DirectBreastMin != 16 || sum.Sleep.TotalMin != 360 ||
@@ -81,7 +81,7 @@ func TestNewParentFirstDayClosedLoop(t *testing.T) {
 		t.Fatalf("全天照护录入后首页摘要未同步联动：%+v", sum)
 	}
 
-	trendResp := client.Get(t, "/api/dashboard/trends?days=7&tz=Asia/Shanghai")
+	trendResp := client.Get(t, babyPath(profile.ID, "/dashboard/trends?days=7&tz=Asia/Shanghai"))
 	trendResp.RequireStatus(t, http.StatusOK)
 	tr := DecodeOK[dashboard.TrendsResponse](t, trendResp)
 	if len(tr.Daily) != 7 {
@@ -92,7 +92,7 @@ func TestNewParentFirstDayClosedLoop(t *testing.T) {
 		t.Fatalf("趋势末日数据未与首页摘要对齐：%+v", todayPoint)
 	}
 
-	defResp := client.Get(t, "/api/records/defaults")
+	defResp := client.Get(t, babyPath(profile.ID, "/records/defaults"))
 	defResp.RequireStatus(t, http.StatusOK)
 	defs := DecodeOK[records.SmartDefaults](t, defResp)
 	if defs.Feeding.LastMilkML != 150 || defs.Feeding.SuggestedBreastSide != "right" ||
@@ -114,13 +114,13 @@ func TestNewParentFirstDayClosedLoop(t *testing.T) {
 	if got := s.GetVaccinesOverview("Asia/Shanghai").DefaultClinicName; got != "枫林社区卫生服务中心" {
 		t.Fatalf("疫苗总览未同步回显自动记住的常去门诊：%q", got)
 	}
-	babyResp := client.Get(t, "/api/baby")
-	babyResp.RequireStatus(t, http.StatusOK)
-	gotBaby := DecodeOK[struct {
-		Baby baby.Profile `json:"baby"`
-	}](t, babyResp).Baby
-	if gotBaby.ID != profile.ID || gotBaby.DefaultClinicName != "枫林社区卫生服务中心" {
-		t.Fatalf("宝宝档案接口未同步反映疫苗预约记住的常去门诊：%+v", gotBaby)
+	babiesResp := client.Get(t, "/api/babies")
+	babiesResp.RequireStatus(t, http.StatusOK)
+	gotBabies := DecodeOK[struct {
+		Babies []baby.Profile `json:"babies"`
+	}](t, babiesResp).Babies
+	if len(gotBabies) != 1 || gotBabies[0].ID != profile.ID || gotBabies[0].DefaultClinicName != "枫林社区卫生服务中心" {
+		t.Fatalf("宝宝列表接口未同步反映疫苗预约记住的常去门诊：%+v", gotBabies)
 	}
 }
 
@@ -145,7 +145,7 @@ func TestRecordEditAndDeleteCrossModuleRollback(t *testing.T) {
 
 	app := NewTestApp(t)
 	s := app.Scenario()
-	s.EnsureBaby(BabyParams{
+	b := s.EnsureBaby(BabyParams{
 		BirthDate:     "2026-07-15",
 		BirthWeightKg: ptr(3.3),
 		BirthHeightCm: ptr(50.0),
@@ -161,13 +161,13 @@ func TestRecordEditAndDeleteCrossModuleRollback(t *testing.T) {
 
 	fetchSummary := func() dashboard.SummaryResponse {
 		t.Helper()
-		resp := client.Get(t, "/api/dashboard/summary?tz=Asia/Shanghai")
+		resp := client.Get(t, babyPath(b.ID, "/dashboard/summary?tz=Asia/Shanghai"))
 		resp.RequireStatus(t, http.StatusOK)
 		return DecodeOK[dashboard.SummaryResponse](t, resp)
 	}
 
 	// 1. 先编辑误录发烧为 36.9℃ 核对看板更新，再彻底删除该记录核对看板回退至上一条 36.6℃。
-	client.Put(t, fmt.Sprintf("/api/records/health/%d", mistakenFever.ID), records.HealthInput{
+	client.Put(t, babyPath(b.ID, fmt.Sprintf("/records/health/%d", mistakenFever.ID)), records.HealthInput{
 		Subtype:      records.HealthSubtypeTemperature,
 		TemperatureC: ptr(36.9),
 		RecordedAt:   "2026-11-23T01:00:00Z",
@@ -175,20 +175,20 @@ func TestRecordEditAndDeleteCrossModuleRollback(t *testing.T) {
 	if sum := fetchSummary(); sum.Health.LatestTempC == nil || *sum.Health.LatestTempC != 36.9 {
 		t.Fatalf("修改体温后看板应显示 36.9℃，实际 %+v", sum.Health)
 	}
-	client.Delete(t, fmt.Sprintf("/api/records/health/%d", mistakenFever.ID)).RequireStatus(t, http.StatusOK)
+	client.Delete(t, babyPath(b.ID, fmt.Sprintf("/records/health/%d", mistakenFever.ID))).RequireStatus(t, http.StatusOK)
 	if sum := fetchSummary(); sum.Health.LatestTempC == nil || *sum.Health.LatestTempC != 36.6 {
 		t.Fatalf("删除最新体温后看板应回退至 36.6℃，实际 %+v", sum.Health)
 	}
 
 	// 2. 删除最新右侧亲喂前先确认当前推荐左侧，删除后确认智能默认值立即回退为上次左侧、推荐右侧。
-	defBeforeResp := client.Get(t, "/api/records/defaults")
+	defBeforeResp := client.Get(t, babyPath(b.ID, "/records/defaults"))
 	defBeforeResp.RequireStatus(t, http.StatusOK)
 	defBefore := DecodeOK[records.SmartDefaults](t, defBeforeResp)
 	if defBefore.Feeding.SuggestedBreastSide != "left" {
 		t.Fatalf("删除前最新为右侧亲喂，预期推荐 left，实际 %q", defBefore.Feeding.SuggestedBreastSide)
 	}
-	client.Delete(t, fmt.Sprintf("/api/records/feeding/%d", mistakenRight.ID)).RequireStatus(t, http.StatusOK)
-	defAfterResp := client.Get(t, "/api/records/defaults")
+	client.Delete(t, babyPath(b.ID, fmt.Sprintf("/records/feeding/%d", mistakenRight.ID))).RequireStatus(t, http.StatusOK)
+	defAfterResp := client.Get(t, babyPath(b.ID, "/records/defaults"))
 	defAfterResp.RequireStatus(t, http.StatusOK)
 	defAfter := DecodeOK[records.SmartDefaults](t, defAfterResp)
 	if defAfter.Feeding.LastBreastSide == nil || *defAfter.Feeding.LastBreastSide != "left" ||
@@ -200,7 +200,7 @@ func TestRecordEditAndDeleteCrossModuleRollback(t *testing.T) {
 	if sum := fetchSummary(); sum.Growth.LatestWeightKg == nil || *sum.Growth.LatestWeightKg != 7.5 || sum.Growth.WeightIsBirth {
 		t.Fatalf("删除前应显示手工体重 7.5kg：%+v", sum.Growth)
 	}
-	client.Delete(t, fmt.Sprintf("/api/records/health/%d", onlyWeight.ID)).RequireStatus(t, http.StatusOK)
+	client.Delete(t, babyPath(b.ID, fmt.Sprintf("/records/health/%d", onlyWeight.ID))).RequireStatus(t, http.StatusOK)
 	sumFallback := fetchSummary()
 	if sumFallback.Growth.LatestWeightKg == nil || *sumFallback.Growth.LatestWeightKg != 3.3 ||
 		!sumFallback.Growth.WeightIsBirth || sumFallback.Growth.WeightRecordedAt == nil ||
@@ -221,7 +221,7 @@ func TestRecordEditAndDeleteCrossModuleRollback(t *testing.T) {
  * - 前置业务记录：已初始化 22 剂 NIP，其中乙肝第 1 剂已标记接种（2026-11-01），脊灰第 1 剂手工指定 planned_date=2026-12-20，乙肝第 2 剂保持默认待接种
  * 测试目标：
  * 1. 验证初始出生日 2026-08-31 下，1 月龄乙肝第 2 剂默认日期为 2026-09-30 且因距今超 14 天处于 overdue 态。
- * 2. 验证经 PUT /api/baby 将出生日更正为 2026-10-31 后，再次 GET /api/vaccines 时乙肝第 2 剂自动重算并钳位为 2026-11-30（转为 due_soon），而已定制 planned_date 的脊灰第 1 剂与已完成的乙肝第 1 剂保持原生效日期不变。
+ * 2. 验证经 PUT /api/babies/:babyId 将出生日更正为 2026-10-31 后，再次 GET /api/babies/:babyId/vaccines 时乙肝第 2 剂自动重算并钳位为 2026-11-30（转为 due_soon），而已定制 planned_date 的脊灰第 1 剂与已完成的乙肝第 1 剂保持原生效日期不变。
  */
 func TestBabyBirthDateCorrectionRecalculatesVaccines(t *testing.T) {
 	t.Parallel()
@@ -281,4 +281,76 @@ func TestBabyBirthDateCorrectionRecalculatesVaccines(t *testing.T) {
 	if hepb1After == nil || hepb1After.Status != vaccines.StatusCompleted || hepb1After.EffectiveDate != "2026-11-01" {
 		t.Fatalf("已接种的乙肝第 1 剂应保持原接种日期 2026-11-01，实际 %+v", hepb1After)
 	}
+}
+
+/*
+ * Spec: user-management / Admin web user management API / Administrator creates, resets password, and disables an ordinary user via API
+ * Spec: baby-profile / Hard deletion of a baby profile / Hard-delete an owned baby profile and cascade child records
+ * Spec: daily-records / Authenticated access and baby-profile precondition for records / Reject record access for foreign baby ID
+ * Spec: dashboard-insights / Authenticated access to dashboard endpoints / Reject dashboard request for foreign baby ID
+ * Spec: vaccine-management / Authenticated access to vaccine endpoints / Reject vaccine request for foreign baby ID
+ * 测试场景：多用户多宝宝全链路闭环——管理员代建两户家庭账号、各自改密建娃记录、双层越权全拒、单娃硬删除不误伤兄弟与他户、管理员停用即时踢出。
+ * 业务背景：验证多用户与多宝宝引入后，从账号开通、强制改密、跨宝宝日常照护、越权探测到删除宝宝和停用账号整条链路数据零泄漏、零误伤。
+ * 前置数据：
+ * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
+ * - 管理员与会话：唯一管理员已登录（本身无宝宝），依次创建家庭 A 与家庭 B
+ * - 宝宝档案：家庭 A 建大宝与二宝；家庭 B 建三宝
+ * - 前置业务记录：各宝宝写入差异化喂养与疫苗数据
+ * 测试目标：
+ * 1. 验证无宝宝的管理员可直接开号，家庭 A 与家庭 B 完成首次改密并各自建娃记录后，首页看板、智能默认值与疫苗总览严格隔离。
+ * 2. 验证管理员与家庭 B 均无法访问家庭 A 的宝宝记录/看板/疫苗（全部 404），贯彻运维权限与业务隐私分离原则。
+ * 3. 验证家庭 A 硬删除大宝后大宝数据级联清零而二宝与家庭 B 完好，随后管理员停用家庭 B 立即踢出其会话且不影响家庭 A。
+ */
+func TestMultiUserMultiBabyFullIsolationJourney(t *testing.T) {
+	t.Parallel()
+
+	app := NewTestApp(t)
+	adminClient := app.Client()
+
+	// 1. 管理员代建家庭 A、家庭 B，两户各自完成首次改密并建娃录入差异化数据，验证读模型严格隔离。
+	clientA, _ := app.CreateReadyUserViaAdmin("FamilyA", "familya-init-1234", "familya-priv-5678")
+	clientB, userB := app.CreateReadyUserViaAdmin("FamilyB", "familyb-init-1234", "familyb-priv-5678")
+
+	sA := app.ScenarioFor(clientA)
+	a1 := sA.EnsureBaby(BabyParams{Nickname: "A大宝"})
+	sA.ForBaby(a1.ID).AddFormula(180, "2026-11-23T01:00:00Z")
+	sA.ForBaby(a1.ID).SeedVaccines()
+
+	a2 := sA.EnsureBaby(BabyParams{Nickname: "A二宝"})
+	sA.ForBaby(a2.ID).AddFormula(90, "2026-11-23T01:10:00Z")
+
+	sB := app.ScenarioFor(clientB)
+	b1 := sB.EnsureBaby(BabyParams{Nickname: "B宝宝"})
+	sB.ForBaby(b1.ID).AddFormula(150, "2026-11-23T01:20:00Z")
+
+	sumA1 := DecodeOK[dashboard.SummaryResponse](t, clientA.Get(t, babyPath(a1.ID, "/dashboard/summary?tz=Asia/Shanghai")))
+	sumA2 := DecodeOK[dashboard.SummaryResponse](t, clientA.Get(t, babyPath(a2.ID, "/dashboard/summary?tz=Asia/Shanghai")))
+	sumB1 := DecodeOK[dashboard.SummaryResponse](t, clientB.Get(t, babyPath(b1.ID, "/dashboard/summary?tz=Asia/Shanghai")))
+	if sumA1.Feeding.TotalML != 180 || sumA2.Feeding.TotalML != 90 || sumB1.Feeding.TotalML != 150 {
+		t.Fatalf("多用户多宝宝看板汇总出现串扰：a1=%d a2=%d b1=%d",
+			sumA1.Feeding.TotalML, sumA2.Feeding.TotalML, sumB1.Feeding.TotalML)
+	}
+
+	// 2. 唯一管理员与家庭 B 访问家庭 A 的宝宝记录/看板/疫苗全部返回 404（管理员同样严守隐私边界）。
+	for _, intruder := range []*AppClient{adminClient, clientB} {
+		intruder.Get(t, babyPath(a1.ID, "/records/feeding")).RequireError(t, http.StatusNotFound, "")
+		intruder.Get(t, babyPath(a1.ID, "/dashboard/summary")).RequireError(t, http.StatusNotFound, "")
+		intruder.Get(t, babyPath(a1.ID, "/vaccines")).RequireError(t, http.StatusNotFound, "")
+	}
+
+	// 3. 家庭 A 硬删除大宝仅清理大宝级联数据；管理员停用家庭 B 立即踢出 B 会话且不影响家庭 A 继续使用。
+	clientA.Delete(t, fmt.Sprintf("/api/babies/%d", a1.ID)).RequireStatus(t, http.StatusOK)
+	if CountRows[records.FeedingRecord](t, app, "baby_id = ?", a1.ID) != 0 ||
+		CountRows[vaccines.DoseRecord](t, app, "baby_id = ?", a1.ID) != 0 {
+		t.Fatalf("删除 A 大宝后子表记录未完全级联清零")
+	}
+	if CountRows[records.FeedingRecord](t, app, "baby_id = ?", a2.ID) != 1 ||
+		CountRows[records.FeedingRecord](t, app, "baby_id = ?", b1.ID) != 1 {
+		t.Fatalf("删除 A 大宝不应影响 A 二宝与 B 宝宝")
+	}
+
+	adminClient.Patch(t, fmt.Sprintf("/api/admin/users/%d", userB.ID), map[string]bool{"disabled": true}).
+		RequireStatus(t, http.StatusOK)
+	clientB.Get(t, "/api/babies").RequireError(t, http.StatusUnauthorized, "登录")
+	clientA.Get(t, babyPath(a2.ID, "/dashboard/summary?tz=Asia/Shanghai")).RequireStatus(t, http.StatusOK)
 }

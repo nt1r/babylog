@@ -6,9 +6,10 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
+import { resolveMutationBabyId, useActiveBabyId } from '@/lib/baby';
 import type { RecordCategory } from '@/lib/categories';
-import { apiRequest } from '@/lib/http';
-import { DASHBOARD_QUERY_KEY, RECORD_DEFAULTS_QUERY_KEY, RECORDS_QUERY_KEY } from '@/lib/query-client';
+import { ApiError, apiRequest } from '@/lib/http';
+import { babyDashboardQueryKey, babyRecordDefaultsQueryKey, babyRecordsQueryKey } from '@/lib/query-client';
 import { getBrowserTimeZone } from '@/lib/time';
 
 export type RecordRange = 'today' | '7d' | '30d' | 'all';
@@ -268,11 +269,11 @@ export function getTemperatureSeverity(temp: number): {
   return { level: 'normal', label: '体温正常' };
 }
 
-/** 单条记录的新增/编辑/删除会同时影响分页列表、智能默认值与首页看板统计，统一失效三组查询缓存。 */
-function invalidateAllRecordQueries(queryClient: QueryClient) {
-  void queryClient.invalidateQueries({ queryKey: RECORDS_QUERY_KEY });
-  void queryClient.invalidateQueries({ queryKey: RECORD_DEFAULTS_QUERY_KEY });
-  void queryClient.invalidateQueries({ queryKey: DASHBOARD_QUERY_KEY });
+/** 单条记录的新增/编辑/删除会同时影响当前宝宝的分页列表、智能默认值与首页看板统计，统一失效三组查询缓存。 */
+function invalidateAllRecordQueries(queryClient: QueryClient, babyId: number) {
+  void queryClient.invalidateQueries({ queryKey: babyRecordsQueryKey(babyId) });
+  void queryClient.invalidateQueries({ queryKey: babyRecordDefaultsQueryKey(babyId) });
+  void queryClient.invalidateQueries({ queryKey: babyDashboardQueryKey(babyId) });
 }
 
 interface ListParams {
@@ -293,36 +294,44 @@ function buildListQueryString(params: ListParams): string {
 }
 
 async function fetchRecordList<C extends RecordCategory>(
+  babyId: number,
   category: C,
   params: ListParams,
   signal?: AbortSignal,
 ): Promise<ListResult<RecordOf<C>, DailySummaryOf<C>>> {
   return apiRequest<ListResult<RecordOf<C>, DailySummaryOf<C>>>(
-    `/api/records/${category}?${buildListQueryString(params)}`,
+    `/api/babies/${babyId}/records/${category}?${buildListQueryString(params)}`,
     { signal },
   );
 }
 
-async function fetchSmartDefaults(signal?: AbortSignal): Promise<SmartDefaults> {
-  return apiRequest<SmartDefaults>('/api/records/defaults', { signal });
+async function fetchSmartDefaults(babyId: number, signal?: AbortSignal): Promise<SmartDefaults> {
+  return apiRequest<SmartDefaults>(`/api/babies/${babyId}/records/defaults`, { signal });
 }
 
-async function saveRecord(req: SaveRecordRequest): Promise<RecordOf<RecordCategory>> {
-  const path = req.id !== undefined ? `/api/records/${req.category}/${req.id}` : `/api/records/${req.category}`;
+async function saveRecord(babyId: number, req: SaveRecordRequest): Promise<RecordOf<RecordCategory>> {
+  const path =
+    req.id !== undefined
+      ? `/api/babies/${babyId}/records/${req.category}/${req.id}`
+      : `/api/babies/${babyId}/records/${req.category}`;
   const method = req.id !== undefined ? 'PUT' : 'POST';
   const res = await apiRequest<{ record: RecordOf<RecordCategory> }>(path, { method, body: req.payload });
   return res.record;
 }
 
-async function deleteRecord(category: RecordCategory, id: number): Promise<void> {
-  await apiRequest<{ deleted: boolean }>(`/api/records/${category}/${id}`, { method: 'DELETE' });
+async function deleteRecord(babyId: number, category: RecordCategory, id: number): Promise<void> {
+  await apiRequest<{ deleted: boolean }>(`/api/babies/${babyId}/records/${category}/${id}`, { method: 'DELETE' });
 }
 
 export function useSmartDefaultsQuery(enabled = true) {
+  const activeBabyId = useActiveBabyId();
   return useQuery({
-    queryKey: RECORD_DEFAULTS_QUERY_KEY,
-    queryFn: ({ signal }) => fetchSmartDefaults(signal),
-    enabled,
+    queryKey: babyRecordDefaultsQueryKey(activeBabyId),
+    queryFn: ({ signal }) => {
+      if (activeBabyId === null) throw new ApiError(400, '请先选择宝宝档案。');
+      return fetchSmartDefaults(activeBabyId, signal);
+    },
+    enabled: enabled && activeBabyId !== null,
   });
 }
 
@@ -360,12 +369,16 @@ export function flattenInfiniteList<T extends { id: number }, S>(
 
 /** 四类日常记录通用分页列表查询：基于 useInfiniteQuery 按 offset 递增拉取 PAGE_SIZE 条记录。 */
 export function useRecordListQuery<C extends RecordCategory>(category: C, params: InfiniteListParams) {
+  const activeBabyId = useActiveBabyId();
   return useInfiniteQuery({
-    queryKey: [...RECORDS_QUERY_KEY, category, params],
+    queryKey: [...babyRecordsQueryKey(activeBabyId), category, params],
     initialPageParam: 0,
-    queryFn: ({ pageParam, signal }) =>
-      fetchRecordList(category, { ...params, limit: PAGE_SIZE, offset: pageParam }, signal),
+    queryFn: ({ pageParam, signal }) => {
+      if (activeBabyId === null) throw new ApiError(400, '请先选择宝宝档案。');
+      return fetchRecordList(activeBabyId, category, { ...params, limit: PAGE_SIZE, offset: pageParam }, signal);
+    },
     getNextPageParam: (lastPage, allPages) => (lastPage.has_more ? allPages.length * PAGE_SIZE : undefined),
+    enabled: activeBabyId !== null,
   });
 }
 
@@ -373,26 +386,43 @@ const GROWTH_CHART_LIMIT = 100;
 
 /** 生长曲线专用查询：一次拉取最多 100 条历史生长测量（对齐后端 MaxListLimit），避免受列表 20 条分页截断。 */
 export function useGrowthChartQuery() {
+  const activeBabyId = useActiveBabyId();
   return useQuery({
-    queryKey: [...RECORDS_QUERY_KEY, 'health', 'growth-chart'],
-    queryFn: ({ signal }) =>
-      fetchRecordList('health', { subtype: 'growth', range: 'all', limit: GROWTH_CHART_LIMIT, offset: 0 }, signal),
+    queryKey: [...babyRecordsQueryKey(activeBabyId), 'health', 'growth-chart'],
+    queryFn: ({ signal }) => {
+      if (activeBabyId === null) throw new ApiError(400, '请先选择宝宝档案。');
+      return fetchRecordList(
+        activeBabyId,
+        'health',
+        { subtype: 'growth', range: 'all', limit: GROWTH_CHART_LIMIT, offset: 0 },
+        signal,
+      );
+    },
+    enabled: activeBabyId !== null,
   });
 }
 
 export function useSaveRecordMutation() {
   const queryClient = useQueryClient();
+  const activeBabyId = useActiveBabyId();
   return useMutation({
-    mutationFn: (req: SaveRecordRequest) => saveRecord(req),
-    onSuccess: () => invalidateAllRecordQueries(queryClient),
+    mutationFn: async (req: SaveRecordRequest) => {
+      const targetBabyId = resolveMutationBabyId(activeBabyId);
+      const saved = await saveRecord(targetBabyId, req);
+      invalidateAllRecordQueries(queryClient, targetBabyId);
+      return saved;
+    },
   });
 }
 
 export function useDeleteRecordMutation() {
   const queryClient = useQueryClient();
+  const activeBabyId = useActiveBabyId();
   return useMutation({
-    mutationFn: ({ category, id }: { readonly category: RecordCategory; readonly id: number }) =>
-      deleteRecord(category, id),
-    onSuccess: () => invalidateAllRecordQueries(queryClient),
+    mutationFn: async ({ category, id }: { readonly category: RecordCategory; readonly id: number }) => {
+      const targetBabyId = resolveMutationBabyId(activeBabyId);
+      await deleteRecord(targetBabyId, category, id);
+      invalidateAllRecordQueries(queryClient, targetBabyId);
+    },
   });
 }

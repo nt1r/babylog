@@ -1,25 +1,29 @@
 # BabyLog
 
-Single-baby daily care log and growth insights application operated by a family administrator.
+Multi-user, multi-baby daily care log and growth insights application where each household User manages its own isolated Baby Profiles.
 
 ## Language
 
+**User**:
+An authenticated household account that signs in to manage zero or more Baby Profiles and their care data, completely isolated from other Users.
+_Avoid_: Member, tenant, account
+
 **Administrator**:
-The single authenticated parent or caregiver account that signs in to record and view baby care data.
-_Avoid_: User, member, tenant
+The single User with administrative privileges responsible for managing other Users' lifecycles, without access to other Users' baby care data.
+_Avoid_: Superadmin, owner, root
 
 **Baby Profile**:
-The single baby identity record (nickname, birth date, gender, and optional birth measurements) that scopes all daily records and computes baby age.
+A baby identity record (nickname, birth date, gender, and optional birth measurements) owned by a single User that scopes all daily records and computes baby age.
 _Avoid_: Child account, patient, baby settings
 
 **Onboarding**:
-The mandatory first-time step that creates the Baby Profile before unlocking Daily Records and Dashboard Insights.
+The mandatory first-time baby creation step triggered when a User with no Baby Profiles accesses a baby-scoped workspace.
 _Avoid_: Setup wizard, registration
 
 ### Daily Records
 
 **Daily Record**:
-A timestamped care entry scoped to the Baby Profile in one of four categories: **Feeding**, **Sleep**, **Care**, or **Health**.
+A timestamped care entry scoped to a Baby Profile in one of four categories: **Feeding**, **Sleep**, **Care**, or **Health**.
 _Avoid_: Log item, event, activity
 
 **Feeding**:
@@ -63,11 +67,11 @@ _Avoid_: Activity heatmap, hourly histogram
 ### Vaccination
 
 **Vaccination Schedule**:
-The per-baby immunization plan anchored to the Baby Profile's `birth_date`, lazily seeded with China's National Immunization Program (NIP) baseline doses and extensible with optional templates or custom doses.
+The per-baby immunization plan anchored to a Baby Profile's `birth_date`, lazily seeded with China's National Immunization Program (NIP) baseline doses and extensible with optional templates or custom doses.
 _Avoid_: Vaccine table, immunization calendar (as the data model name)
 
 **Vaccine Dose**:
-A single immunization entry (`vaccine_doses`) belonging to the Baby Profile with one of three persisted statuses (`pending`, `scheduled`, `completed`) and a timezone-aware derived reminder state (`upcoming`, `due_soon`, `overdue`, `scheduled`, `scheduled_soon`, `scheduled_overdue`, `completed`).
+A single immunization entry (`vaccine_doses`) belonging to a Baby Profile with one of three persisted statuses (`pending`, `scheduled`, `completed`) and a timezone-aware derived reminder state (`upcoming`, `due_soon`, `overdue`, `scheduled`, `scheduled_soon`, `scheduled_overdue`, `completed`).
 _Avoid_: Shot, injection log
 
 **NIP Vaccine**:

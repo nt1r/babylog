@@ -1,7 +1,8 @@
 import { Link } from '@tanstack/react-router';
-import { LogOutIcon, Settings2Icon } from 'lucide-react';
+import { LogOutIcon, Settings2Icon, UsersIcon } from 'lucide-react';
 import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -21,6 +22,7 @@ export function UserMenu() {
 
   const username = user?.username ?? '账号';
   const initials = getInitials(username);
+  const isAdmin = user?.role === 'admin';
 
   return (
     <>
@@ -41,12 +43,19 @@ export function UserMenu() {
           <span className="hidden max-w-24 truncate text-sm font-medium sm:inline">{username}</span>
         </DropdownMenuTrigger>
 
-        <DropdownMenuContent align="end" className="min-w-48">
+        <DropdownMenuContent align="end" className="min-w-52">
           <div className="flex items-center gap-2.5 px-2.5 py-2">
             <Avatar className="size-8 rounded-xl bg-primary/15 text-primary">
               <AvatarFallback>{initials}</AvatarFallback>
             </Avatar>
-            <p className="min-w-0 flex-1 truncate text-sm font-semibold">{username}</p>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold">{username}</p>
+              {isAdmin ? (
+                <Badge variant="secondary" className="mt-0.5 text-xs font-normal">
+                  管理员
+                </Badge>
+              ) : null}
+            </div>
           </div>
 
           <DropdownMenuSeparator />
@@ -56,6 +65,12 @@ export function UserMenu() {
               <Settings2Icon className="size-4" />
               偏好与账号
             </DropdownMenuItem>
+            {isAdmin ? (
+              <DropdownMenuItem render={<Link to="/admin/users" />}>
+                <UsersIcon className="size-4" />
+                用户管理
+              </DropdownMenuItem>
+            ) : null}
           </DropdownMenuGroup>
 
           <DropdownMenuSeparator />

@@ -12,7 +12,7 @@ import (
 )
 
 // recordsHandler 处理喂养、睡眠、护理、健康（含生长）四类日常记录的 CRUD 与智能默认值接口。
-// 路由组已挂载 requireBabyProfileMiddleware（注入完整宝宝档案），各处理器直接从上下文读取 babyID。
+// 路由组已挂载 requireBabyOwnershipMiddleware（校验归属并注入完整宝宝档案），各处理器直接从上下文读取 babyID。
 type recordsHandler struct {
 	recordStore *records.Store
 	logger      *slog.Logger
@@ -169,7 +169,7 @@ func (h *recordsHandler) registerRoutes(group *gin.RouterGroup) {
 	})
 }
 
-// getDefaults 处理 GET /api/records/defaults，汇总返回前端快捷录入所需的智能默认值。
+// getDefaults 处理 GET /api/babies/:babyId/records/defaults，汇总返回前端快捷录入所需的智能默认值。
 func (h *recordsHandler) getDefaults(c *gin.Context) {
 	babyID, ok := mustBabyID(c)
 	if !ok {

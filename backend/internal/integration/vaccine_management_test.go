@@ -42,7 +42,7 @@ func findDoseViewByTemplate(doses []vaccines.DoseView, code string, doseNum int)
  * - 宝宝档案：小汤圆（出生日期 2026-01-31，用于检验 1 月龄钳位至 2026-02-28）
  * - 前置业务记录：步骤 1 懒初始化 22 剂 NIP；步骤 2–3 新增自定义剂次并预约同日两剂演进时钟
  * 测试目标：
- * 1. 验证首次 GET /api/vaccines 幂等落库 22 剂 NIP、上报产院两针 pending 与免责声明，且乙肝第 2 剂 effective_date 钳位为 2026-02-28。
+ * 1. 验证首次 GET /api/babies/:babyId/vaccines 幂等落库 22 剂 NIP、上报产院两针 pending 与免责声明，且乙肝第 2 剂 effective_date 钳位为 2026-02-28。
  * 2. 验证 2026-06-15 当天待接种剂次按 planned_date 分别派生为 overdue、due_soon 与 upcoming。
  * 3. 验证预约同日两剂（首剂省略门诊/时间、次剂携带门诊与 09:30）随 FakeClock 推进依次演进为 scheduled → scheduled_soon → scheduled_overdue → completed，且 next_focus 优先级高于 overdue 并自动合并同日两剂与补齐门诊时间。
  */
@@ -167,13 +167,14 @@ func TestVaccinesOptionalTemplatesCustomAndDeletion(t *testing.T) {
 
 	app := NewTestApp(t)
 	s := app.Scenario()
-	s.EnsureBaby()
+	b := s.EnsureBaby()
+	vacBase := babyPath(b.ID, "/vaccines")
 	ov := s.SeedVaccines()
 	client := app.Client()
 
 	fetchCatalog := func() vaccines.CatalogResponse {
 		t.Helper()
-		resp := client.Get(t, "/api/vaccines/catalog")
+		resp := client.Get(t, vacBase+"/catalog")
 		resp.RequireStatus(t, http.StatusOK)
 		return DecodeOK[vaccines.CatalogResponse](t, resp)
 	}
@@ -203,7 +204,7 @@ func TestVaccinesOptionalTemplatesCustomAndDeletion(t *testing.T) {
 	if pcvItem == nil || !pcvItem.Added || pcvItem.AddedDoseCount != 3 {
 		t.Fatalf("目录中 pcv13 预期 added=true 且剂次数 3，实际 %+v", pcvItem)
 	}
-	client.Post(t, "/api/vaccines/from-template?tz=Asia/Shanghai", vaccines.AddTemplateInput{
+	client.Post(t, vacBase+"/from-template?tz=Asia/Shanghai", vaccines.AddTemplateInput{
 		TemplateCode: "pcv13",
 	}).RequireError(t, http.StatusConflict, "")
 
@@ -241,14 +242,14 @@ func TestVaccinesOptionalTemplatesCustomAndDeletion(t *testing.T) {
 	}
 
 	// 3. 删除中间剂次验证剩余兄弟自动连续重排，整套移出模板后目录恢复未加入。
-	client.Delete(t, fmt.Sprintf("/api/vaccines/%d", pcv[1].ID)).RequireStatus(t, http.StatusOK)
+	client.Delete(t, fmt.Sprintf("%s/%d", vacBase, pcv[1].ID)).RequireStatus(t, http.StatusOK)
 	pcvRows := FindRows[vaccines.DoseRecord](t, app, "dose_number ASC", "template_code = ?", "pcv13")
 	if len(pcvRows) != 2 || pcvRows[0].DoseNumber != 1 || pcvRows[0].TotalDoses != 2 || pcvRows[0].AgeMonths != 7 ||
 		pcvRows[1].DoseNumber != 2 || pcvRows[1].TotalDoses != 2 || pcvRows[1].AgeMonths != 12 {
 		t.Fatalf("删除 pcv13 第 2 剂后剩余重排异常：%+v", pcvRows)
 	}
 
-	client.Delete(t, "/api/vaccines/template/pcv13").RequireStatus(t, http.StatusOK)
+	client.Delete(t, vacBase+"/template/pcv13").RequireStatus(t, http.StatusOK)
 	if got := CountRows[vaccines.DoseRecord](t, app, "template_code = ?", "pcv13"); got != 0 {
 		t.Fatalf("整套移出 pcv13 后 SQLite 仍有残留行：%d", got)
 	}
@@ -272,7 +273,7 @@ func TestVaccinesOptionalTemplatesCustomAndDeletion(t *testing.T) {
 	if len(custom) != 3 || custom[0].TemplateCode != nil {
 		t.Fatalf("自定义多剂疫苗返回异常：%+v", custom)
 	}
-	client.Delete(t, fmt.Sprintf("/api/vaccines/%d", custom[1].ID)).RequireStatus(t, http.StatusOK)
+	client.Delete(t, fmt.Sprintf("%s/%d", vacBase, custom[1].ID)).RequireStatus(t, http.StatusOK)
 	customRows := FindRows[vaccines.DoseRecord](t, app, "dose_number ASC", "vaccine_name = ?", "五联疫苗")
 	if len(customRows) != 2 || customRows[0].DoseNumber != 1 || customRows[0].TotalDoses != 2 ||
 		customRows[1].DoseNumber != 2 || customRows[1].TotalDoses != 2 || customRows[1].AgeMonths != 4 {
@@ -281,22 +282,22 @@ func TestVaccinesOptionalTemplatesCustomAndDeletion(t *testing.T) {
 
 	// 4. 负向防线：保护内置 NIP 不被删、拦截非法模板与非法自定义载荷（400）、拦截未知剂次/未加入模板（404）且零脏写。
 	nipDoseID := ov.Doses[0].ID
-	client.Delete(t, fmt.Sprintf("/api/vaccines/%d", nipDoseID)).RequireError(t, http.StatusBadRequest, "")
-	client.Delete(t, "/api/vaccines/template/hepb").RequireError(t, http.StatusBadRequest, "")
+	client.Delete(t, fmt.Sprintf("%s/%d", vacBase, nipDoseID)).RequireError(t, http.StatusBadRequest, "")
+	client.Delete(t, vacBase+"/template/hepb").RequireError(t, http.StatusBadRequest, "")
 	if got := CountRows[vaccines.DoseRecord](t, app, "id = ?", nipDoseID); got != 1 {
 		t.Fatalf("内置 NIP 剂次受保护不得被删除，当前行数 %d", got)
 	}
 
-	client.Post(t, "/api/vaccines/from-template?tz=Asia/Shanghai", vaccines.AddTemplateInput{TemplateCode: "unknown_tpl"}).
+	client.Post(t, vacBase+"/from-template?tz=Asia/Shanghai", vaccines.AddTemplateInput{TemplateCode: "unknown_tpl"}).
 		RequireError(t, http.StatusBadRequest, "")
-	client.Post(t, "/api/vaccines/from-template?tz=Asia/Shanghai", vaccines.AddTemplateInput{TemplateCode: "hepb"}).
+	client.Post(t, vacBase+"/from-template?tz=Asia/Shanghai", vaccines.AddTemplateInput{TemplateCode: "hepb"}).
 		RequireError(t, http.StatusBadRequest, "")
 
-	client.Put(t, "/api/vaccines/999999?tz=Asia/Shanghai", vaccines.UpdateDoseInput{Status: vaccines.StatusPending}).
+	client.Put(t, vacBase+"/999999?tz=Asia/Shanghai", vaccines.UpdateDoseInput{Status: vaccines.StatusPending}).
 		RequireError(t, http.StatusNotFound, "")
-	client.Delete(t, "/api/vaccines/999999").RequireError(t, http.StatusNotFound, "")
-	client.Delete(t, "/api/vaccines/template/unknown_tpl").RequireError(t, http.StatusNotFound, "")
-	client.Delete(t, "/api/vaccines/template/ev71").RequireError(t, http.StatusNotFound, "")
+	client.Delete(t, vacBase+"/999999").RequireError(t, http.StatusNotFound, "")
+	client.Delete(t, vacBase+"/template/unknown_tpl").RequireError(t, http.StatusNotFound, "")
+	client.Delete(t, vacBase+"/template/ev71").RequireError(t, http.StatusNotFound, "")
 
 	beforeCount := CountRows[vaccines.DoseRecord](t, app, "")
 	badDate := "2026/05/01"
@@ -308,7 +309,7 @@ func TestVaccinesOptionalTemplatesCustomAndDeletion(t *testing.T) {
 		{VaccineName: "测试苗", Category: vaccines.CategoryOptional, Doses: []vaccines.DosePlanInput{{AgeMonths: vaccines.MaxAgeMonths + 1}}},
 		{VaccineName: "测试苗", Category: vaccines.CategoryOptional, Doses: []vaccines.DosePlanInput{{AgeMonths: 2, PlannedDate: &badDate}}},
 	} {
-		client.Post(t, "/api/vaccines?tz=Asia/Shanghai", in).RequireError(t, http.StatusBadRequest, "")
+		client.Post(t, vacBase+"?tz=Asia/Shanghai", in).RequireError(t, http.StatusBadRequest, "")
 	}
 	if afterCount := CountRows[vaccines.DoseRecord](t, app, ""); afterCount != beforeCount {
 		t.Fatalf("非法自定义载荷被拒后 SQLite 剂次总数应保持 %d，实际 %d", beforeCount, afterCount)
@@ -334,7 +335,7 @@ func TestVaccinesSingleDoseTransitionsAndValidation(t *testing.T) {
 
 	app := NewTestApp(t)
 	s := app.Scenario()
-	s.EnsureBaby()
+	b := s.EnsureBaby()
 	ov := s.SeedVaccines()
 	client := app.Client()
 
@@ -342,7 +343,7 @@ func TestVaccinesSingleDoseTransitionsAndValidation(t *testing.T) {
 	if hepb2 == nil {
 		t.Fatalf("未找到内置乙肝第 2 剂")
 	}
-	endpoint := fmt.Sprintf("/api/vaccines/%d?tz=Asia/Shanghai", hepb2.ID)
+	endpoint := babyPath(b.ID, fmt.Sprintf("/vaccines/%d?tz=Asia/Shanghai", hepb2.ID))
 
 	// 1. pending → scheduled，回读 SQLite 确认预约列落库且 vaccinated_at 为 NULL。
 	client.Put(t, endpoint, vaccines.UpdateDoseInput{
@@ -432,11 +433,12 @@ func TestVaccinesBatchOperationsAtomicityAndDetailSemantics(t *testing.T) {
 	app := NewTestApp(t)
 	s := app.Scenario()
 	profile := s.EnsureBaby()
+	batchURL := babyPath(profile.ID, "/vaccines/batch?tz=Asia/Shanghai")
 	ov := s.SeedVaccines()
 	client := app.Client()
 
 	// 1. 批量完成产院两针：清除产院确认横幅并记录 recent_clinics，但不污染宝宝常去社区门诊。
-	client.Post(t, "/api/vaccines/batch?tz=Asia/Shanghai", vaccines.BatchUpdateInput{
+	client.Post(t, batchURL, vaccines.BatchUpdateInput{
 		Action:       vaccines.BatchActionComplete,
 		DoseIDs:      ov.Summary.BirthPendingDoseIDs,
 		VaccinatedAt: ptr(profile.BirthDate),
@@ -470,7 +472,7 @@ func TestVaccinesBatchOperationsAtomicityAndDetailSemantics(t *testing.T) {
 		Note:         "需携带接种证",
 	})
 	// 批量完成仅调整日期并省略 clinic_name/note：核对原有门诊、备注及四项接种细节全部保留。
-	client.Post(t, "/api/vaccines/batch?tz=Asia/Shanghai", vaccines.BatchUpdateInput{
+	client.Post(t, batchURL, vaccines.BatchUpdateInput{
 		Action:       vaccines.BatchActionComplete,
 		DoseIDs:      []int64{polio1.ID},
 		VaccinatedAt: ptr("2026-11-21"),
@@ -484,7 +486,7 @@ func TestVaccinesBatchOperationsAtomicityAndDetailSemantics(t *testing.T) {
 	}
 
 	// 批量预约并显式传 clinic_name=""：核对清空门诊与全部接种细节，但保留未传入的 note。
-	client.Post(t, "/api/vaccines/batch?tz=Asia/Shanghai", vaccines.BatchUpdateInput{
+	client.Post(t, batchURL, vaccines.BatchUpdateInput{
 		Action:        vaccines.BatchActionSchedule,
 		DoseIDs:       []int64{polio1.ID},
 		ScheduledDate: ptr("2026-11-29"),
@@ -502,7 +504,7 @@ func TestVaccinesBatchOperationsAtomicityAndDetailSemantics(t *testing.T) {
 	if dtap1 == nil {
 		t.Fatalf("未找到百白破第 1 剂")
 	}
-	client.Post(t, "/api/vaccines/batch?tz=Asia/Shanghai", vaccines.BatchUpdateInput{
+	client.Post(t, batchURL, vaccines.BatchUpdateInput{
 		Action:           vaccines.BatchActionComplete,
 		DoseIDs:          []int64{dtap1.ID, 999999},
 		VaccinatedAt:     ptr("2026-11-23"),
@@ -532,7 +534,7 @@ func TestVaccinesBatchOperationsAtomicityAndDetailSemantics(t *testing.T) {
  * - 宝宝档案：默认档案小汤圆（2026-07-15，female，常去门诊为空）
  * - 前置业务记录：已初始化 22 剂 NIP 基线
  * 测试目标：
- * 1. 验证 PUT /api/vaccines/default-clinic 裁剪落库并与 GET /api/vaccines、GET /api/baby 同步；超 80 字返回 400 且不改库；传 "" 清空。
+ * 1. 验证 PUT /api/babies/:babyId/vaccines/default-clinic 裁剪落库并与 GET /api/babies/:babyId/vaccines、GET /api/babies 同步；超 80 字返回 400 且不改库；传 "" 清空。
  * 2. 验证产院出生剂次不污染空默认门诊 → 首次常规剂次自动记住 → 偶发医院不覆盖 → set_default_clinic=true 显式覆写。
  * 3. 验证清空默认门诊后，批量预约 2 月龄常规剂次同样原子自动记住常去门诊。
  */
@@ -542,11 +544,13 @@ func TestVaccinesDefaultClinicAndAutoRemember(t *testing.T) {
 	app := NewTestApp(t)
 	s := app.Scenario()
 	profile := s.EnsureBaby()
+	clinicURL := babyPath(profile.ID, "/vaccines/default-clinic")
+	batchURL := babyPath(profile.ID, "/vaccines/batch?tz=Asia/Shanghai")
 	ov := s.SeedVaccines()
 	client := app.Client()
 
 	// 1. 独立接口设置、跨接口同步校验、超长 400 保护与清空。
-	setResp := client.Put(t, "/api/vaccines/default-clinic", map[string]string{
+	setResp := client.Put(t, clinicURL, map[string]string{
 		"clinic_name": "  阳光街道社区卫生服务中心  ",
 	})
 	setResp.RequireStatus(t, http.StatusOK)
@@ -556,24 +560,25 @@ func TestVaccinesDefaultClinicAndAutoRemember(t *testing.T) {
 		t.Fatalf("设置默认门诊返回异常：%q", got)
 	}
 	if s.GetVaccinesOverview().DefaultClinicName != "阳光街道社区卫生服务中心" {
-		t.Fatalf("GET /api/vaccines 未同步返回常去门诊")
+		t.Fatalf("GET /api/babies/:babyId/vaccines 未同步返回常去门诊")
 	}
-	babyResp := client.Get(t, "/api/baby")
-	babyResp.RequireStatus(t, http.StatusOK)
-	if got := DecodeOK[struct {
-		Baby baby.Profile `json:"baby"`
-	}](t, babyResp).Baby.DefaultClinicName; got != "阳光街道社区卫生服务中心" {
-		t.Fatalf("GET /api/baby 未同步返回常去门诊：%q", got)
+	babiesResp := client.Get(t, "/api/babies")
+	babiesResp.RequireStatus(t, http.StatusOK)
+	gotBabies := DecodeOK[struct {
+		Babies []baby.Profile `json:"babies"`
+	}](t, babiesResp).Babies
+	if len(gotBabies) != 1 || gotBabies[0].DefaultClinicName != "阳光街道社区卫生服务中心" {
+		t.Fatalf("GET /api/babies 未同步返回常去门诊：%+v", gotBabies)
 	}
 
-	client.Put(t, "/api/vaccines/default-clinic", map[string]string{
+	client.Put(t, clinicURL, map[string]string{
 		"clinic_name": strings.Repeat("院", baby.MaxClinicNameLength+1),
 	}).RequireError(t, http.StatusBadRequest, "80")
 	if got := FirstRow[baby.Profile](t, app, "id = ?", profile.ID).DefaultClinicName; got != "阳光街道社区卫生服务中心" {
 		t.Fatalf("超长 400 后不应改动已落库常去门诊：%q", got)
 	}
 
-	client.Put(t, "/api/vaccines/default-clinic", map[string]string{"clinic_name": ""}).RequireStatus(t, http.StatusOK)
+	client.Put(t, clinicURL, map[string]string{"clinic_name": ""}).RequireStatus(t, http.StatusOK)
 	if got := FirstRow[baby.Profile](t, app, "id = ?", profile.ID).DefaultClinicName; got != "" {
 		t.Fatalf("清空后 SQLite 常去门诊应为空串，实际 %q", got)
 	}
@@ -625,7 +630,7 @@ func TestVaccinesDefaultClinicAndAutoRemember(t *testing.T) {
 	}
 
 	// 3. 清空默认门诊后，批量预约 2 月龄常规剂次同样触发自动记住。
-	client.Put(t, "/api/vaccines/default-clinic", map[string]string{"clinic_name": ""}).RequireStatus(t, http.StatusOK)
+	client.Put(t, clinicURL, map[string]string{"clinic_name": ""}).RequireStatus(t, http.StatusOK)
 	var twoMonthIDs []int64
 	for _, d := range ov.Doses {
 		if d.AgeMonths == 2 {
@@ -635,7 +640,7 @@ func TestVaccinesDefaultClinicAndAutoRemember(t *testing.T) {
 	if len(twoMonthIDs) < 2 {
 		t.Fatalf("预期至少 2 剂 2 月龄常规疫苗，实际 %d", len(twoMonthIDs))
 	}
-	client.Post(t, "/api/vaccines/batch?tz=Asia/Shanghai", vaccines.BatchUpdateInput{
+	client.Post(t, batchURL, vaccines.BatchUpdateInput{
 		Action:        vaccines.BatchActionSchedule,
 		DoseIDs:       twoMonthIDs,
 		ScheduledDate: ptr("2026-12-01"),
@@ -653,24 +658,26 @@ func TestVaccinesDefaultClinicAndAutoRemember(t *testing.T) {
  * Spec: vaccine-management / Idempotent NIP schedule initialization and overview retrieval / Auto-seed NIP baseline on first retrieval
  * Spec: vaccine-management / Optional vaccine catalog and custom vaccine dose creation / Add an optional vaccine template once with default or customized doses
  * 测试场景：验证并发首次读取疫苗总览的幂等初始化，以及并发重复导入同一自费模板的唯一索引保护。
- * 业务背景：前端首页与疫苗页可能在首次建档后并发请求 /api/vaccines，家长双击也可能并发提交 /api/vaccines/from-template，必须依靠 SQLite 部分唯一索引守住零重复与准确状态码。
+ * 业务背景：前端首页与疫苗页可能在首次建档后并发请求 /api/babies/:babyId/vaccines，家长双击也可能并发提交 /api/babies/:babyId/vaccines/from-template，必须依靠 SQLite 部分唯一索引守住零重复与准确状态码。
  * 前置数据：
  * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
  * - 管理员与会话：已初始化并登录管理员
  * - 宝宝档案：默认档案小汤圆（2026-07-15，female）
  * - 前置业务记录：无（疫苗表初始为空）
  * 测试目标：
- * 1. 验证 6 个并发协程同时首次请求 GET /api/vaccines 全部返回 200 且 22 剂，SQLite 最终严格落库 22 行无重复。
+ * 1. 验证 6 个并发协程同时首次请求 GET /api/babies/:babyId/vaccines 全部返回 200 且 22 剂，SQLite 最终严格落库 22 行无重复。
  * 2. 验证 2 个并发协程同时导入同一自费模板 pcv13 时，严格 1 个返回 201、1 个返回 409，SQLite 中 pcv13 剂次无重复。
  */
 func TestVaccinesConcurrentSeedAndTemplateGuards(t *testing.T) {
 	t.Parallel()
 
 	app := NewTestApp(t)
-	app.Scenario().EnsureBaby()
+	b := app.Scenario().EnsureBaby()
+	vacURL := babyPath(b.ID, "/vaccines?tz=Asia/Shanghai")
+	tplURL := babyPath(b.ID, "/vaccines/from-template?tz=Asia/Shanghai")
 	client := app.Client()
 
-	// 1. 6 路并发首访 GET /api/vaccines：子协程仅经并发安全的 ExecuteJSON 收集响应与错误，回到主协程统一断言。
+	// 1. 6 路并发首访 GET /api/babies/:babyId/vaccines：子协程仅经并发安全的 ExecuteJSON 收集响应与错误，回到主协程统一断言。
 	const seedWorkers = 6
 	startSeed := make(chan struct{})
 	seedResps := make([]*Response, seedWorkers)
@@ -681,7 +688,7 @@ func TestVaccinesConcurrentSeedAndTemplateGuards(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			<-startSeed
-			seedResps[idx], seedErrs[idx] = client.ExecuteJSON(http.MethodGet, "/api/vaccines?tz=Asia/Shanghai", nil)
+			seedResps[idx], seedErrs[idx] = client.ExecuteJSON(http.MethodGet, vacURL, nil)
 		}(i)
 	}
 	close(startSeed)
@@ -709,7 +716,7 @@ func TestVaccinesConcurrentSeedAndTemplateGuards(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			<-startTpl
-			tplResps[idx], tplErrs[idx] = client.ExecuteJSON(http.MethodPost, "/api/vaccines/from-template?tz=Asia/Shanghai", vaccines.AddTemplateInput{
+			tplResps[idx], tplErrs[idx] = client.ExecuteJSON(http.MethodPost, tplURL, vaccines.AddTemplateInput{
 				TemplateCode: "pcv13",
 			})
 		}(i)
@@ -740,41 +747,94 @@ func TestVaccinesConcurrentSeedAndTemplateGuards(t *testing.T) {
 }
 
 /*
- * Spec: vaccine-management / Authenticated access to vaccine endpoints / Reject unauthenticated vaccine request; Reject vaccine request before baby onboarding
+ * Spec: vaccine-management / Authenticated access to vaccine endpoints / Reject unauthenticated vaccine request; Reject vaccine request before baby onboarding; Reject vaccine request for foreign baby ID
  * Spec: vaccine-management / Idempotent NIP schedule initialization and overview retrieval / Reject invalid IANA timezone parameter
- * 测试场景：验证疫苗管理接口的未认证门禁（401）、未建档门禁（409）与非法时区拒绝（400）。
- * 业务背景：疫苗排期依赖宝宝出生日期与本地时区，未登录、未建档或非法 IANA 时区均须在入口层明确拦截且不触发 NIP 懒初始化。
+ * Spec: vaccine-management / Dose status transitions and record updates / Reject updating dose belonging to another baby or user
+ * Spec: vaccine-management / Batch appointment booking and historical completion / Roll back batch update when any dose ID is invalid
+ * 测试场景：验证疫苗管理接口的未认证（401）、未建档/跨用户/跨宝宝越权拦截（404 含批量原子回滚）与非法时区拒绝（400）。
+ * 业务背景：疫苗排期与接种记录高度隐私，须严防跨用户或跨兄弟宝宝篡改单剂与批量混入他人剂次 ID，且非法请求不得触发 NIP 懒初始化。
  * 前置数据：
  * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
- * - 管理员与会话：已初始化管理员，具备匿名与已登录两套客户端
- * - 宝宝档案：步骤 1–2 未建档；步骤 3 建档后验证非法时区 400
- * - 前置业务记录：无
+ * - 管理员与会话：用户 A（admin）、普通用户 B（已完成改密）及匿名客户端
+ * - 宝宝档案：步骤 1–2 用户 A 未建档；步骤 3 建档大宝/二宝及用户 B 宝宝，分别初始化疫苗与导入模板
+ * - 前置业务记录：步骤 3 经真实接口为各宝宝懒初始化 NIP 疫苗
  * 测试目标：
- * 1. 验证未登录访问 GET/POST /api/vaccines 返回 401。
- * 2. 验证已登录未建档访问 GET /api/vaccines 返回 409 且疫苗表零行。
- * 3. 验证建档后携带非法 tz=Invalid/Zone 访问 GET /api/vaccines 返回 400 中文错误且不触发 NIP 初始化。
+ * 1. 验证未登录访问 /api/babies/1/vaccines* 返回 401，未建档访问 /api/babies/999/vaccines 返回 404 且零落库。
+ * 2. 验证非法时区访问返回 400 且不触发 NIP 懒初始化。
+ * 3. 验证跨用户 babyId、跨兄弟宝宝单剂 PUT/DELETE 与批量混入兄弟/他人 dose_id 全部返回 404 且整批回滚，同时不同宝宝可独立导入 pcv13 互不冲突。
  */
 func TestVaccinesAuthOnboardingAndTimezoneGuards(t *testing.T) {
 	t.Parallel()
 
 	app := NewTestApp(t)
 	anon := app.UnauthenticatedClient()
-	client := app.Client()
+	clientA := app.Client()
+	clientB, _ := app.CreateReadyUserViaAdmin("UserB", "userb-init-secret-123", "userb-final-secret-456")
 
-	// 1. 未认证返回 401。
-	anon.Get(t, "/api/vaccines").RequireError(t, http.StatusUnauthorized, "")
-	anon.Post(t, "/api/vaccines", map[string]any{"vaccine_name": "测试"}).RequireError(t, http.StatusUnauthorized, "")
+	// 1. 未认证返回 401；无归属宝宝返回 404 且零落库。
+	anon.Get(t, babyPath(1, "/vaccines")).RequireError(t, http.StatusUnauthorized, "")
+	anon.Post(t, babyPath(1, "/vaccines"), map[string]any{"vaccine_name": "测试"}).RequireError(t, http.StatusUnauthorized, "")
 
-	// 2. 已认证未建档返回 409 且不写库。
-	client.Get(t, "/api/vaccines").RequireError(t, http.StatusConflict, "建档")
+	clientA.Get(t, babyPath(999, "/vaccines")).RequireError(t, http.StatusNotFound, "")
 	if got := CountRows[vaccines.DoseRecord](t, app, ""); got != 0 {
-		t.Fatalf("未建档拒绝后不应落库疫苗行，实际 %d", got)
+		t.Fatalf("无归属宝宝拒绝后不应落库疫苗行，实际 %d", got)
 	}
 
-	// 3. 建档后非法时区返回 400，且在进入懒初始化前即已拦截（零行落库）。
-	app.Scenario().EnsureBaby()
-	client.Get(t, "/api/vaccines?tz=Invalid/Zone").RequireError(t, http.StatusBadRequest, "")
+	// 2. 建档后非法时区返回 400，且在进入懒初始化前即已拦截（零行落库）。
+	sA := app.ScenarioFor(clientA)
+	babyA1 := sA.EnsureBaby(BabyParams{Nickname: "大宝"})
+	clientA.Get(t, babyPath(babyA1.ID, "/vaccines?tz=Invalid/Zone")).RequireError(t, http.StatusBadRequest, "")
 	if got := CountRows[vaccines.DoseRecord](t, app, ""); got != 0 {
 		t.Fatalf("非法时区被拒后不应触发 NIP 懒初始化，实际 %d", got)
+	}
+
+	// 3. 跨用户 babyId、同用户跨兄弟宝宝单剂改删及批量混入他人 dose_id 均返回 404 并完整回滚；多宝宝可独立导入同模板。
+	ovA1 := sA.ForBaby(babyA1.ID).SeedVaccines()
+	babyA2 := sA.EnsureBaby(BabyParams{Nickname: "二宝"})
+	ovA2 := sA.ForBaby(babyA2.ID).SeedVaccines()
+	sB := app.ScenarioFor(clientB)
+	babyB := sB.EnsureBaby(BabyParams{Nickname: "B宝"})
+	ovB := sB.ForBaby(babyB.ID).SeedVaccines()
+
+	// 两个宝宝均可独立导入 pcv13 模板互不冲突。
+	sA.ForBaby(babyA1.ID).AddVaccineTemplate("pcv13")
+	sA.ForBaby(babyA2.ID).AddVaccineTemplate("pcv13")
+
+	clientB.Get(t, babyPath(babyA1.ID, "/vaccines")).RequireError(t, http.StatusNotFound, "")
+	clientB.Put(t, babyPath(babyA1.ID, "/vaccines/default-clinic"), map[string]string{"clinic_name": "越权门诊"}).
+		RequireError(t, http.StatusNotFound, "")
+
+	// 挂二宝路径改大宝剂次、挂大宝路径改 B 宝剂次均返回 404 且原状态不变。
+	targetA1 := ovA1.Doses[0].ID
+	targetA2 := ovA2.Doses[0].ID
+	targetB := ovB.Doses[0].ID
+	clientA.Put(t, babyPath(babyA2.ID, fmt.Sprintf("/vaccines/%d?tz=Asia/Shanghai", targetA1)), vaccines.UpdateDoseInput{
+		Status:        vaccines.StatusScheduled,
+		ScheduledDate: ptr("2026-11-30"),
+	}).RequireError(t, http.StatusNotFound, "")
+	clientA.Put(t, babyPath(babyA1.ID, fmt.Sprintf("/vaccines/%d?tz=Asia/Shanghai", targetB)), vaccines.UpdateDoseInput{
+		Status:        vaccines.StatusScheduled,
+		ScheduledDate: ptr("2026-11-30"),
+	}).RequireError(t, http.StatusNotFound, "")
+
+	// 批量更新混入兄弟宝宝剂次与他用户剂次必须整体回滚返回 404，合法剂次保持 pending。
+	clientA.Post(t, babyPath(babyA1.ID, "/vaccines/batch?tz=Asia/Shanghai"), vaccines.BatchUpdateInput{
+		Action:           vaccines.BatchActionSchedule,
+		DoseIDs:          []int64{targetA1, targetA2},
+		ScheduledDate:    ptr("2026-12-01"),
+		ClinicName:       ptr("不应记住的越权门诊"),
+		SetDefaultClinic: true,
+	}).RequireError(t, http.StatusNotFound, "")
+	clientA.Post(t, babyPath(babyA1.ID, "/vaccines/batch?tz=Asia/Shanghai"), vaccines.BatchUpdateInput{
+		Action:        vaccines.BatchActionSchedule,
+		DoseIDs:       []int64{targetA1, targetB},
+		ScheduledDate: ptr("2026-12-01"),
+	}).RequireError(t, http.StatusNotFound, "")
+
+	if row := FirstRow[vaccines.DoseRecord](t, app, "id = ?", targetA1); row.Status != vaccines.StatusPending {
+		t.Fatalf("跨宝宝批量越权回滚后 targetA1 应保持 pending，实际 %+v", row)
+	}
+	if got := FirstRow[baby.Profile](t, app, "id = ?", babyA1.ID).DefaultClinicName; got != "" {
+		t.Fatalf("跨宝宝批量越权回滚后常去门诊应保持为空，实际 %q", got)
 	}
 }

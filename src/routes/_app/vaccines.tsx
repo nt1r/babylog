@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { AlertCircle, PlusIcon, RotateCw, Syringe } from 'lucide-react';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ListPageCard } from '@/components/list-page-card';
 import { Button } from '@/components/ui/button';
 import { QuickChip } from '@/components/ui/choice-controls';
@@ -16,7 +16,7 @@ import {
 import { VaccineDetailDrawer } from '@/components/vaccines/vaccine-detail-drawer';
 import { VaccineOverview } from '@/components/vaccines/vaccine-overview';
 import { VaccineTimeline } from '@/components/vaccines/vaccine-timeline';
-import { useBabyProfileQuery } from '@/lib/baby';
+import { useActiveBaby } from '@/lib/baby';
 import {
   filterVaccineDoses,
   useUpdateDefaultClinicMutation,
@@ -46,7 +46,7 @@ const CATEGORY_FILTER_OPTIONS: ReadonlyArray<{ value: VaccineCategoryFilter; lab
 ];
 
 function VaccinesPage() {
-  const babyQuery = useBabyProfileQuery();
+  const { activeBaby, activeBabyId } = useActiveBaby();
   const overviewQuery = useVaccinesOverviewQuery();
   const updateDoseMutation = useUpdateVaccineDoseMutation();
   const updateDefaultClinicMutation = useUpdateDefaultClinicMutation();
@@ -65,6 +65,16 @@ function VaccinesPage() {
   const birthConfirmLockRef = useRef(false);
   const timelineAnchorRef = useRef<HTMLDivElement>(null);
 
+  // 切换宝宝时重置页面内打开的抽屉与选中剂次，防止前一个宝宝的剂次弹窗残留。
+  useEffect(() => {
+    setSelectedDoseId(null);
+    setDetailOpen(false);
+    setCatalogOpen(false);
+    setBatchIntent(null);
+    setBatchOpen(false);
+    setBirthConfirmDismissed(false);
+  }, [activeBabyId]);
+
   function jumpToFilteredTimeline(nextStatus: VaccineStatusFilter) {
     setStatusFilter(nextStatus);
     setCategoryFilter('all');
@@ -72,7 +82,7 @@ function VaccinesPage() {
   }
 
   const overview = overviewQuery.data;
-  const baby = babyQuery.data;
+  const baby = activeBaby;
 
   const selectedDose: VaccineDose | null = useMemo(() => {
     if (!overview || selectedDoseId === null) return null;

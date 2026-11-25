@@ -25,6 +25,8 @@ BabyLog 用于记录家庭与宝宝的日常健康数据，非常重视认证、
 
 ## 自托管安全建议
 
-- 管理员密码文件应存放在仓库之外，并限制文件权限（如 `0600`），初始化完成后可按需妥善保管或移除；
+- 管理员与 CLI 用户管理（`babylog admin init`、`babylog user create` / `reset-password`）所使用的密码文件应存放在仓库之外，并限制文件权限（如 `0600`），操作完成后可按需妥善保管或移除；
+- 为新家庭成员创建或重置临时密码时建议启用强制首次改密（Web 端默认开启，CLI 可传 `--force-change`），并通过安全渠道一次性传递临时密码；
+- 唯一 `admin` 账号无法通过 Web 端停用或重置密码，如遗忘管理员密码请在宿主机执行 `babylog user reset-password --username <admin> --password-file <path>` 恢复；
 - `BABYLOG_DATA_DIR`（默认 `data/`）包含 SQLite 数据库，请做好备份并避免纳入版本控制；
-- 若通过公网访问，请在反向代理层启用 HTTPS（TLS）并配置合理的访问控制。
+- 若通过公网访问，请在反向代理层启用 HTTPS（TLS）、配置合理的访问控制，并设置环境变量 `BABYLOG_COOKIE_SECURE=true` 确保会话 Cookie 始终携带 `Secure` 标记。

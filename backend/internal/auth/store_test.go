@@ -39,9 +39,9 @@ func TestValidators(t *testing.T) {
 		invalid := []string{"", " admin", "admin ", strings.Repeat("a", 129)}
 		for _, u := range invalid {
 			err := auth.ValidateUsername(u)
-			var adminErr *auth.AdministratorError
-			if !errors.As(err, &adminErr) {
-				t.Errorf("expected AdministratorError for username %q, got %v", u, err)
+			var valErr *auth.ValidationError
+			if !errors.As(err, &valErr) {
+				t.Errorf("expected ValidationError for username %q, got %v", u, err)
 			}
 		}
 	})
@@ -56,9 +56,9 @@ func TestValidators(t *testing.T) {
 
 		for _, p := range []string{"short-11-ch", strings.Repeat("p", auth.MaxPasswordLength+1)} {
 			err := auth.ValidatePassword(p)
-			var adminErr *auth.AdministratorError
-			if !errors.As(err, &adminErr) {
-				t.Errorf("expected AdministratorError for invalid password len=%d, got %v", len(p), err)
+			var valErr *auth.ValidationError
+			if !errors.As(err, &valErr) {
+				t.Errorf("expected ValidationError for invalid password len=%d, got %v", len(p), err)
 			}
 		}
 	})
@@ -121,21 +121,24 @@ func TestStoreInfrastructureAndLegacyCompat(t *testing.T) {
 	// 须绕过 InitializeAdministrator 直接写库，以验证 Go 实现与存量 SQLite 数据无缝兼容。
 	t.Run("无缝兼容旧版Node.js_scrypt密码哈希", func(t *testing.T) {
 		store, gormDB, _ := openTestStore(t)
-		legacyAdmin := auth.Administrator{
-			ID:           1,
-			Username:     "legacy-admin",
-			PasswordSalt: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
-			PasswordHash: "otZmw0ssSRScpirb/jFqbT0GnQzcFq/M0qn5NijBIUjvBJjU1DA+MJi3L5Vo9sAG+VVazMYm2IZ+GVLxog5mtw==",
+		legacyAdmin := auth.User{
+			Username:           "legacy-admin",
+			UsernameNormalized: "legacy-admin",
+			PasswordSalt:       "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+			PasswordHash:       "otZmw0ssSRScpirb/jFqbT0GnQzcFq/M0qn5NijBIUjvBJjU1DA+MJi3L5Vo9sAG+VVazMYm2IZ+GVLxog5mtw==",
+			Role:               auth.RoleAdmin,
+			CreatedAt:          "2026-11-25T00:00:00Z",
+			UpdatedAt:          "2026-11-25T00:00:00Z",
 		}
 		if err := gormDB.Create(&legacyAdmin).Error; err != nil {
 			t.Fatalf("seed legacy admin: %v", err)
 		}
 
-		user, err := store.Authenticate(ctx, "legacy-admin", "node-compat-secret-123")
+		user, err := store.Authenticate(ctx, "LEGACY-ADMIN", "node-compat-secret-123")
 		if err != nil {
 			t.Fatalf("authenticate legacy admin: %v", err)
 		}
-		if user == nil || user.Username != "legacy-admin" || user.Role != "admin" {
+		if user == nil || user.Username != "legacy-admin" || user.Role != auth.RoleAdmin {
 			t.Fatalf("expected legacy admin authenticated, got %+v", user)
 		}
 	})

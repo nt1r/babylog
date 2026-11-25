@@ -90,8 +90,8 @@
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <h3>🔒 单家庭隐私与安全基线</h3>
-      <p>无开放注册入口，管理员凭 CLI 从仓库外密码文件初始化；采用加盐 <code>scrypt</code> 派生与常量时间比较、<code>HttpOnly; SameSite=Strict</code> Cookie 会话与写接口 Same-Origin 校验，所有数据仅存于本地 SQLite。</p>
+      <h3>🔒 多户多娃隔离与安全基线</h3>
+      <p>无开放注册入口，支持唯一管理员通过 CLI 或 Web 端「用户管理」为不同家庭创建独立账号（每个账号支持管理最多 10 个宝宝档案），跨账号数据行级严格隔离且管理员无法查看他人宝宝与记录；采用加盐 <code>scrypt</code> 派生、登录限流、<code>HttpOnly; SameSite=Strict</code> Cookie 会话与写接口 Same-Origin 校验，所有数据仅存于本地 SQLite。</p>
     </td>
     <td width="50%" valign="top">
       <h3>🪶 零 CGO 单二进制 · 极简部署</h3>
@@ -187,7 +187,14 @@ tar -xzf babylog_v0.1.0_linux_amd64.tar.gz
 # 初始化管理员（PASSWORD_FILE 须放在安全目录且权限为 0600，长度 12–1024 字符）
 BABYLOG_DATA_DIR=/var/lib/babylog ./babylog admin init --password-file /path/to/init.pass --username admin
 
-# 启动服务（默认监听 127.0.0.1:21115）
+# 可选：通过 CLI 管理家庭账号（也可登录管理员后在 Web 端「用户管理」操作）
+BABYLOG_DATA_DIR=/var/lib/babylog ./babylog user create --username alice --password-file /path/to/alice.pass --force-change
+BABYLOG_DATA_DIR=/var/lib/babylog ./babylog user list
+BABYLOG_DATA_DIR=/var/lib/babylog ./babylog user reset-password --username alice --password-file /path/to/new.pass --force-change
+BABYLOG_DATA_DIR=/var/lib/babylog ./babylog user disable --username alice
+BABYLOG_DATA_DIR=/var/lib/babylog ./babylog user enable --username alice
+
+# 启动服务（默认监听 127.0.0.1:21115；HTTPS 反代部署可开启 BABYLOG_COOKIE_SECURE=true）
 BABYLOG_DATA_DIR=/var/lib/babylog GIN_MODE=release ./babylog serve
 ```
 
@@ -225,7 +232,8 @@ baby.example.com {
 
 ### 反向代理注意事项
 
-- **保留原始 `Host` 头**：所有写接口均启用 Same-Origin 校验，Caddy 默认透传 `Host`；若使用 Nginx，须显式设置 `proxy_set_header Host $http_host;` 与 `proxy_cookie_flags babylog_session secure;`。
+- **强制 `Secure` Cookie**：若 BabyLog 运行在 HTTPS 反向代理之后，可直接为后端设置环境变量 `BABYLOG_COOKIE_SECURE=true`（应用将直接下发带 `Secure` 标记的 `babylog_session` Cookie，不再依赖反代改写响应头），或在 Caddy/Nginx 中补齐 `Secure` 属性。
+- **保留原始 `Host` 头**：所有写接口均启用 Same-Origin 校验，Caddy 默认透传 `Host`；若使用 Nginx，须显式设置 `proxy_set_header Host $http_host;`。
 - **透传缓存头**：请勿在反代层覆盖后端返回的 `Cache-Control`（`/api/*` 为 `no-store`，`index.html`/`sw.js`/`manifest.webmanifest` 为 `no-cache`，`/assets/*` 为 `immutable`），以确保 iOS / Android PWA 正常更新。
 
 </details>
@@ -307,13 +315,14 @@ docker compose -f compose.yaml -f compose.build.yaml up -d --build
 
 ## 功能规划
 
-- [x] 单管理员安全认证与 Cookie 会话管理
+- [x] 安全认证与 Cookie 会话管理（加盐 scrypt、防爆破限流、强制/自助改密与 Same-Origin 防护）
+- [x] 多账号（一户一账号）与单账号多宝宝隔离管理（CLI + Web 用户管理、强制/自助改密与硬删除级联）
 - [x] 宝宝建档、核心日常记录（喂养 / 睡眠 / 排便 / 体温 / 生长发育）与智能默认值
+- [x] 疫苗接种计划、国家免疫规划懒初始化、自费模板与多态提醒
 - [x] 首页数据看板、近 7/14 日趋势图表与全天照护节律
 - [x] PWA 支持、浅色/深色护眼主题与移动端单手录入适配
 - [x] Docker Compose / GHCR 多架构镜像、跨平台单二进制发版与一键部署/备份脚本
-- [ ] 提醒管理（疫苗接种、定时用药、健康检查与自定义待办）
-- [ ] 多账号与多宝宝隔离管理
+- [ ] 更多提醒待办（定时用药、儿保体检与自定义待办）
 
 ---
 

@@ -15,12 +15,13 @@ import (
 )
 
 const (
+	ctxAuthUserKey    = "authUser"
 	ctxBabyProfileKey = "babyProfile"
+	errCodePwdChange  = "PASSWORD_CHANGE_REQUIRED"
 )
 
-// requireAuthMiddleware 校验有效管理员会话，未认证或会话已过期时统一返回 401 中文 JSON。
-// Gin 中间件通过 c.AbortWithStatusJSON 终止后续调用链并写回响应，校验通过则调用 c.Next() 放行。
-func requireAuthMiddleware(store *auth.Store, logger *slog.Logger) gin.HandlerFunc {
+// requireAuthMiddleware 校验有效且未停用的用户会话，并将 [*auth.AuthUser] 注入请求上下文。
+func requireAuthMiddleware(store *auth.Store, logger *slog.Logger, cookieSecure bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token, hasCookie := readSessionCookie(c.Request)
 		user, err := store.GetSession(c.Request.Context(), token)
@@ -31,27 +32,89 @@ func requireAuthMiddleware(store *auth.Store, logger *slog.Logger) gin.HandlerFu
 		}
 		if user == nil {
 			if hasCookie {
-				clearSessionCookie(c)
+				clearSessionCookie(c, cookieSecure)
 			}
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "请先登录"})
+			return
+		}
+		c.Set(ctxAuthUserKey, user)
+		c.Next()
+	}
+}
+
+// mustAuthUser 从 Gin 上下文提取已认证的 [*auth.AuthUser]。
+func mustAuthUser(c *gin.Context) (*auth.AuthUser, bool) {
+	raw, ok := c.Get(ctxAuthUserKey)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
+		return nil, false
+	}
+	user, ok := raw.(*auth.AuthUser)
+	if !ok || user == nil || user.ID <= 0 {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
+		return nil, false
+	}
+	return user, true
+}
+
+// requirePasswordChangedMiddleware 拦截仍处于强制改密态（must_change_password = true）的用户，
+// 防止绕过前端直接调用宝宝、记录或管理接口。
+func requirePasswordChangedMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		user, ok := mustAuthUser(c)
+		if !ok {
+			c.Abort()
+			return
+		}
+		if user.MustChangePassword {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "请先修改初始密码",
+				"code":  errCodePwdChange,
+			})
 			return
 		}
 		c.Next()
 	}
 }
 
-// requireBabyProfileMiddleware 校验单宝宝档案已完成建档，并将完整宝宝档案指针（*baby.Profile）注入请求上下文。
-// 对依赖宝宝档案的记录、看板与疫苗接口而言，未建档属于前置状态冲突，因此统一返回 409 Conflict。
-func requireBabyProfileMiddleware(babyStore *baby.Store, logger *slog.Logger) gin.HandlerFunc {
+// requireAdminMiddleware 仅放行角色为 admin 的唯一系统管理员，普通用户统一返回 403。
+func requireAdminMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		profile, err := babyStore.GetFirst(c.Request.Context())
+		user, ok := mustAuthUser(c)
+		if !ok {
+			c.Abort()
+			return
+		}
+		if user.Role != auth.RoleAdmin {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "仅管理员可执行此操作"})
+			return
+		}
+		c.Next()
+	}
+}
+
+// requireBabyOwnershipMiddleware 解析路径参数 :babyId 并按 (babyId, user.ID) 校验归属，
+// 目标不存在或属于其他用户时统一返回 HTTP 404 防 ID 枚举；校验通过后注入 [*baby.Profile]。
+func requireBabyOwnershipMiddleware(babyStore *baby.Store, logger *slog.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		user, ok := mustAuthUser(c)
+		if !ok {
+			c.Abort()
+			return
+		}
+		babyID, ok := parsePositiveIntParam(c, "babyId", "无效的宝宝编号")
+		if !ok {
+			c.Abort()
+			return
+		}
+		profile, err := babyStore.GetByIDForUser(c.Request.Context(), user.ID, babyID)
 		if err != nil {
-			logger.Error("requireBabyProfile failed", "error", err)
+			logger.Error("requireBabyOwnership failed", "error", err)
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 			return
 		}
 		if profile == nil {
-			c.AbortWithStatusJSON(http.StatusConflict, gin.H{"error": baby.ErrNotFound.Error()})
+			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": baby.ErrNotFound.Error()})
 			return
 		}
 		c.Set(ctxBabyProfileKey, profile)
@@ -59,8 +122,7 @@ func requireBabyProfileMiddleware(babyStore *baby.Store, logger *slog.Logger) gi
 	}
 }
 
-// mustBabyProfile 从 Gin 上下文读取已通过 requireBabyProfileMiddleware 校验的完整宝宝档案指针。
-// c.Get 返回类型为 any，需通过 Go 类型断言安全还原，避免直接转换触发 panic。
+// mustBabyProfile 从 Gin 上下文读取已通过 requireBabyOwnershipMiddleware 校验的完整宝宝档案指针。
 func mustBabyProfile(c *gin.Context) (*baby.Profile, bool) {
 	raw, ok := c.Get(ctxBabyProfileKey)
 	if !ok {
@@ -93,7 +155,6 @@ func apiSecurityMiddleware() gin.HandlerFunc {
 		}
 
 		c.Header("Cache-Control", "no-store")
-		// GET/HEAD 为只读请求；其余变更状态的方法均须满足同源校验，防止跨站 CSRF。
 		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
 			if err := enforceSameOrigin(c.Request); err != nil {
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": err.Error()})
@@ -122,7 +183,6 @@ func enforceSameOrigin(r *http.Request) error {
 	return nil
 }
 
-// messageError 是基于 string 的轻量错误类型，使下方哨兵错误可以声明为不可变 const（普通 errors.New 只能声明为 var）。
 type messageError string
 
 // Error 实现内置 error 接口，返回静态中文错误信息。
@@ -144,9 +204,7 @@ func requestLoggerMiddleware(logger *slog.Logger) gin.HandlerFunc {
 	}
 }
 
-// recoveryMiddleware 捕获处理链路中的未预期 panic：
-// 传入 io.Discard 禁用 Gin 默认会打印原始 HTTP 请求头（含 Cookie）的 stderr 输出，
-// 改为统一通过 slog 记录脱敏信息并返回中文 JSON 500 响应。
+// recoveryMiddleware 捕获处理链路中的未预期 panic，禁用 Gin 原始请求头输出并通过 slog 记录脱敏信息。
 func recoveryMiddleware(logger *slog.Logger) gin.HandlerFunc {
 	return gin.CustomRecoveryWithWriter(io.Discard, func(c *gin.Context, recovered any) {
 		logger.Error("http panic recovered",

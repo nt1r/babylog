@@ -10,16 +10,19 @@
 - 响应式宽度与布局断点与 `useIsMobile`（`768px` = `md:`）保持一致；含内部滚动区的底部 `Drawer` 在滚动容器标注 `data-base-ui-swipe-ignore`，浮层与抽屉（`Popover`/`Drawer`）在 `disabled` 时仅拦截打开、始终放行关闭并在转为 `disabled` 时自动收起。
 - 亮/暗双色语义变量在 `src/styles/tokens.css` 中成对维护：亮色覆写限定在 `:root:not(.dark):not([data-theme="dark"]), .light, [data-theme="light"]`，暗色覆写限定在 `.dark, [data-theme="dark"]`。
 - 所有无障碍文案（`Spinner`、抽屉/弹窗关闭按钮、面包屑、步进按钮的 `aria-label`）使用中文；按钮内的 `Spinner` 标注 `aria-hidden="true" role="presentation"`，避免嵌套 live region 或中英文混播。
+- 界面可见文案面向非技术家长，用日常中文表达操作与可感知的结果；工程与实现概念（如实例、元数据、CLI、明文、文件扩展名 `.ics`、HTTP/Cookie/接口字段）保留在代码注释与运维文档中。
 - 375px 窄屏下关键提醒与医疗/安全提示文案允许自然换行或 `line-clamp-2`，避免单行 `truncate` 截断；3 列及以上数值磁贴须核对单格可用宽度与 `whitespace-nowrap`，防止带徽章或小数数值异常折行。
 - 中文输入法与全局快捷键守卫：在 `<input>` 上自定义 `Enter` 快捷键行为时须跳过 IME 组合态（`event.nativeEvent.isComposing || event.keyCode === 229`）；全局快捷键（如 `⌘K` / 单键快记）须检测并拦截活跃的弹窗、抽屉、Popover 与下拉菜单，防止叠开或打断提交中（`pending`）抽屉。
 
 ### 状态边界、分页与异步交互
 - TanStack Query 负责服务端数据查询与缓存，Zustand 负责认证会话、主题偏好与抽屉意图；全局请求层收到非认证接口 `401` 时统一清空认证状态与 Query 缓存并退回登录页。
+- 含 `localStorage` 同步或全局副作用的 Store 同步 Hook 仅在顶层布局（如 `src/routes/_app.tsx`）挂载一处，下游数据 Hook 与展示组件使用纯只读 Selector。
 - 列表翻页使用 `useInfiniteQuery` 按 `offset` 递增拉取并与后端 `MaxListLimit` 对齐。翻页请求失败（`isFetchNextPageError`）时保留已加载列表并在底部提供内联重试按钮（重试中禁用并展示加载态），仅在首屏无数据且报错时渲染整页错误态。
 - 图表与全量趋势聚合使用专用查询（显式指定对齐 `MaxListLimit` 的 `limit`，并透传错误重试态与上限提示），不直接复用 `PAGE_SIZE = 20` 的列表分页 Hook，避免静默截断早期历史。按日统计或绘图的时序数据以本地自然日 `YYYY-MM-DD` 去重，不用四舍五入后的近似月龄/天数作为去重键。
-- 提交或删除进行中（`isPending`）时，抽屉与确认弹窗须拦截关闭操作（遮罩点击 / `Esc` / 返回键 / 下滑手势）：基于 `@base-ui/react/drawer` 的抽屉调用 `eventDetails.cancel()`，同步开启 `disablePointerDismissal` 并禁用顶部关闭按钮，防止异步失败错误被写入已关闭容器而丢失反馈。
+- 提交或删除进行中（`isPending`）时，抽屉与弹窗须锁定关闭操作（遮罩点击 / `Esc` / 返回键 / 下滑手势 / 顶部关闭按钮）：表单弹窗统一使用 `<Dialog pending={isPending}>`、危险确认复用 `<DeleteConfirmDialog pending={isPending}>`、实体抽屉复用 `<EntityDrawer pending={isPending}>`，同步禁用影响草稿的表单控件，防止异步失败错误丢失反馈。
 - 高频直记按钮除禁用态外须配备 `useRef` 同步防重入锁；一次性撤销回调（如 Toast 撤销按钮）须配备单次执行守卫，防止连点重复请求导致误报 404。
 - 抽屉关闭动画期间保持当前意图稳定，由下次打开动作写入新意图，避免标题与表单区在滑出瞬间闪烁；表单初始化 `useEffect` 仅依赖 `[open, entityId]`（其余默认值通过 `useRef` 读取），避免后台 Query 刷新冲掉未保存编辑，且校验与提交仅覆盖当前激活状态下可见的字段。
+- 由可关闭浮层/抽屉（特别是移动端渲染为 `<Drawer>` 的 `Sidebar`，以及 `DropdownMenu` / `Popover`）触发的弹窗或抽屉，须提升挂载到 `AppShell` 等常驻根节点并由 Zustand 驱动显隐，避免触发容器退场卸载子树时连带销毁刚打开的浮层（`Sidebar` 内直接挂载已由 `scripts/lint-guardrails.sh` 自动拦截）。
 - React 19 Ref 写入时机：最新回调或快照 Ref 统一在 `useLayoutEffect` 中同步，避免在渲染体直接改写 `ref.current`；跨渲染稳定的惰性单例用 `useState(() => ...)` 初始化。
 
 ### 表单受控、步进单调性与智能默认值
@@ -38,7 +41,8 @@
 - 凡依赖 `time.Now()` 做校验、会话过期或聚合的 Store/Service 均支持 `WithClock` 注入，测试统一使用固定时钟消除宿主机日期依赖。
 - 跨多接口的公共前置检查（如已建档校验）下沉为 Gin 中间件；跨模块同口径统计（如列表小计与首页看板）收敛为单一共享累加函数。
 - 跨包导出的 Store 与事务原语须自守输入不变量（如关键指针判空与字段标准化校验），不隐式假设上层 HTTP 中间件已完成前置拦截。
-- GORM 错误判断统一使用 `errors.Is`；读后写更新包入 `db.Transaction` 并显式 `Select` 更新列清单，确保跨子类型切换时废弃可空列落库为 `NULL`。
+- GORM 错误判断统一使用 `errors.Is`；读后写更新包入 `db.Transaction` 并显式 `Select` 更新列清单，确保跨子类型切换时废弃可空列落库为 `NULL`；跨 `scrypt` 等慢操作的读后写须在事务内以条件 `WHERE`（如原状态/原哈希未变更）配合 `RowsAffected` 防 TOCTOU。
+- 内存限流或缓存表须具备硬容量上限与淘汰策略（优先淘汰最冷条目），防止恶意唯一键洪泛造成 OOM 或挤出受限账号。
 - HTTP 错误与异常恢复统一返回结构化中文 JSON，CLI 提示保持中文一致；服务端日志统一经 `log/slog` 输出且不含原始请求头、Cookie、凭据或个人敏感数据。
 
 ### 后端测试质量
@@ -56,4 +60,5 @@
 - 修改或精简请求/响应字段前，同步核对三处事实来源：Go `json` tag、前端 `src/lib/*.ts` 类型定义与 `openspec/specs/*.md`。
 - Go 后端以 `*string` 表达三态语义（`nil` 保留原值、`""` 显式清空）时，前端留空输入默认序列化为 `undefined`，仅在明确需要清空旧值时发送空字符串。
 - 确认任何未消费字段或接口前，先检索全仓页面、导航、抽屉与 OpenSpec 规格，确保不破坏既有契约或引发回归。
+- 迁移路由前缀、删改接口或重命名中间件后，用 `rg` 全仓检索旧路径与旧符号名，同步清理 handler 注释、测试描述与 `openspec/specs/` 文案。
 - 保持模块边界清晰，避免跨业务模块横向耦合引用（前端未引用死导出已由 `pnpm lint` 自动门禁拦截）。

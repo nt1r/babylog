@@ -3,6 +3,8 @@ schema: babylog
 rules:
   specs:
     - 涉及后端需求或测试场景时，先阅读并遵守 AGENTS.md 与 docs/testing-guide.md 中的测试与验证约束。
+    - MODIFIED 块须完整保留既有 Scenario 标题，每条新增 Requirement 正文控制在 500 字符内，确保 `openspec validate --all --strict` 一次通过。
+    - 纯前端 Web 交互 Scenario 须单独归入以 `The web application SHALL` 或 `The web dashboard SHALL` 开头的 Requirement，避免与后端 API Requirement 混放导致 `check-spec-refs` 误判为后端必覆盖项。
   test-plan:
     - 编写测试计划前，先阅读并遵守 AGENTS.md 与 docs/testing-guide.md 中的测试与验证约束；编写计划本身不启动测试实施。
     - Unit Tests 与 Integration Tests 各列出适用用例，引用对应的 capability、requirement、scenario 名称，写明验证方式和可观察的预期结果。
@@ -18,3 +20,4 @@ operations:
       - 实施或修改测试前，先阅读并遵守 AGENTS.md 与 docs/testing-guide.md 中的测试与验证约束。
       - 用户明确要求实施该变更时，test-plan.md 中列出的后端测试和必要 fixture 属于实施范围，不再逐项确认。
       - 勾选含测试的 task 前，逐行核对 test-plan.md 的每项用例（目标测试文件、Spec 注释、正反场景与落库回读断言）均已落地且断言来自真实写入数据而非冷启动兜底值。
+      - 由于 scripts/check-spec-refs.mjs 仅校对 openspec/specs/ 主规格，涉及规格变更时须在归档同步 openspec/specs/ 后执行最终完整 pnpm lint 门禁。

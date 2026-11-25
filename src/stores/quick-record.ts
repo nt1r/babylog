@@ -18,12 +18,15 @@ interface QuickRecordStoreState {
   openEdit: (target: EditableRecord) => void;
   openDuplicate: (target: EditableRecord) => void;
   setOpen: (open: boolean) => void;
+  reset: () => void;
 }
+
+const INITIAL_INTENT: QuickRecordIntent = { mode: 'create', category: 'feeding' };
 
 /** 快捷记录抽屉全局意图 Store，统一管理新建、编辑与复用打开状态。 */
 export const useQuickRecordStore = create<QuickRecordStoreState>((set) => ({
   open: false,
-  intent: { mode: 'create', category: 'feeding' },
+  intent: INITIAL_INTENT,
 
   openCreate: (category, initialSubtype) =>
     set((state) => ({
@@ -50,4 +53,7 @@ export const useQuickRecordStore = create<QuickRecordStoreState>((set) => ({
   // 关闭时保留当前 intent，避免抽屉滑出动画期间标题与分类栏闪烁跳回新建态；
   // 下次打开会由 openCreate/openEdit/openDuplicate 写入新的意图。
   setOpen: (open) => set({ open }),
+
+  // 切换账号、退出登录或切换宝宝时彻底重置，防止上一次编辑/复用目标跨作用域串用。
+  reset: () => set({ open: false, intent: INITIAL_INTENT }),
 }));

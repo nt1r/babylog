@@ -28,7 +28,8 @@ func TestFeedingCRUDSubtypeClearingAndNotFound(t *testing.T) {
 
 	app := NewTestApp(t)
 	s := app.Scenario()
-	s.EnsureBaby()
+	b := s.EnsureBaby()
+	feedURL := babyPath(b.ID, "/records/feeding")
 	client := app.Client()
 
 	// 1. 创建 4 类完整喂养形态，覆盖亲喂、瓶喂母乳、配方奶与辅食。
@@ -42,7 +43,7 @@ func TestFeedingCRUDSubtypeClearingAndNotFound(t *testing.T) {
 	}
 
 	// 2. 验证三组高频跨子类型/跨模式切换，均回读 SQLite 确认旧列显式写为 NULL（防止 GORM 零值跳过残留脏列）。
-	client.Put(t, fmt.Sprintf("/api/records/feeding/%d", formula.ID), records.FeedingInput{
+	client.Put(t, fmt.Sprintf("%s/%d", feedURL, formula.ID), records.FeedingInput{
 		Subtype:     records.FeedingSubtypeBreast,
 		FeedingMode: ptr("direct"),
 		BreastSide:  ptr("right"),
@@ -56,7 +57,7 @@ func TestFeedingCRUDSubtypeClearingAndNotFound(t *testing.T) {
 		t.Fatalf("配方奶改为亲喂后 SQLite 未清空 amount_ml：%+v", formulaRow)
 	}
 
-	client.Put(t, fmt.Sprintf("/api/records/feeding/%d", solid.ID), records.FeedingInput{
+	client.Put(t, fmt.Sprintf("%s/%d", feedURL, solid.ID), records.FeedingInput{
 		Subtype:    records.FeedingSubtypeFormula,
 		AmountML:   ptr(140),
 		RecordedAt: "2026-11-23T01:30:00Z",
@@ -67,7 +68,7 @@ func TestFeedingCRUDSubtypeClearingAndNotFound(t *testing.T) {
 		t.Fatalf("辅食改为配方奶后 SQLite 未清空辅食列：%+v", solidRow)
 	}
 
-	client.Put(t, fmt.Sprintf("/api/records/feeding/%d", direct.ID), records.FeedingInput{
+	client.Put(t, fmt.Sprintf("%s/%d", feedURL, direct.ID), records.FeedingInput{
 		Subtype:     records.FeedingSubtypeBreast,
 		FeedingMode: ptr("bottle"),
 		AmountML:    ptr(130),
@@ -81,20 +82,20 @@ func TestFeedingCRUDSubtypeClearingAndNotFound(t *testing.T) {
 	}
 
 	// 3. 删除记录并经列表与 SQLite 双重回读验证，再核对不存在 ID 返回 404。
-	client.Delete(t, fmt.Sprintf("/api/records/feeding/%d", formula.ID)).RequireStatus(t, http.StatusOK)
+	client.Delete(t, fmt.Sprintf("%s/%d", feedURL, formula.ID)).RequireStatus(t, http.StatusOK)
 	if got := CountRows[records.FeedingRecord](t, app, "id = ?", formula.ID); got != 0 {
 		t.Fatalf("删除喂养记录后 SQLite 仍存在该行：count=%d", got)
 	}
-	listResp := client.Get(t, "/api/records/feeding?range=all&tz=Asia/Shanghai")
+	listResp := client.Get(t, feedURL+"?range=all&tz=Asia/Shanghai")
 	listResp.RequireStatus(t, http.StatusOK)
 	if got := DecodeOK[records.ListResult[records.FeedingRecord, records.FeedingDailySummary]](t, listResp).Total; got != 3 {
 		t.Fatalf("删除后剩余喂养记录应为 3 条，实际 %d", got)
 	}
 
-	client.Put(t, "/api/records/feeding/999999", records.FeedingInput{
+	client.Put(t, feedURL+"/999999", records.FeedingInput{
 		Subtype: records.FeedingSubtypeFormula, AmountML: ptr(90), RecordedAt: "2026-11-23T01:00:00Z",
 	}).RequireError(t, http.StatusNotFound, "")
-	client.Delete(t, "/api/records/feeding/999999").RequireError(t, http.StatusNotFound, "")
+	client.Delete(t, feedURL+"/999999").RequireError(t, http.StatusNotFound, "")
 }
 
 /*
@@ -109,7 +110,7 @@ func TestFeedingCRUDSubtypeClearingAndNotFound(t *testing.T) {
  * - 前置业务记录：无（步骤 1 验证 CRUD，步骤 2 写入昨日小睡、跨夜整觉与今日小睡）
  * 测试目标：
  * 1. 验证创建 45 分钟小睡服务端自动计算 duration_min=45，更新为 60 分钟同步重算落库，删除后移除且未知 ID 返回 404。
- * 2. 验证 GET /api/records/sleep?range=today&tz=Asia/Shanghai 命中跨夜睡眠（22:00→06:00），且 11-22 小计含昨日小睡+120min、11-23 小计含 360min+今日小睡。
+ * 2. 验证 GET /api/babies/:babyId/records/sleep?range=today&tz=Asia/Shanghai 命中跨夜睡眠（22:00→06:00），且 11-22 小计含昨日小睡+120min、11-23 小计含 360min+今日小睡。
  * 3. 验证按 subtype=nap&range=7d&limit=1 分页筛选仅返回小睡，且当日小计不受分页截断。
  */
 func TestSleepCRUDDurationRecalcAndCrossMidnightList(t *testing.T) {
@@ -117,7 +118,8 @@ func TestSleepCRUDDurationRecalcAndCrossMidnightList(t *testing.T) {
 
 	app := NewTestApp(t)
 	s := app.Scenario()
-	s.EnsureBaby()
+	b := s.EnsureBaby()
+	sleepURL := babyPath(b.ID, "/records/sleep")
 	client := app.Client()
 
 	// 1. 睡眠 CRUD 主闭环：创建自动算 45 分钟、更新重算为 60 分钟并回读 SQLite、删除并校验未知 ID 404。
@@ -126,7 +128,7 @@ func TestSleepCRUDDurationRecalcAndCrossMidnightList(t *testing.T) {
 		t.Fatalf("预期服务端自动计算 duration_min=45，实际 %d", nap.DurationMin)
 	}
 
-	client.Put(t, fmt.Sprintf("/api/records/sleep/%d", nap.ID), records.SleepInput{
+	client.Put(t, fmt.Sprintf("%s/%d", sleepURL, nap.ID), records.SleepInput{
 		Subtype:   records.SleepSubtypeNap,
 		StartedAt: "2026-11-23T00:00:00Z",
 		EndedAt:   "2026-11-23T01:00:00Z",
@@ -137,23 +139,23 @@ func TestSleepCRUDDurationRecalcAndCrossMidnightList(t *testing.T) {
 		t.Fatalf("更新后 SQLite 睡眠时长未同步重算为 60：%+v", persisted)
 	}
 
-	client.Delete(t, fmt.Sprintf("/api/records/sleep/%d", nap.ID)).RequireStatus(t, http.StatusOK)
+	client.Delete(t, fmt.Sprintf("%s/%d", sleepURL, nap.ID)).RequireStatus(t, http.StatusOK)
 	if got := CountRows[records.SleepRecord](t, app, "id = ?", nap.ID); got != 0 {
 		t.Fatalf("删除睡眠记录后 SQLite 仍有残留：count=%d", got)
 	}
-	client.Put(t, "/api/records/sleep/999999", records.SleepInput{
+	client.Put(t, sleepURL+"/999999", records.SleepInput{
 		Subtype: records.SleepSubtypeNap, StartedAt: "2026-11-23T00:00:00Z", EndedAt: "2026-11-23T00:30:00Z",
 	}).RequireError(t, http.StatusNotFound, "")
-	client.Delete(t, "/api/records/sleep/999999").RequireError(t, http.StatusNotFound, "")
+	client.Delete(t, sleepURL+"/999999").RequireError(t, http.StatusNotFound, "")
 
 	// 2. 写入昨日小睡（50min）、跨夜整觉（11-22 22:00+08 → 11-23 06:00+08）与今日两段小睡（40min + 30min），
-	//    核对 GET /api/records/sleep?range=today 命中跨夜睡眠并按自然日准确切分双日小计。
+	//    核对 GET /api/babies/:babyId/records/sleep?range=today 命中跨夜睡眠并按自然日准确切分双日小计。
 	s.AddSleep(records.SleepSubtypeNap, "2026-11-22T06:00:00Z", "2026-11-22T06:50:00Z")   // 11-22 14:00~14:50+08
 	s.AddSleep(records.SleepSubtypeNight, "2026-11-22T14:00:00Z", "2026-11-22T22:00:00Z") // 11-22 22:00 → 11-23 06:00+08
 	s.AddSleep(records.SleepSubtypeNap, "2026-11-23T00:00:00Z", "2026-11-23T00:40:00Z")   // 11-23 08:00~08:40+08
 	s.AddSleep(records.SleepSubtypeNap, "2026-11-23T01:00:00Z", "2026-11-23T01:30:00Z")   // 11-23 09:00~09:30+08
 
-	todayResp := client.Get(t, "/api/records/sleep?range=today&tz=Asia/Shanghai")
+	todayResp := client.Get(t, sleepURL+"?range=today&tz=Asia/Shanghai")
 	todayResp.RequireStatus(t, http.StatusOK)
 	todayList := DecodeOK[records.ListResult[records.SleepRecord, records.SleepDailySummary]](t, todayResp)
 	if todayList.Total != 3 || len(todayList.Items) != 3 {
@@ -169,7 +171,7 @@ func TestSleepCRUDDurationRecalcAndCrossMidnightList(t *testing.T) {
 	}
 
 	// 3. 按 subtype=nap&range=7d&limit=1 分页筛选：验证仅返回小睡且 11-23 当日小睡小计保持完整 70min/2次。
-	napResp := client.Get(t, "/api/records/sleep?subtype=nap&range=7d&limit=1&offset=0&tz=Asia/Shanghai")
+	napResp := client.Get(t, sleepURL+"?subtype=nap&range=7d&limit=1&offset=0&tz=Asia/Shanghai")
 	napResp.RequireStatus(t, http.StatusOK)
 	napList := DecodeOK[records.ListResult[records.SleepRecord, records.SleepDailySummary]](t, napResp)
 	if napList.Total != 3 || !napList.HasMore || len(napList.Items) != 1 || napList.Items[0].Subtype != records.SleepSubtypeNap {
@@ -192,7 +194,7 @@ func TestSleepCRUDDurationRecalcAndCrossMidnightList(t *testing.T) {
  * - 前置业务记录：无（步骤 1 经真实 API 写入尿布、洗澡与自定义护理）
  * 测试目标：
  * 1. 验证便便尿布（含性状/颜色）、嘘嘘+便便双项尿布、洗澡与自定义护理创建成功，便便改嘘嘘后 SQLite 清空 stool_consistency/stool_color 为 NULL。
- * 2. 验证 GET /api/records/care?range=today&limit=2 分页不截断今日小计（准确统计嘘嘘/便便/洗澡/其他），且 subtype=diaper 严格隔离非尿布记录。
+ * 2. 验证 GET /api/babies/:babyId/records/care?range=today&limit=2 分页不截断今日小计（准确统计嘘嘘/便便/洗澡/其他），且 subtype=diaper 严格隔离非尿布记录。
  * 3. 验证删除护理记录后 SQLite 移除该行，不存在 ID 的 PUT/DELETE 返回 404。
  */
 func TestCareCRUDSubtypeClearingAndFilteredList(t *testing.T) {
@@ -200,7 +202,8 @@ func TestCareCRUDSubtypeClearingAndFilteredList(t *testing.T) {
 
 	app := NewTestApp(t)
 	s := app.Scenario()
-	s.EnsureBaby()
+	b := s.EnsureBaby()
+	careURL := babyPath(b.ID, "/records/care")
 	client := app.Client()
 
 	// 1. 创建全部护理子类型，并将一条便便尿布改为纯嘘嘘，核对 SQLite 便便详情列清为 NULL。
@@ -214,7 +217,7 @@ func TestCareCRUDSubtypeClearingAndFilteredList(t *testing.T) {
 		t.Fatalf("创建的护理记录字段异常：poop=%+v both=%+v bath=%+v other=%+v", poop, both, bath, other)
 	}
 
-	client.Put(t, fmt.Sprintf("/api/records/care/%d", poop.ID), records.CareInput{
+	client.Put(t, fmt.Sprintf("%s/%d", careURL, poop.ID), records.CareInput{
 		Subtype:    records.CareSubtypeDiaper,
 		DiaperKind: ptr("pee"),
 		RecordedAt: "2026-11-23T00:30:00Z",
@@ -225,8 +228,8 @@ func TestCareCRUDSubtypeClearingAndFilteredList(t *testing.T) {
 		t.Fatalf("便便改为纯嘘嘘后 SQLite 未清空 stool 列：%+v", persisted)
 	}
 
-	// 2. 分页查询 GET /api/records/care（limit=2）与按 subtype=diaper 筛选，核对每日小计完整不截断且严格隔离。
-	pageResp := client.Get(t, "/api/records/care?range=today&limit=2&offset=0&tz=Asia/Shanghai")
+	// 2. 分页查询 GET /api/babies/:babyId/records/care（limit=2）与按 subtype=diaper 筛选，核对每日小计完整不截断且严格隔离。
+	pageResp := client.Get(t, careURL+"?range=today&limit=2&offset=0&tz=Asia/Shanghai")
 	pageResp.RequireStatus(t, http.StatusOK)
 	page := DecodeOK[records.ListResult[records.CareRecord, records.CareDailySummary]](t, pageResp)
 	if page.Total != 4 || !page.HasMore || len(page.Items) != 2 {
@@ -238,7 +241,7 @@ func TestCareCRUDSubtypeClearingAndFilteredList(t *testing.T) {
 		t.Fatalf("护理今日小计预期 total=4/pee=2/poop=1/bath=1/other=1，实际 %+v", sum)
 	}
 
-	diaperResp := client.Get(t, "/api/records/care?subtype=diaper&range=today&tz=Asia/Shanghai")
+	diaperResp := client.Get(t, careURL+"?subtype=diaper&range=today&tz=Asia/Shanghai")
 	diaperResp.RequireStatus(t, http.StatusOK)
 	diaperList := DecodeOK[records.ListResult[records.CareRecord, records.CareDailySummary]](t, diaperResp)
 	if diaperList.Total != 2 || diaperList.DailySummaries["2026-11-23"].BathCount != 0 {
@@ -246,14 +249,14 @@ func TestCareCRUDSubtypeClearingAndFilteredList(t *testing.T) {
 	}
 
 	// 3. 删除护理记录并校验落库移除，再核对不存在 ID 返回 404。
-	client.Delete(t, fmt.Sprintf("/api/records/care/%d", poop.ID)).RequireStatus(t, http.StatusOK)
+	client.Delete(t, fmt.Sprintf("%s/%d", careURL, poop.ID)).RequireStatus(t, http.StatusOK)
 	if got := CountRows[records.CareRecord](t, app, "id = ?", poop.ID); got != 0 {
 		t.Fatalf("删除护理记录后 SQLite 仍有残留：count=%d", got)
 	}
-	client.Put(t, "/api/records/care/999999", records.CareInput{
+	client.Put(t, careURL+"/999999", records.CareInput{
 		Subtype: records.CareSubtypeBath, RecordedAt: "2026-11-23T01:00:00Z",
 	}).RequireError(t, http.StatusNotFound, "")
-	client.Delete(t, "/api/records/care/999999").RequireError(t, http.StatusNotFound, "")
+	client.Delete(t, careURL+"/999999").RequireError(t, http.StatusNotFound, "")
 }
 
 /*
@@ -276,7 +279,8 @@ func TestHealthAndGrowthCRUDSubtypeClearing(t *testing.T) {
 
 	app := NewTestApp(t)
 	s := app.Scenario()
-	s.EnsureBaby()
+	b := s.EnsureBaby()
+	healthURL := babyPath(b.ID, "/records/health")
 	client := app.Client()
 
 	// 1. 创建全部 4 类健康与生长记录（生长记录仅填体重以覆盖部分测量场景）。
@@ -291,7 +295,7 @@ func TestHealthAndGrowthCRUDSubtypeClearing(t *testing.T) {
 	}
 
 	// 2. 依次验证体温→完整生长（含三项测量）、用药→体温、生长→长牙三组跨子类型更新，核对 SQLite 旧专属列全部清为 NULL。
-	client.Put(t, fmt.Sprintf("/api/records/health/%d", temp.ID), records.HealthInput{
+	client.Put(t, fmt.Sprintf("%s/%d", healthURL, temp.ID), records.HealthInput{
 		Subtype:    records.HealthSubtypeGrowth,
 		WeightKg:   ptr(7.2),
 		HeightCm:   ptr(63.0),
@@ -306,7 +310,7 @@ func TestHealthAndGrowthCRUDSubtypeClearing(t *testing.T) {
 		t.Fatalf("体温改为生长后 SQLite 未清空 temperature_c 或未落库三项测量：%+v", tempRow)
 	}
 
-	client.Put(t, fmt.Sprintf("/api/records/health/%d", med.ID), records.HealthInput{
+	client.Put(t, fmt.Sprintf("%s/%d", healthURL, med.ID), records.HealthInput{
 		Subtype:      records.HealthSubtypeTemperature,
 		TemperatureC: ptr(36.8),
 		RecordedAt:   "2026-11-23T01:10:00Z",
@@ -317,7 +321,7 @@ func TestHealthAndGrowthCRUDSubtypeClearing(t *testing.T) {
 		t.Fatalf("用药改为体温后 SQLite 未清空药品列：%+v", medRow)
 	}
 
-	client.Put(t, fmt.Sprintf("/api/records/health/%d", temp.ID), records.HealthInput{
+	client.Put(t, fmt.Sprintf("%s/%d", healthURL, temp.ID), records.HealthInput{
 		Subtype:    records.HealthSubtypeTeeth,
 		ToothNote:  ptr("上中切牙（第 2 颗）"),
 		RecordedAt: "2026-11-23T01:00:00Z",
@@ -329,14 +333,14 @@ func TestHealthAndGrowthCRUDSubtypeClearing(t *testing.T) {
 	}
 
 	// 3. 删除记录后确认 SQLite 移除，并对不存在 ID 校验 404。
-	client.Delete(t, fmt.Sprintf("/api/records/health/%d", growth.ID)).RequireStatus(t, http.StatusOK)
+	client.Delete(t, fmt.Sprintf("%s/%d", healthURL, growth.ID)).RequireStatus(t, http.StatusOK)
 	if got := CountRows[records.HealthRecord](t, app, "id = ?", growth.ID); got != 0 {
 		t.Fatalf("删除健康记录后 SQLite 仍有残留：count=%d", got)
 	}
-	client.Put(t, "/api/records/health/999999", records.HealthInput{
+	client.Put(t, healthURL+"/999999", records.HealthInput{
 		Subtype: records.HealthSubtypeTemperature, TemperatureC: ptr(36.8), RecordedAt: "2026-11-23T01:00:00Z",
 	}).RequireError(t, http.StatusNotFound, "")
-	client.Delete(t, "/api/records/health/999999").RequireError(t, http.StatusNotFound, "")
+	client.Delete(t, healthURL+"/999999").RequireError(t, http.StatusNotFound, "")
 }
 
 /*
@@ -358,7 +362,9 @@ func TestFeedingAndHealthFilteredPaginationSummaries(t *testing.T) {
 
 	app := NewTestApp(t)
 	s := app.Scenario()
-	s.EnsureBaby()
+	b := s.EnsureBaby()
+	feedURL := babyPath(b.ID, "/records/feeding")
+	healthURL := babyPath(b.ID, "/records/health")
 	client := app.Client()
 
 	// 前置造数：写入跨 UTC 日界线（11-22T17:00Z == 11-23 01:00+08）与跨月（05-01）喂养记录及全健康子类型记录。
@@ -376,7 +382,7 @@ func TestFeedingAndHealthFilteredPaginationSummaries(t *testing.T) {
 	s.AddTooth("下中切牙（第 1 颗）", "2026-11-21T04:00:00Z")
 
 	// 1. 验证喂养 7d 分页与稀疏跨月 range=all 均不截断当日完整小计。
-	page1Resp := client.Get(t, "/api/records/feeding?subtype=formula&range=7d&tz=Asia/Shanghai&limit=1&offset=0")
+	page1Resp := client.Get(t, feedURL+"?subtype=formula&range=7d&tz=Asia/Shanghai&limit=1&offset=0")
 	page1Resp.RequireStatus(t, http.StatusOK)
 	page1 := DecodeOK[records.ListResult[records.FeedingRecord, records.FeedingDailySummary]](t, page1Resp)
 	if page1.Total != 3 || !page1.HasMore || len(page1.Items) != 1 {
@@ -386,7 +392,7 @@ func TestFeedingAndHealthFilteredPaginationSummaries(t *testing.T) {
 		t.Fatalf("limit=1 不应截断 2026-11-23 小计，预期 270ml/2次，实际 %+v", sum)
 	}
 
-	sparseResp := client.Get(t, "/api/records/feeding?subtype=formula&range=all&tz=Asia/Shanghai&limit=4&offset=0")
+	sparseResp := client.Get(t, feedURL+"?subtype=formula&range=all&tz=Asia/Shanghai&limit=4&offset=0")
 	sparseResp.RequireStatus(t, http.StatusOK)
 	sparse := DecodeOK[records.ListResult[records.FeedingRecord, records.FeedingDailySummary]](t, sparseResp)
 	if sparse.Total != 5 || !sparse.HasMore || len(sparse.Items) != 4 || sparse.DailySummaries["2026-05-01"].TotalML != 150 {
@@ -400,7 +406,7 @@ func TestFeedingAndHealthFilteredPaginationSummaries(t *testing.T) {
 	}
 
 	// 2. 验证健康与生长两个工作区对应的逗号多子类型筛选严格隔离记录及每日小计。
-	clinResp := client.Get(t, "/api/records/health?subtype=temperature,medicine&range=30d&tz=Asia/Shanghai")
+	clinResp := client.Get(t, healthURL+"?subtype=temperature,medicine&range=30d&tz=Asia/Shanghai")
 	clinResp.RequireStatus(t, http.StatusOK)
 	clin := DecodeOK[records.ListResult[records.HealthRecord, records.HealthDailySummary]](t, clinResp)
 	sumToday := clin.DailySummaries["2026-11-23"]
@@ -412,7 +418,7 @@ func TestFeedingAndHealthFilteredPaginationSummaries(t *testing.T) {
 		t.Fatalf("临床健康筛选不应混入生长记录所在日期 2026-11-20：%+v", clin.DailySummaries)
 	}
 
-	growthResp := client.Get(t, "/api/records/health?subtype=growth,teeth&range=all&tz=Asia/Shanghai")
+	growthResp := client.Get(t, healthURL+"?subtype=growth,teeth&range=all&tz=Asia/Shanghai")
 	growthResp.RequireStatus(t, http.StatusOK)
 	growth := DecodeOK[records.ListResult[records.HealthRecord, records.HealthDailySummary]](t, growthResp)
 	if growth.Total != 2 || len(growth.Items) != 2 {
@@ -427,14 +433,14 @@ func TestFeedingAndHealthFilteredPaginationSummaries(t *testing.T) {
 
 	// 3. 验证含未知子类型或空项的逗号参数返回 400 中文错误。
 	for _, bad := range []string{"temperature,unknown", "growth,", ",teeth", "all,growth"} {
-		client.Get(t, "/api/records/health?subtype="+bad).RequireError(t, http.StatusBadRequest, "子类型")
+		client.Get(t, healthURL+"?subtype="+bad).RequireError(t, http.StatusBadRequest, "子类型")
 	}
 }
 
 /*
  * Spec: daily-records / Smart defaults endpoint for low-friction entry / Return sensible starter defaults when history is empty; Compute smart defaults from recent history
  * 测试场景：验证空历史冷启动智能默认值，以及多品类丰富历史下的奶量 Top-3 破平局、亲喂换侧、辅食/用药去重保最新份量剂量、睡眠中位数与护理去重限 5 条。
- * 业务背景：快捷录入抽屉与首页一键直记高度依赖 /api/records/defaults 降低输入摩擦，既要在新宝宝冷启动时给出开箱预设，也要在长期记录演进中按频次与最近优先精确排序去重。
+ * 业务背景：快捷录入抽屉与首页一键直记高度依赖 /api/babies/:babyId/records/defaults 降低输入摩擦，既要在新宝宝冷启动时给出开箱预设，也要在长期记录演进中按频次与最近优先精确排序去重。
  * 前置数据：
  * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
  * - 管理员与会话：已初始化并登录管理员
@@ -449,11 +455,12 @@ func TestRecordsSmartDefaultsStarterAndEvolution(t *testing.T) {
 
 	app := NewTestApp(t)
 	s := app.Scenario()
-	s.EnsureBaby()
+	b := s.EnsureBaby()
+	defaultsURL := babyPath(b.ID, "/records/defaults")
 	client := app.Client()
 
 	// 1. 空历史冷启动探测：确保全部预设字段有合理默认值且集合为空数组而非报错。
-	emptyResp := client.Get(t, "/api/records/defaults")
+	emptyResp := client.Get(t, defaultsURL)
 	emptyResp.RequireStatus(t, http.StatusOK)
 	starter := DecodeOK[records.SmartDefaults](t, emptyResp)
 	if starter.Feeding.LastMilkML != records.DefaultStarterMilk ||
@@ -517,7 +524,7 @@ func TestRecordsSmartDefaultsStarterAndEvolution(t *testing.T) {
 	s.AddOtherCare("剪指甲", "2026-11-23T00:55:00Z")
 	s.AddOtherCare("洗鼻子", "2026-11-23T01:20:00Z")
 
-	popResp := client.Get(t, "/api/records/defaults")
+	popResp := client.Get(t, defaultsURL)
 	popResp.RequireStatus(t, http.StatusOK)
 	got := DecodeOK[records.SmartDefaults](t, popResp)
 
@@ -555,66 +562,95 @@ func TestRecordsSmartDefaultsStarterAndEvolution(t *testing.T) {
 }
 
 /*
- * Spec: daily-records / Authenticated access and baby-profile precondition for records / Reject unauthenticated record request; Reject record write before baby onboarding
- * Spec: daily-records / Filtered, timezone-scoped listing with pagination and daily subtotals
- * 测试场景：验证日常记录接口的未认证门禁（401）、未建档读写门禁（409），以及非法分页/范围/子类型/时区与路径参数校验（400）。
- * 业务背景：所有日常记录严格隶属已建档的单宝宝，同时对外列表查询参数与路径编号需在入口层精确拦截非法值，防止慢查询或静默回退掩盖错误。
+ * Spec: daily-records / Authenticated access and baby-profile precondition for records / Reject unauthenticated record request; Reject record write before baby onboarding; Reject record access for foreign baby ID
+ * Spec: daily-records / Filtered, timezone-scoped listing with pagination and daily subtotals / Reject unknown record ID on update or delete
+ * 测试场景：验证日常记录接口的未认证门禁（401）、未建档与跨用户/跨宝宝越权拦截（404），以及非法分页/范围/子类型/时区与路径参数校验（400）。
+ * 业务背景：所有日常记录严格隶属已鉴权的宝宝路径，必须同时拦死未登录访问、访问不存在或他人宝宝 ID、挂兄弟宝宝路径篡改记录 ID，以及非法查询参数。
  * 前置数据：
  * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
- * - 管理员与会话：已初始化管理员，具备匿名与已登录客户端
- * - 宝宝档案：步骤 1–2 未建档；步骤 3 建档后校验非法查询与路径参数
- * - 前置业务记录：无
+ * - 管理员与会话：用户 A（admin）与普通用户 B（已完成改密）及匿名客户端
+ * - 宝宝档案：步骤 1–2 用户 A 未建档；步骤 3 用户 A 建大宝/二宝、用户 B 建三宝
+ * - 前置业务记录：步骤 3 分别在大宝与三宝名下写入喂养记录
  * 测试目标：
  * 1. 验证未认证请求四类记录接口与智能默认值接口全部返回 401 中文错误。
- * 2. 验证已认证未建档时读取与写入记录接口均返回 409 中文错误且 SQLite 无脏数据。
- * 3. 验证建档后非法分页（limit=0/101、offset=-1）、非法 range、非法 tz、非法子类型与非法路径 :id（abc/0）全部返回 400。
+ * 2. 验证用户未建档时读写 /api/babies/999/records/* 返回 404 且 SQLite 无脏数据。
+ * 3. 验证建档后非法列表参数与非法路径 :id 返回 400，且跨用户 babyId 与同用户跨宝宝 record_id 改删均返回 404 不泄露也不篡改原数据。
  */
 func TestRecordsAuthOnboardingAndQueryParamGuards(t *testing.T) {
 	t.Parallel()
 
 	app := NewTestApp(t)
 	anon := app.UnauthenticatedClient()
-	client := app.Client()
+	clientA := app.Client()
+	clientB, _ := app.CreateReadyUserViaAdmin("UserB", "userb-init-secret-123", "userb-final-secret-456")
 
 	// 1. 未认证访问各记录端点全部返回 401。
-	for _, path := range []string{
-		"/api/records/feeding",
-		"/api/records/sleep",
-		"/api/records/care",
-		"/api/records/health",
-		"/api/records/defaults",
+	for _, suffix := range []string{
+		"/records/feeding",
+		"/records/sleep",
+		"/records/care",
+		"/records/health",
+		"/records/defaults",
 	} {
-		anon.Get(t, path).RequireError(t, http.StatusUnauthorized, "")
+		anon.Get(t, babyPath(1, suffix)).RequireError(t, http.StatusUnauthorized, "")
 	}
 
-	// 2. 已认证未建档时读写接口统一返回 409 且写请求不落库。
-	client.Get(t, "/api/records/defaults").RequireError(t, http.StatusConflict, "建档")
-	client.Get(t, "/api/records/sleep").RequireError(t, http.StatusConflict, "建档")
-	client.Post(t, "/api/records/feeding", records.FeedingInput{
+	// 2. 已认证但无对应宝宝时读写接口统一返回 404 且写请求不落库。
+	clientA.Get(t, babyPath(999, "/records/defaults")).RequireError(t, http.StatusNotFound, "")
+	clientA.Get(t, babyPath(999, "/records/sleep")).RequireError(t, http.StatusNotFound, "")
+	clientA.Post(t, babyPath(999, "/records/feeding"), records.FeedingInput{
 		Subtype:    records.FeedingSubtypeFormula,
 		AmountML:   ptr(120),
 		RecordedAt: "2026-11-23T01:00:00Z",
-	}).RequireError(t, http.StatusConflict, "建档")
+	}).RequireError(t, http.StatusNotFound, "")
 	if got := CountRows[records.FeedingRecord](t, app, ""); got != 0 {
 		t.Fatalf("未建档拒绝写入后不应产生喂养记录，实际 %d", got)
 	}
 
-	// 3. 建档后核对各类非法列表查询参数与非法路径 :id 均返回 400 中文错误。
-	app.Scenario().EnsureBaby()
+	// 3. 建档后核对非法查询参数返回 400，以及跨用户 babyId 与同用户跨宝宝 record_id 均返回 404 零串扰。
+	sA := app.ScenarioFor(clientA)
+	babyA1 := sA.EnsureBaby(BabyParams{Nickname: "大宝"})
+	feedA1 := sA.AddFormula(120, "2026-11-23T01:00:00Z")
+	babyA2 := sA.EnsureBaby(BabyParams{Nickname: "二宝"})
+	babyB := app.ScenarioFor(clientB).EnsureBaby(BabyParams{Nickname: "B宝"})
+	feedB := app.ScenarioFor(clientB).ForBaby(babyB.ID).AddFormula(150, "2026-11-23T01:10:00Z")
+
 	for _, badQuery := range []string{
-		"/api/records/feeding?limit=0",
-		"/api/records/feeding?limit=101",
-		"/api/records/feeding?offset=-1",
-		"/api/records/feeding?range=999d",
-		"/api/records/feeding?tz=Invalid/Zone",
-		"/api/records/feeding?subtype=unknown",
-		"/api/records/sleep?subtype=invalid",
-		"/api/records/care?subtype=invalid",
+		"/records/feeding?limit=0",
+		"/records/feeding?limit=101",
+		"/records/feeding?offset=-1",
+		"/records/feeding?range=999d",
+		"/records/feeding?tz=Invalid/Zone",
+		"/records/feeding?subtype=unknown",
+		"/records/sleep?subtype=invalid",
+		"/records/care?subtype=invalid",
 	} {
-		client.Get(t, badQuery).RequireError(t, http.StatusBadRequest, "")
+		clientA.Get(t, babyPath(babyA1.ID, badQuery)).RequireError(t, http.StatusBadRequest, "")
 	}
-	client.Delete(t, "/api/records/feeding/abc").RequireError(t, http.StatusBadRequest, "编号")
-	client.Delete(t, "/api/records/sleep/0").RequireError(t, http.StatusBadRequest, "编号")
+	clientA.Delete(t, babyPath(babyA1.ID, "/records/feeding/abc")).RequireError(t, http.StatusBadRequest, "编号")
+	clientA.Delete(t, babyPath(babyA1.ID, "/records/sleep/0")).RequireError(t, http.StatusBadRequest, "编号")
+
+	// 跨用户访问他人 babyId 返回 404；二宝冷启动默认值不受大宝与 B 宝污染。
+	clientB.Get(t, babyPath(babyA1.ID, "/records/feeding")).RequireError(t, http.StatusNotFound, "")
+	clientB.Post(t, babyPath(babyA1.ID, "/records/feeding"), records.FeedingInput{
+		Subtype: records.FeedingSubtypeFormula, AmountML: ptr(90), RecordedAt: "2026-11-23T01:20:00Z",
+	}).RequireError(t, http.StatusNotFound, "")
+	if defA2 := DecodeOK[records.SmartDefaults](t, clientA.Get(t, babyPath(babyA2.ID, "/records/defaults"))); defA2.Feeding.LastMilkML != records.DefaultStarterMilk {
+		t.Fatalf("二宝尚无记录，智能默认值不应受大宝或他人污染：%+v", defA2.Feeding)
+	}
+
+	// 同用户挂二宝路径改删大宝记录、以及挂自身路径改删他人记录均返回 404 且原记录不变。
+	clientA.Put(t, babyPath(babyA2.ID, fmt.Sprintf("/records/feeding/%d", feedA1.ID)), records.FeedingInput{
+		Subtype: records.FeedingSubtypeFormula, AmountML: ptr(99), RecordedAt: "2026-11-23T01:00:00Z",
+	}).RequireError(t, http.StatusNotFound, "")
+	clientA.Delete(t, babyPath(babyA2.ID, fmt.Sprintf("/records/feeding/%d", feedA1.ID))).RequireError(t, http.StatusNotFound, "")
+	clientA.Delete(t, babyPath(babyA1.ID, fmt.Sprintf("/records/feeding/%d", feedB.ID))).RequireError(t, http.StatusNotFound, "")
+	if row := FirstRow[records.FeedingRecord](t, app, "id = ?", feedA1.ID); row.AmountML == nil || *row.AmountML != 120 {
+		t.Fatalf("跨宝宝越权被拒后大宝记录不应被篡改：%+v", row)
+	}
+	if row := FirstRow[records.FeedingRecord](t, app, "id = ?", feedB.ID); row.AmountML == nil || *row.AmountML != 150 {
+		t.Fatalf("跨用户越权被拒后 B 宝记录不应被篡改：%+v", row)
+	}
 }
 
 /*
@@ -639,7 +675,7 @@ func TestRecordsFutureClockSkewAndInvalidPayloads(t *testing.T) {
 	t.Parallel()
 
 	app := NewTestApp(t)
-	app.Scenario().EnsureBaby()
+	b := app.Scenario().EnsureBaby()
 	client := app.Client()
 
 	// defaultFixedNow 为 2026-11-23T02:00:00Z，+6 分钟即超过 5 分钟未来时钟偏移上限。
@@ -653,7 +689,7 @@ func TestRecordsFutureClockSkewAndInvalidPayloads(t *testing.T) {
 		{Subtype: records.FeedingSubtypeFormula, AmountML: ptr(0), RecordedAt: validTS},
 		{Subtype: records.FeedingSubtypeSolid, SolidFood: ptr("   "), RecordedAt: validTS},
 	} {
-		client.Post(t, "/api/records/feeding", in).RequireError(t, http.StatusBadRequest, "")
+		client.Post(t, babyPath(b.ID, "/records/feeding"), in).RequireError(t, http.StatusBadRequest, "")
 	}
 	if got := CountRows[records.FeedingRecord](t, app, ""); got != 0 {
 		t.Fatalf("非法喂养请求后 SQLite 应为 0 行，实际 %d", got)
@@ -666,7 +702,7 @@ func TestRecordsFutureClockSkewAndInvalidPayloads(t *testing.T) {
 		{Subtype: records.SleepSubtypeNight, StartedAt: "2026-11-21T00:00:00Z", EndedAt: "2026-11-22T01:00:00Z"},
 		{Subtype: records.SleepSubtypeNap, StartedAt: "2026-11-23T01:30:00Z", EndedAt: futureTS},
 	} {
-		client.Post(t, "/api/records/sleep", in).RequireError(t, http.StatusBadRequest, "")
+		client.Post(t, babyPath(b.ID, "/records/sleep"), in).RequireError(t, http.StatusBadRequest, "")
 	}
 	if got := CountRows[records.SleepRecord](t, app, ""); got != 0 {
 		t.Fatalf("非法睡眠请求后 SQLite 应为 0 行，实际 %d", got)
@@ -677,7 +713,7 @@ func TestRecordsFutureClockSkewAndInvalidPayloads(t *testing.T) {
 		{Subtype: records.CareSubtypeDiaper, RecordedAt: validTS},
 		{Subtype: records.CareSubtypeOther, CareTitle: ptr("   "), RecordedAt: validTS},
 	} {
-		client.Post(t, "/api/records/care", in).RequireError(t, http.StatusBadRequest, "")
+		client.Post(t, babyPath(b.ID, "/records/care"), in).RequireError(t, http.StatusBadRequest, "")
 	}
 	if got := CountRows[records.CareRecord](t, app, ""); got != 0 {
 		t.Fatalf("非法护理请求后 SQLite 应为 0 行，实际 %d", got)
@@ -689,7 +725,7 @@ func TestRecordsFutureClockSkewAndInvalidPayloads(t *testing.T) {
 		{Subtype: records.HealthSubtypeTeeth, ToothNote: ptr(""), RecordedAt: validTS},
 		{Subtype: records.HealthSubtypeTemperature, TemperatureC: ptr(33.0), RecordedAt: validTS},
 	} {
-		client.Post(t, "/api/records/health", in).RequireError(t, http.StatusBadRequest, "")
+		client.Post(t, babyPath(b.ID, "/records/health"), in).RequireError(t, http.StatusBadRequest, "")
 	}
 	if got := CountRows[records.HealthRecord](t, app, ""); got != 0 {
 		t.Fatalf("非法健康请求后 SQLite 应为 0 行，实际 %d", got)

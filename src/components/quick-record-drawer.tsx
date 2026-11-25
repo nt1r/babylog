@@ -18,11 +18,13 @@ import { HealthFields } from '@/components/quick-record/health-fields';
 import { SleepFields } from '@/components/quick-record/sleep-fields';
 import { TimeOffsetPicker } from '@/components/quick-record/time-offset-picker';
 import { Alert } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Field, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { toast } from '@/components/ui/toast';
+import { useActiveBaby } from '@/lib/baby';
 import { RECORD_CATEGORIES, RECORD_CATEGORY_META } from '@/lib/categories';
 import { useSaveRecordMutation, useSmartDefaultsQuery } from '@/lib/records';
 import { cn } from '@/lib/utils';
@@ -33,6 +35,7 @@ export function QuickRecordDrawer() {
   const open = useQuickRecordStore((state) => state.open);
   const intent = useQuickRecordStore((state) => state.intent);
   const setOpen = useQuickRecordStore((state) => state.setOpen);
+  const { babies, activeBaby } = useActiveBaby();
 
   const defaultsQuery = useSmartDefaultsQuery(open);
   const defaults = defaultsQuery.data;
@@ -118,6 +121,13 @@ export function QuickRecordDrawer() {
       }}
       title={drawerTitle}
       icon={<Sparkles className="size-4.5" />}
+      badge={
+        babies.length > 1 && activeBaby ? (
+          <Badge variant="secondary" className="max-w-28 truncate font-normal">
+            {activeBaby.nickname}
+          </Badge>
+        ) : undefined
+      }
       footer={
         <div className="flex w-full flex-col gap-2.5">
           {formError ? (

@@ -18,11 +18,12 @@ const (
 
 // Config 保存服务端运行所需的环境变量配置。
 type Config struct {
-	Host    string
-	Port    int
-	DataDir string
-	DistDir string
-	GinMode string
+	Host         string
+	Port         int
+	DataDir      string
+	DistDir      string
+	GinMode      string
+	CookieSecure bool
 }
 
 // Load 从环境变量加载运行配置并显式校验端口与 Gin 运行模式。
@@ -69,12 +70,25 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("GIN_MODE 必须为 debug、release 或 test")
 	}
 
+	cookieSecure := false
+	if rawSecure, ok := os.LookupEnv("BABYLOG_COOKIE_SECURE"); ok {
+		switch strings.ToLower(strings.TrimSpace(rawSecure)) {
+		case "true":
+			cookieSecure = true
+		case "false":
+			cookieSecure = false
+		default:
+			return Config{}, fmt.Errorf("BABYLOG_COOKIE_SECURE 必须为 true 或 false")
+		}
+	}
+
 	return Config{
-		Host:    host,
-		Port:    port,
-		DataDir: dataDir,
-		DistDir: distDir,
-		GinMode: ginMode,
+		Host:         host,
+		Port:         port,
+		DataDir:      dataDir,
+		DistDir:      distDir,
+		GinMode:      ginMode,
+		CookieSecure: cookieSecure,
 	}, nil
 }
 

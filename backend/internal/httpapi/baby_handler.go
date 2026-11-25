@@ -19,26 +19,11 @@ func newBabyHandler(store *baby.Store, logger *slog.Logger) *babyHandler {
 	return &babyHandler{store: store, logger: logger}
 }
 
-// getProfile 处理 GET /api/baby；未建档时返回 200 {baby: null}，供前端判定是否触发首次建档门禁。
-func (h *babyHandler) getProfile(c *gin.Context) {
-	profile, err := h.store.GetFirst(c.Request.Context())
-	if err != nil {
-		h.logger.Error("getBabyProfile failed", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"baby": profile})
-}
-
 // handleErr 统一将 baby 领域层校验与查询错误映射为中文 JSON HTTP 响应。
 func (h *babyHandler) handleErr(c *gin.Context, op string, err error) {
 	var valErr *baby.ValidationError
 	if errors.As(err, &valErr) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": valErr.Error()})
-		return
-	}
-	if errors.Is(err, baby.ErrAlreadyExists) {
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
 	if errors.Is(err, baby.ErrNotFound) {
@@ -49,8 +34,26 @@ func (h *babyHandler) handleErr(c *gin.Context, op string, err error) {
 	c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 }
 
-// createProfile 处理 POST /api/baby；单宝宝模式下若已存在档案则返回 409 Conflict 拒绝重复建档。
+// listProfiles 处理 GET /api/babies，返回当前登录用户归属的全部宝宝档案列表（按 id 升序）。
+func (h *babyHandler) listProfiles(c *gin.Context) {
+	user, ok := mustAuthUser(c)
+	if !ok {
+		return
+	}
+	profiles, err := h.store.ListByUser(c.Request.Context(), user.ID)
+	if err != nil {
+		h.handleErr(c, "listBabyProfiles", err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"babies": profiles})
+}
+
+// createProfile 处理 POST /api/babies，为当前登录用户新建宝宝档案（最多 10 个）。
 func (h *babyHandler) createProfile(c *gin.Context) {
+	user, ok := mustAuthUser(c)
+	if !ok {
+		return
+	}
 	loc, ok := parseTimezoneQuery(c)
 	if !ok {
 		return
@@ -62,7 +65,7 @@ func (h *babyHandler) createProfile(c *gin.Context) {
 		return
 	}
 
-	profile, err := h.store.Create(c.Request.Context(), input, loc)
+	profile, err := h.store.CreateForUser(c.Request.Context(), user.ID, input, loc)
 	if err != nil {
 		h.handleErr(c, "createBabyProfile", err)
 		return
@@ -70,8 +73,16 @@ func (h *babyHandler) createProfile(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"baby": profile})
 }
 
-// updateProfile 处理 PUT /api/baby；尚未建档时目标资源不存在，返回 404 Not Found。
+// updateProfile 处理 PUT /api/babies/:babyId，更新归属于当前用户的指定宝宝档案。
 func (h *babyHandler) updateProfile(c *gin.Context) {
+	user, ok := mustAuthUser(c)
+	if !ok {
+		return
+	}
+	babyID, ok := parsePositiveIntParam(c, "babyId", "无效的宝宝编号")
+	if !ok {
+		return
+	}
 	loc, ok := parseTimezoneQuery(c)
 	if !ok {
 		return
@@ -83,7 +94,7 @@ func (h *babyHandler) updateProfile(c *gin.Context) {
 		return
 	}
 
-	profile, err := h.store.Update(c.Request.Context(), input, loc)
+	profile, err := h.store.UpdateForUser(c.Request.Context(), user.ID, babyID, input, loc)
 	if err != nil {
 		h.handleErr(c, "updateBabyProfile", err)
 		return
@@ -91,8 +102,29 @@ func (h *babyHandler) updateProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"baby": profile})
 }
 
-// updateDefaultClinic 处理 PUT /api/vaccines/default-clinic，单独更新或清空当前宝宝档案的常去接种门诊名称。
+// deleteProfile 处理 DELETE /api/babies/:babyId，硬删除归属于当前用户的宝宝档案并级联清空全部子表记录。
+func (h *babyHandler) deleteProfile(c *gin.Context) {
+	user, ok := mustAuthUser(c)
+	if !ok {
+		return
+	}
+	babyID, ok := parsePositiveIntParam(c, "babyId", "无效的宝宝编号")
+	if !ok {
+		return
+	}
+	if err := h.store.DeleteForUser(c.Request.Context(), user.ID, babyID); err != nil {
+		h.handleErr(c, "deleteBabyProfile", err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": true})
+}
+
+// updateDefaultClinic 处理 PUT /api/babies/:babyId/vaccines/default-clinic，单独更新或清空归属宝宝的常去接种门诊名称。
 func (h *babyHandler) updateDefaultClinic(c *gin.Context) {
+	user, ok := mustAuthUser(c)
+	if !ok {
+		return
+	}
 	babyID, ok := mustBabyID(c)
 	if !ok {
 		return
@@ -104,7 +136,7 @@ func (h *babyHandler) updateDefaultClinic(c *gin.Context) {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
-	updated, err := h.store.UpdateDefaultClinic(c.Request.Context(), babyID, input.ClinicName)
+	updated, err := h.store.UpdateDefaultClinic(c.Request.Context(), user.ID, babyID, input.ClinicName)
 	if err != nil {
 		h.handleErr(c, "updateDefaultClinic", err)
 		return

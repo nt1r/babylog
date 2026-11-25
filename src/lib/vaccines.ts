@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiRequest } from '@/lib/http';
+import { resolveMutationBabyId, useActiveBabyId } from '@/lib/baby';
+import { ApiError, apiRequest } from '@/lib/http';
 import type { exportVaccineVisitIcs } from '@/lib/ics';
-import { BABY_QUERY_KEY, VACCINE_CATALOG_QUERY_KEY, VACCINES_QUERY_KEY } from '@/lib/query-client';
+import { babiesQueryKey, babyVaccineCatalogQueryKey, babyVaccinesQueryKey } from '@/lib/query-client';
 import { getBrowserTimeZone } from '@/lib/time';
+import { useAuthStore } from '@/stores/auth';
 
 export type VaccineCategory = 'nip' | 'optional';
 export type VaccineStatus = 'pending' | 'scheduled' | 'completed';
@@ -582,144 +584,180 @@ export function buildCalendarIcsOptions(
 
 // --- API 请求与 TanStack Query Hooks ---
 
-async function fetchVaccinesOverview(signal?: AbortSignal): Promise<VaccineOverviewResponse> {
+async function fetchVaccinesOverview(babyId: number, signal?: AbortSignal): Promise<VaccineOverviewResponse> {
   const tz = encodeURIComponent(getBrowserTimeZone());
-  return apiRequest<VaccineOverviewResponse>(`/api/vaccines?tz=${tz}`, { signal });
+  return apiRequest<VaccineOverviewResponse>(`/api/babies/${babyId}/vaccines?tz=${tz}`, { signal });
 }
 
-async function fetchVaccineCatalog(signal?: AbortSignal): Promise<VaccineCatalogResponse> {
-  return apiRequest<VaccineCatalogResponse>('/api/vaccines/catalog', { signal });
+async function fetchVaccineCatalog(babyId: number, signal?: AbortSignal): Promise<VaccineCatalogResponse> {
+  return apiRequest<VaccineCatalogResponse>(`/api/babies/${babyId}/vaccines/catalog`, { signal });
 }
 
 export function useVaccinesOverviewQuery(enabled = true, staleTime?: number) {
+  const activeBabyId = useActiveBabyId();
   return useQuery({
-    queryKey: VACCINES_QUERY_KEY,
-    queryFn: ({ signal }) => fetchVaccinesOverview(signal),
-    enabled,
+    queryKey: babyVaccinesQueryKey(activeBabyId),
+    queryFn: ({ signal }) => {
+      if (activeBabyId === null) throw new ApiError(400, '请先选择宝宝档案。');
+      return fetchVaccinesOverview(activeBabyId, signal);
+    },
+    enabled: enabled && activeBabyId !== null,
     ...(staleTime !== undefined ? { staleTime } : {}),
   });
 }
 
 export function useVaccineCatalogQuery(enabled = true) {
+  const activeBabyId = useActiveBabyId();
   return useQuery({
-    queryKey: VACCINE_CATALOG_QUERY_KEY,
-    queryFn: ({ signal }) => fetchVaccineCatalog(signal),
-    enabled,
+    queryKey: babyVaccineCatalogQueryKey(activeBabyId),
+    queryFn: ({ signal }) => {
+      if (activeBabyId === null) throw new ApiError(400, '请先选择宝宝档案。');
+      return fetchVaccineCatalog(activeBabyId, signal);
+    },
+    enabled: enabled && activeBabyId !== null,
   });
 }
 
 export function useAddVaccineTemplateMutation() {
   const queryClient = useQueryClient();
+  const activeBabyId = useActiveBabyId();
   return useMutation({
     mutationFn: async (params: AddVaccineTemplateInput) => {
+      const targetBabyId = resolveMutationBabyId(activeBabyId);
       const tz = encodeURIComponent(getBrowserTimeZone());
-      return apiRequest<{ doses: VaccineDose[] }>(`/api/vaccines/from-template?tz=${tz}`, {
-        method: 'POST',
-        body: {
-          template_code: params.templateCode,
-          doses: params.doses,
+      const res = await apiRequest<{ doses: VaccineDose[] }>(
+        `/api/babies/${targetBabyId}/vaccines/from-template?tz=${tz}`,
+        {
+          method: 'POST',
+          body: {
+            template_code: params.templateCode,
+            doses: params.doses,
+          },
         },
-      });
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: VACCINES_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: VACCINE_CATALOG_QUERY_KEY });
+      );
+      void queryClient.invalidateQueries({ queryKey: babyVaccinesQueryKey(targetBabyId) });
+      void queryClient.invalidateQueries({ queryKey: babyVaccineCatalogQueryKey(targetBabyId) });
+      return res;
     },
   });
 }
 
 export function useCreateCustomVaccineMutation() {
   const queryClient = useQueryClient();
+  const activeBabyId = useActiveBabyId();
   return useMutation({
     mutationFn: async (input: CreateCustomVaccineInput) => {
+      const targetBabyId = resolveMutationBabyId(activeBabyId);
       const tz = encodeURIComponent(getBrowserTimeZone());
-      return apiRequest<{ doses: VaccineDose[] }>(`/api/vaccines?tz=${tz}`, {
+      const res = await apiRequest<{ doses: VaccineDose[] }>(`/api/babies/${targetBabyId}/vaccines?tz=${tz}`, {
         method: 'POST',
         body: input,
       });
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: VACCINES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: babyVaccinesQueryKey(targetBabyId) });
+      return res;
     },
   });
 }
 
 export function useUpdateVaccineDoseMutation() {
   const queryClient = useQueryClient();
+  const activeBabyId = useActiveBabyId();
   return useMutation({
     mutationFn: async (params: { id: number; input: UpdateVaccineDoseInput }) => {
+      const targetBabyId = resolveMutationBabyId(activeBabyId);
       const tz = encodeURIComponent(getBrowserTimeZone());
-      return apiRequest<{ dose: VaccineDose }>(`/api/vaccines/${params.id}?tz=${tz}`, {
-        method: 'PUT',
-        body: params.input,
-      });
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: VACCINES_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: BABY_QUERY_KEY });
+      const res = await apiRequest<{ dose: VaccineDose }>(
+        `/api/babies/${targetBabyId}/vaccines/${params.id}?tz=${tz}`,
+        {
+          method: 'PUT',
+          body: params.input,
+        },
+      );
+      void queryClient.invalidateQueries({ queryKey: babyVaccinesQueryKey(targetBabyId) });
+      const userId = useAuthStore.getState().user?.id ?? null;
+      if (userId !== null) {
+        void queryClient.invalidateQueries({ queryKey: babiesQueryKey(userId) });
+      }
+      return res;
     },
   });
 }
 
 export function useBatchVaccineMutation() {
   const queryClient = useQueryClient();
+  const activeBabyId = useActiveBabyId();
   return useMutation({
     mutationFn: async (input: BatchVaccineInput) => {
+      const targetBabyId = resolveMutationBabyId(activeBabyId);
       const tz = encodeURIComponent(getBrowserTimeZone());
-      return apiRequest<{ doses: VaccineDose[] }>(`/api/vaccines/batch?tz=${tz}`, {
+      const res = await apiRequest<{ doses: VaccineDose[] }>(`/api/babies/${targetBabyId}/vaccines/batch?tz=${tz}`, {
         method: 'POST',
         body: input,
       });
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: VACCINES_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: BABY_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: babyVaccinesQueryKey(targetBabyId) });
+      const userId = useAuthStore.getState().user?.id ?? null;
+      if (userId !== null) {
+        void queryClient.invalidateQueries({ queryKey: babiesQueryKey(userId) });
+      }
+      return res;
     },
   });
 }
 
 export function useUpdateDefaultClinicMutation() {
   const queryClient = useQueryClient();
+  const activeBabyId = useActiveBabyId();
   return useMutation({
     mutationFn: async (clinicName: string) => {
-      return apiRequest<{ default_clinic_name: string }>('/api/vaccines/default-clinic', {
-        method: 'PUT',
-        body: { clinic_name: clinicName },
-      });
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: VACCINES_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: BABY_QUERY_KEY });
+      const targetBabyId = resolveMutationBabyId(activeBabyId);
+      const res = await apiRequest<{ default_clinic_name: string }>(
+        `/api/babies/${targetBabyId}/vaccines/default-clinic`,
+        {
+          method: 'PUT',
+          body: { clinic_name: clinicName },
+        },
+      );
+      void queryClient.invalidateQueries({ queryKey: babyVaccinesQueryKey(targetBabyId) });
+      const userId = useAuthStore.getState().user?.id ?? null;
+      if (userId !== null) {
+        void queryClient.invalidateQueries({ queryKey: babiesQueryKey(userId) });
+      }
+      return res;
     },
   });
 }
 
 export function useDeleteVaccineDoseMutation() {
   const queryClient = useQueryClient();
+  const activeBabyId = useActiveBabyId();
   return useMutation({
     mutationFn: async (id: number) => {
-      return apiRequest<{ deleted: boolean }>(`/api/vaccines/${id}`, {
+      const targetBabyId = resolveMutationBabyId(activeBabyId);
+      const res = await apiRequest<{ deleted: boolean }>(`/api/babies/${targetBabyId}/vaccines/${id}`, {
         method: 'DELETE',
       });
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: VACCINES_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: VACCINE_CATALOG_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: babyVaccinesQueryKey(targetBabyId) });
+      void queryClient.invalidateQueries({ queryKey: babyVaccineCatalogQueryKey(targetBabyId) });
+      return res;
     },
   });
 }
 
 export function useDeleteVaccineTemplateMutation() {
   const queryClient = useQueryClient();
+  const activeBabyId = useActiveBabyId();
   return useMutation({
     mutationFn: async (templateCode: string) => {
-      return apiRequest<{ deleted: boolean }>(`/api/vaccines/template/${encodeURIComponent(templateCode)}`, {
-        method: 'DELETE',
-      });
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: VACCINES_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: VACCINE_CATALOG_QUERY_KEY });
+      const targetBabyId = resolveMutationBabyId(activeBabyId);
+      const res = await apiRequest<{ deleted: boolean }>(
+        `/api/babies/${targetBabyId}/vaccines/template/${encodeURIComponent(templateCode)}`,
+        {
+          method: 'DELETE',
+        },
+      );
+      void queryClient.invalidateQueries({ queryKey: babyVaccinesQueryKey(targetBabyId) });
+      void queryClient.invalidateQueries({ queryKey: babyVaccineCatalogQueryKey(targetBabyId) });
+      return res;
     },
   });
 }

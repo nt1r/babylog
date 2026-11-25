@@ -1,10 +1,14 @@
 import { Link, useRouterState } from '@tanstack/react-router';
 import { PlusIcon } from 'lucide-react';
+import { useActiveBabyId } from '@/lib/baby';
 import { cn } from '@/lib/utils';
 import { getContextualCreateAriaLabel, MOBILE_NAV_ITEMS, openContextualCreate } from '@/navigation/menu';
 
 export function MobileTabBar() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const activeBabyId = useActiveBabyId();
+  if (activeBabyId === null) return null;
+
   const createAriaLabel = getContextualCreateAriaLabel(pathname);
 
   const leftItems = MOBILE_NAV_ITEMS.slice(0, 2);

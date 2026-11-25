@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { differenceInCalendarDays, parseISO } from 'date-fns';
 import { Baby, Bath, Droplets, type LucideIcon, Milk } from 'lucide-react';
+import { useActiveBabyId } from '@/lib/baby';
 import { RECORD_CATEGORY_META, type RecordCategoryMeta } from '@/lib/categories';
 import type { GrowthSummary } from '@/lib/growth';
-import { apiRequest } from '@/lib/http';
+import { ApiError, apiRequest } from '@/lib/http';
 import type { OneTapRecordAction } from '@/lib/one-tap-record';
-import { DASHBOARD_QUERY_KEY, DASHBOARD_SUMMARY_QUERY_KEY } from '@/lib/query-client';
+import { babyDashboardQueryKey, babyDashboardSummaryQueryKey } from '@/lib/query-client';
 import {
   BREAST_SIDE_LABELS,
   type CareDailySummary,
@@ -371,14 +372,14 @@ export function findRecentCompletedVaccineForTempCue(
   };
 }
 
-async function fetchDashboardSummary(signal?: AbortSignal): Promise<DashboardSummary> {
+async function fetchDashboardSummary(babyId: number, signal?: AbortSignal): Promise<DashboardSummary> {
   const tz = encodeURIComponent(getBrowserTimeZone());
-  return apiRequest<DashboardSummary>(`/api/dashboard/summary?tz=${tz}`, { signal });
+  return apiRequest<DashboardSummary>(`/api/babies/${babyId}/dashboard/summary?tz=${tz}`, { signal });
 }
 
-async function fetchDashboardTrends(days = 7, signal?: AbortSignal): Promise<DashboardTrends> {
+async function fetchDashboardTrends(babyId: number, days = 7, signal?: AbortSignal): Promise<DashboardTrends> {
   const tz = encodeURIComponent(getBrowserTimeZone());
-  return apiRequest<DashboardTrends>(`/api/dashboard/trends?days=${days}&tz=${tz}`, { signal });
+  return apiRequest<DashboardTrends>(`/api/babies/${babyId}/dashboard/trends?days=${days}&tz=${tz}`, { signal });
 }
 
 interface AdaptiveFeedingOneTap {
@@ -550,16 +551,26 @@ export function buildDashboardOneTapPresets(
 
 /** 首页今日汇总查询：每 60 秒轮询刷新，供首页看板实时展示照护概览。 */
 export function useDashboardSummaryQuery() {
+  const activeBabyId = useActiveBabyId();
   return useQuery({
-    queryKey: DASHBOARD_SUMMARY_QUERY_KEY,
-    queryFn: ({ signal }) => fetchDashboardSummary(signal),
+    queryKey: babyDashboardSummaryQueryKey(activeBabyId),
+    queryFn: ({ signal }) => {
+      if (activeBabyId === null) throw new ApiError(400, '请先选择宝宝档案。');
+      return fetchDashboardSummary(activeBabyId, signal);
+    },
+    enabled: activeBabyId !== null,
     refetchInterval: 60_000,
   });
 }
 
 export function useDashboardTrendsQuery(days = 7) {
+  const activeBabyId = useActiveBabyId();
   return useQuery({
-    queryKey: [...DASHBOARD_QUERY_KEY, 'trends', days],
-    queryFn: ({ signal }) => fetchDashboardTrends(days, signal),
+    queryKey: [...babyDashboardQueryKey(activeBabyId), 'trends', days],
+    queryFn: ({ signal }) => {
+      if (activeBabyId === null) throw new ApiError(400, '请先选择宝宝档案。');
+      return fetchDashboardTrends(activeBabyId, days, signal);
+    },
+    enabled: activeBabyId !== null,
   });
 }

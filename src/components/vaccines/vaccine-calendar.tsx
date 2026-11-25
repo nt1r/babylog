@@ -97,8 +97,8 @@ export function VaccineCalendar({
     if (!exportTarget) return;
     exportVaccineVisitIcs(buildCalendarIcsOptions(exportTarget, defaultClinicName, babyNickname));
     toast.success(
-      '已导出日历（.ics）',
-      `已生成 ${formatShortCnDate(exportTarget.date, today)} 的接种提醒，打开即可导入手机日历`,
+      '已导出接种日历',
+      `已生成 ${formatShortCnDate(exportTarget.date, today)} 的接种提醒，打开即可添加到手机日历`,
     );
   }
 
@@ -116,8 +116,7 @@ export function VaccineCalendar({
               <div className="space-y-2">
                 <p>点选日历中的具体日期可筛选当天安排；再次点击已选中日期可切回整月视图。</p>
                 <p>
-                  点击「导出日历」会生成标准 <span className="font-medium text-foreground">.ics</span>{' '}
-                  日程文件（含接种时间、门诊地点、注意事项与提前提醒），打开即可导入手机系统日历。
+                  点击「导出日历」会生成手机日程文件（含接种时间、门诊地点、注意事项与提前提醒），打开即可添加到手机日历。
                 </p>
               </div>
             </InfoPopover>
@@ -179,7 +178,7 @@ export function VaccineCalendar({
                 <CalendarPlus className="size-3.5" />
                 {exportTarget.isFallbackFocus ? '导出下次' : '导出日历'}
               </TooltipTrigger>
-              <TooltipContent>导出 {formatShortCnDate(exportTarget.date, today)} 的接种日程（.ics）</TooltipContent>
+              <TooltipContent>导出 {formatShortCnDate(exportTarget.date, today)} 的接种日程</TooltipContent>
             </Tooltip>
           ) : (
             <Tooltip>

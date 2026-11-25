@@ -1,37 +1,59 @@
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { format } from 'date-fns';
 import {
+  AlertCircle,
   Baby,
   CheckIcon,
+  ChevronDown,
   DownloadIcon,
+  Eye,
+  EyeOff,
+  KeyRound,
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
+  PlusIcon,
   RotateCcw,
   SaveIcon,
   ShareIcon,
+  ShieldCheck,
   SmartphoneIcon,
   SunIcon,
+  Trash2,
 } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
 import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog';
+import { PasswordLengthHint } from '@/components/password-length-hint';
+import { Alert, AlertTitle } from '@/components/ui/alert';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { QuickChip } from '@/components/ui/choice-controls';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { DatePicker } from '@/components/ui/date-picker';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { InfoPopover } from '@/components/ui/info-popover';
 import { Input } from '@/components/ui/input';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
+import { Separator } from '@/components/ui/separator';
 import { Spinner } from '@/components/ui/spinner';
 import { toast } from '@/components/ui/toast';
 import { useLogoutAction } from '@/hooks/use-logout';
 import {
+  type ChangePasswordValidationErrors,
+  changePassword,
+  PASSWORD_MIN_LENGTH,
+  validateChangePasswordForm,
+} from '@/lib/auth';
+import {
   BABY_GENDER_LABELS,
   type BabyFormValidationErrors,
   type BabyGender,
-  useBabyProfileQuery,
+  MAX_BABIES_PER_USER,
+  useActiveBaby,
+  useDeleteBabyMutation,
   useUpdateBabyMutation,
   validateBabyProfileForm,
 } from '@/lib/baby';
@@ -39,6 +61,7 @@ import { triggerPwaInstall, usePwaInstallState } from '@/lib/pwa';
 import { formatBabyAge } from '@/lib/time';
 import { cn, getInitials } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth';
+import { useBabyStore } from '@/stores/baby';
 import { type ThemeMode, usePreferencesStore } from '@/stores/preferences';
 
 export const Route = createFileRoute('/_app/settings')({
@@ -74,14 +97,17 @@ const THEME_OPTIONS: ReadonlyArray<{
 const GENDER_OPTIONS: ReadonlyArray<BabyGender> = ['male', 'female', 'unknown'];
 
 function SettingsPage() {
+  const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
+  const setUser = useAuthStore((state) => state.setUser);
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const setThemeMode = usePreferencesStore((state) => state.setThemeMode);
   const { confirmOpen, setConfirmOpen, pending, confirmLogout } = useLogoutAction();
 
-  const babyQuery = useBabyProfileQuery();
+  const { babies, activeBaby: baby, selectBaby } = useActiveBaby();
+  const setAddDialogOpen = useBabyStore((state) => state.setAddDialogOpen);
   const updateBaby = useUpdateBabyMutation();
-  const baby = babyQuery.data;
+  const deleteBaby = useDeleteBabyMutation();
   const { standalone, canPromptInstall, isIOS } = usePwaInstallState();
 
   const todayStr = format(new Date(), 'yyyy-MM-dd');
@@ -91,13 +117,35 @@ function SettingsPage() {
   const [birthWeight, setBirthWeight] = useState('');
   const [birthHeight, setBirthHeight] = useState('');
   const [defaultClinicName, setDefaultClinicName] = useState('');
-  const [hydratedBabyId, setHydratedBabyId] = useState<number | null>(null);
+  const [hydratedKey, setHydratedKey] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<BabyFormValidationErrors>({});
 
-  // 与服务端档案实时比对计算真实的未保存修改态，避免改回原值或重复点击已选性别出现假阳性提示。
+  // 切娃未保存确认 & 删除宝宝确认弹窗（保留目标快照，避免退场动画标题闪烁）
+  const [switchConfirmOpen, setSwitchConfirmOpen] = useState(false);
+  const [pendingSwitchBaby, setPendingSwitchBaby] = useState<{ id: number; nickname: string } | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; nickname: string } | null>(null);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+
+  // 自助修改密码状态（折叠收纳在「账号与安全」卡片内，减轻移动端纵向滚动）
+  const [passwordSectionOpen, setPasswordSectionOpen] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false);
+  const [passwordPending, setPasswordPending] = useState(false);
+  const [passwordSubmitError, setPasswordSubmitError] = useState('');
+  const [passwordErrors, setPasswordErrors] = useState<ChangePasswordValidationErrors>({});
+
+  const serverBabyKey = baby ? `${baby.id}:${baby.updated_at}` : null;
+
+  // 与服务端档案实时比对计算真实的未保存修改态，切换不同宝宝时强制重新回填。
   const isDirty = Boolean(
     baby &&
-      hydratedBabyId === baby.id &&
+      hydratedKey === serverBabyKey &&
       (nickname !== baby.nickname ||
         birthDate !== baby.birth_date ||
         gender !== baby.gender ||
@@ -106,17 +154,22 @@ function SettingsPage() {
         defaultClinicName !== (baby.default_clinic_name ?? '')),
   );
 
-  // 仅在首次加载或无未保存本地修改时同步服务端档案，避免窗口切回触发 refetch 冲掉正在编辑的表单。
+  // 仅在切换宝宝或服务端档案版本更新（serverBabyKey 变化）时同步表单，避免把字段改回原值时误清校验提示。
   useEffect(() => {
-    if (!baby || isDirty) return;
+    if (!baby || !serverBabyKey) {
+      setHydratedKey(null);
+      return;
+    }
+    if (hydratedKey === serverBabyKey) return;
     setNickname(baby.nickname);
     setBirthDate(baby.birth_date);
     setGender(baby.gender);
     setBirthWeight(baby.birth_weight_kg !== null ? String(baby.birth_weight_kg) : '');
     setBirthHeight(baby.birth_height_cm !== null ? String(baby.birth_height_cm) : '');
     setDefaultClinicName(baby.default_clinic_name ?? '');
-    setHydratedBabyId(baby.id);
-  }, [baby, isDirty]);
+    setHydratedKey(serverBabyKey);
+    setFieldErrors({});
+  }, [baby, serverBabyKey, hydratedKey]);
 
   function handleResetBabyDraft() {
     if (!baby) return;
@@ -131,7 +184,7 @@ function SettingsPage() {
 
   async function handleSaveBaby(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (updateBaby.isPending) return;
+    if (!baby || updateBaby.isPending) return;
 
     const { payload, errors } = validateBabyProfileForm({
       nickname,
@@ -149,7 +202,7 @@ function SettingsPage() {
 
     setFieldErrors({});
     try {
-      const updated = await updateBaby.mutateAsync(payload);
+      const updated = await updateBaby.mutateAsync({ babyId: baby.id, input: payload });
       setNickname(updated.nickname);
       setBirthDate(updated.birth_date);
       setGender(updated.gender);
@@ -162,31 +215,147 @@ function SettingsPage() {
     }
   }
 
+  function handleOpenDeleteDialog() {
+    if (!baby) return;
+    setDeleteTarget({ id: baby.id, nickname: baby.nickname });
+    setDeleteConfirmInput('');
+    setDeleteError('');
+    setDeleteDialogOpen(true);
+  }
+
+  async function handleConfirmDeleteBaby(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!deleteTarget || deleteBaby.isPending) return;
+    if (deleteConfirmInput !== deleteTarget.nickname) return;
+
+    const isLastBaby = babies.length <= 1;
+    const deletedNickname = deleteTarget.nickname;
+    setDeleteError('');
+    try {
+      await deleteBaby.mutateAsync(deleteTarget.id);
+      setDeleteDialogOpen(false);
+      setDeleteConfirmInput('');
+      toast.success(`已永久删除「${deletedNickname}」的档案`);
+      if (isLastBaby) {
+        await navigate({ to: '/onboarding', replace: true });
+      }
+    } catch (cause) {
+      setDeleteError(cause instanceof Error ? cause.message : '删除失败，请稍后重试。');
+    }
+  }
+
+  async function handleChangePassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (passwordPending) return;
+
+    const nextErrors = validateChangePasswordForm({
+      currentPassword,
+      newPassword,
+      confirmPassword: confirmNewPassword,
+      currentEmptyMessage: '请输入当前密码',
+    });
+
+    if (nextErrors.currentPassword || nextErrors.newPassword || nextErrors.confirmPassword) {
+      setPasswordErrors(nextErrors);
+      return;
+    }
+
+    setPasswordPending(true);
+    setPasswordSubmitError('');
+    setPasswordErrors({});
+    try {
+      const updatedUser = await changePassword(currentPassword, newPassword);
+      setUser(updatedUser);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      setShowCurrentPassword(false);
+      setShowNewPassword(false);
+      setShowConfirmNewPassword(false);
+      setPasswordSectionOpen(false);
+      toast.success('密码已修改', '其他设备需使用新密码重新登录。');
+    } catch (cause) {
+      setPasswordSubmitError(cause instanceof Error ? cause.message : '修改密码失败，请稍后重试。');
+    } finally {
+      setPasswordPending(false);
+    }
+  }
+
   const username = user?.username ?? '当前账号';
   const ageInfo = baby ? formatBabyAge(baby.birth_date) : null;
+  const atBabyLimit = babies.length >= MAX_BABIES_PER_USER;
 
   return (
     <div className="flex flex-col gap-5">
       <h1 className="sr-only md:not-sr-only md:text-2xl md:font-semibold md:tracking-tight">偏好与账号</h1>
 
-      {baby ? (
-        <Card>
-          <CardHeader>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2.5">
-                <span className="flex size-8 items-center justify-center rounded-xl bg-primary/12 text-primary">
-                  <Baby className="size-4.5" strokeWidth={1.8} />
-                </span>
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <span className="flex size-8 items-center justify-center rounded-xl bg-primary/12 text-primary">
+                <Baby className="size-4.5" strokeWidth={1.8} />
+              </span>
+              <div className="flex items-center gap-2">
                 <CardTitle>宝宝档案</CardTitle>
+                {babies.length > 1 ? (
+                  <Badge variant="secondary" className="font-normal tabular-nums">
+                    {babies.length} 位宝宝
+                  </Badge>
+                ) : null}
               </div>
+            </div>
+
+            <div className="flex items-center gap-2">
               {ageInfo ? (
-                <Badge variant="secondary" className="font-normal">
+                <Badge variant="secondary" className="hidden font-normal sm:inline-flex">
                   {ageInfo.daysLabel} · {ageInfo.ageLabel}
                 </Badge>
               ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={atBabyLimit}
+                onClick={() => setAddDialogOpen(true)}
+              >
+                <PlusIcon className="size-3.5" />
+                {atBabyLimit ? '已达上限' : '添加宝宝'}
+              </Button>
             </div>
-          </CardHeader>
-          <CardContent>
+          </div>
+
+          {babies.length > 1 ? (
+            <div className="flex flex-wrap items-center gap-2 pt-2">
+              {babies.map((item) => {
+                const selected = item.id === baby?.id;
+                return (
+                  <QuickChip
+                    key={item.id}
+                    variant="outline"
+                    active={selected}
+                    disabled={updateBaby.isPending}
+                    onClick={() => {
+                      if (selected) return;
+                      if (isDirty) {
+                        setPendingSwitchBaby({ id: item.id, nickname: item.nickname });
+                        setSwitchConfirmOpen(true);
+                        return;
+                      }
+                      selectBaby(item.id);
+                    }}
+                    className="h-8 gap-1.5 px-3 text-xs"
+                  >
+                    <span>{item.nickname}</span>
+                  </QuickChip>
+                );
+              })}
+            </div>
+          ) : null}
+        </CardHeader>
+
+        <CardContent>
+          {baby ? (
             <form onSubmit={handleSaveBaby} noValidate className="space-y-4">
               <FieldGroup className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Field invalid={Boolean(fieldErrors.nickname)}>
@@ -195,6 +364,7 @@ function SettingsPage() {
                     id="settings-baby-name"
                     value={nickname}
                     maxLength={32}
+                    disabled={updateBaby.isPending}
                     aria-invalid={Boolean(fieldErrors.nickname)}
                     onChange={(event) => {
                       setNickname(event.target.value);
@@ -211,6 +381,7 @@ function SettingsPage() {
                     captionLayout="dropdown"
                     max={todayStr}
                     value={birthDate}
+                    disabled={updateBaby.isPending}
                     invalid={Boolean(fieldErrors.birthDate)}
                     ariaLabel="出生日期"
                     drawerTitle="宝宝出生日期"
@@ -230,6 +401,7 @@ function SettingsPage() {
                         key={g}
                         variant="outline"
                         active={gender === g}
+                        disabled={updateBaby.isPending}
                         onClick={() => {
                           setGender(g);
                         }}
@@ -250,6 +422,7 @@ function SettingsPage() {
                     min="0.3"
                     max="15"
                     inputMode="decimal"
+                    disabled={updateBaby.isPending}
                     placeholder="如 3.35"
                     className="tabular-nums"
                     aria-invalid={Boolean(fieldErrors.birthWeight)}
@@ -271,6 +444,7 @@ function SettingsPage() {
                     min="20"
                     max="100"
                     inputMode="decimal"
+                    disabled={updateBaby.isPending}
                     placeholder="如 50.0"
                     className="tabular-nums"
                     aria-invalid={Boolean(fieldErrors.birthHeight)}
@@ -288,7 +462,7 @@ function SettingsPage() {
                     <FieldLabel htmlFor="settings-default-clinic">常去接种门诊（可选）</FieldLabel>
                     <InfoPopover title="常去接种门诊说明" ariaLabel="查看常去接种门诊说明">
                       <p>
-                        设置后，在疫苗预约登记、打卡记录以及导出手机日历（.ics）时会自动带出该门诊；也可随时在疫苗页行内修改或清空。
+                        设置后，在疫苗预约登记、打卡记录以及导出手机日历时会自动带出该门诊；也可随时在疫苗页行内修改或清空。
                       </p>
                     </InfoPopover>
                   </div>
@@ -296,6 +470,7 @@ function SettingsPage() {
                     id="settings-default-clinic"
                     value={defaultClinicName}
                     maxLength={80}
+                    disabled={updateBaby.isPending}
                     placeholder="如 XX 街道社区卫生服务中心"
                     aria-invalid={Boolean(fieldErrors.defaultClinicName)}
                     onChange={(event) => {
@@ -340,10 +515,36 @@ function SettingsPage() {
                   </Button>
                 </div>
               </div>
+
+              <Separator className="my-2" />
+
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-destructive/25 bg-destructive-soft/35 p-4">
+                <div className="space-y-0.5">
+                  <p className="text-sm font-medium text-foreground">删除「{baby.nickname}」的档案</p>
+                  <p className="text-xs text-muted-foreground">
+                    将永久删除该宝宝的全部喂养、睡眠、护理、健康、生长与疫苗记录，无法恢复。
+                  </p>
+                </div>
+                <Button type="button" variant="destructive" size="sm" onClick={handleOpenDeleteDialog}>
+                  <Trash2 className="size-3.5" />
+                  删除宝宝档案
+                </Button>
+              </div>
             </form>
-          </CardContent>
-        </Card>
-      ) : null}
+          ) : (
+            <div className="flex flex-col items-start justify-between gap-3 rounded-2xl border border-dashed border-border/80 bg-muted/25 p-5 sm:flex-row sm:items-center">
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-foreground">当前账号尚未创建宝宝档案</p>
+                <p className="text-xs text-muted-foreground">创建宝宝档案后即可开始记录喂养、睡眠、成长与疫苗接种。</p>
+              </div>
+              <Button type="button" onClick={() => setAddDialogOpen(true)}>
+                <PlusIcon className="size-4" />
+                创建宝宝档案
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -461,24 +662,283 @@ function SettingsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>当前账号</CardTitle>
+          <CardTitle>账号与安全</CardTitle>
+          <CardDescription>管理当前登录账号与密码安全。</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-border/80 bg-muted/30 p-4">
             <div className="flex items-center gap-3">
               <Avatar className="size-10 rounded-2xl bg-primary/15 text-primary">
                 <AvatarFallback className="text-sm">{getInitials(username)}</AvatarFallback>
               </Avatar>
-              <p className="font-semibold text-foreground">{username}</p>
+              <div className="flex items-center gap-2">
+                <p className="font-semibold text-foreground">{username}</p>
+                {user?.role === 'admin' ? (
+                  <Badge variant="default" className="gap-1 font-normal">
+                    <ShieldCheck className="size-3" />
+                    管理员
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary" className="font-normal">
+                    家庭成员
+                  </Badge>
+                )}
+              </div>
             </div>
 
-            <Button variant="destructive" onClick={() => setConfirmOpen(true)}>
-              <LogOutIcon className="size-4" />
-              退出登录
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                aria-expanded={passwordSectionOpen}
+                onClick={() => setPasswordSectionOpen((open) => !open)}
+              >
+                <KeyRound className="size-4" />
+                修改密码
+                <ChevronDown
+                  className={cn('size-3.5 transition-transform duration-200', passwordSectionOpen && 'rotate-180')}
+                  aria-hidden="true"
+                />
+              </Button>
+              <Button variant="destructive" size="sm" onClick={() => setConfirmOpen(true)}>
+                <LogOutIcon className="size-4" />
+                退出登录
+              </Button>
+            </div>
           </div>
+
+          <Collapsible open={passwordSectionOpen} onOpenChange={setPasswordSectionOpen}>
+            <CollapsibleTrigger className="sr-only">展开或收起修改密码表单</CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="rounded-2xl border border-border/80 bg-background/60 p-4">
+                <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
+                  改密后当前设备不受影响，其他设备需使用新密码重新登录。
+                </p>
+                <form onSubmit={handleChangePassword} noValidate className="space-y-4">
+                  <FieldGroup className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                    <Field invalid={Boolean(passwordErrors.currentPassword)}>
+                      <FieldLabel htmlFor="settings-current-password">当前密码</FieldLabel>
+                      <InputGroup className="h-10">
+                        <InputGroupInput
+                          id="settings-current-password"
+                          type={showCurrentPassword ? 'text' : 'password'}
+                          value={currentPassword}
+                          disabled={passwordPending}
+                          autoComplete="current-password"
+                          placeholder="请输入当前密码"
+                          aria-invalid={Boolean(passwordErrors.currentPassword)}
+                          onChange={(event) => {
+                            setCurrentPassword(event.target.value);
+                            setPasswordSubmitError('');
+                            if (passwordErrors.currentPassword) {
+                              setPasswordErrors((prev) => ({ ...prev, currentPassword: undefined }));
+                            }
+                          }}
+                        />
+                        <InputGroupAddon align="inline-end">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            disabled={passwordPending}
+                            aria-label={showCurrentPassword ? '隐藏当前密码' : '显示当前密码'}
+                            aria-pressed={showCurrentPassword}
+                            onClick={() => setShowCurrentPassword((v) => !v)}
+                          >
+                            {showCurrentPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                          </Button>
+                        </InputGroupAddon>
+                      </InputGroup>
+                      <FieldError>{passwordErrors.currentPassword}</FieldError>
+                    </Field>
+
+                    <Field invalid={Boolean(passwordErrors.newPassword)}>
+                      <FieldLabel htmlFor="settings-new-password">新密码（至少 {PASSWORD_MIN_LENGTH} 位）</FieldLabel>
+                      <InputGroup className="h-10">
+                        <InputGroupInput
+                          id="settings-new-password"
+                          type={showNewPassword ? 'text' : 'password'}
+                          value={newPassword}
+                          disabled={passwordPending}
+                          autoComplete="new-password"
+                          placeholder="请输入新密码"
+                          aria-invalid={Boolean(passwordErrors.newPassword)}
+                          onChange={(event) => {
+                            setNewPassword(event.target.value);
+                            setPasswordSubmitError('');
+                            if (passwordErrors.newPassword) {
+                              setPasswordErrors((prev) => ({ ...prev, newPassword: undefined }));
+                            }
+                          }}
+                        />
+                        <InputGroupAddon align="inline-end">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            disabled={passwordPending}
+                            aria-label={showNewPassword ? '隐藏新密码' : '显示新密码'}
+                            aria-pressed={showNewPassword}
+                            onClick={() => setShowNewPassword((v) => !v)}
+                          >
+                            {showNewPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                          </Button>
+                        </InputGroupAddon>
+                      </InputGroup>
+                      <FieldError>{passwordErrors.newPassword}</FieldError>
+                      {!passwordErrors.newPassword ? <PasswordLengthHint value={newPassword} /> : null}
+                    </Field>
+
+                    <Field invalid={Boolean(passwordErrors.confirmPassword)}>
+                      <FieldLabel htmlFor="settings-confirm-password">确认新密码</FieldLabel>
+                      <InputGroup className="h-10">
+                        <InputGroupInput
+                          id="settings-confirm-password"
+                          type={showConfirmNewPassword ? 'text' : 'password'}
+                          value={confirmNewPassword}
+                          disabled={passwordPending}
+                          autoComplete="new-password"
+                          placeholder="请再次输入新密码"
+                          aria-invalid={Boolean(passwordErrors.confirmPassword)}
+                          onChange={(event) => {
+                            setConfirmNewPassword(event.target.value);
+                            setPasswordSubmitError('');
+                            if (passwordErrors.confirmPassword) {
+                              setPasswordErrors((prev) => ({ ...prev, confirmPassword: undefined }));
+                            }
+                          }}
+                        />
+                        <InputGroupAddon align="inline-end">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            disabled={passwordPending}
+                            aria-label={showConfirmNewPassword ? '隐藏确认密码' : '显示确认密码'}
+                            aria-pressed={showConfirmNewPassword}
+                            onClick={() => setShowConfirmNewPassword((v) => !v)}
+                          >
+                            {showConfirmNewPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                          </Button>
+                        </InputGroupAddon>
+                      </InputGroup>
+                      <FieldError>{passwordErrors.confirmPassword}</FieldError>
+                      {!passwordErrors.confirmPassword && confirmNewPassword && confirmNewPassword !== newPassword ? (
+                        <p className="text-xs text-destructive">两次输入的新密码不一致</p>
+                      ) : null}
+                    </Field>
+                  </FieldGroup>
+
+                  {passwordSubmitError ? (
+                    <Alert variant="destructive">
+                      <AlertCircle className="size-4" aria-hidden="true" />
+                      <AlertTitle>{passwordSubmitError}</AlertTitle>
+                    </Alert>
+                  ) : null}
+
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={passwordPending}
+                      onClick={() => setPasswordSectionOpen(false)}
+                    >
+                      收起
+                    </Button>
+                    <Button type="submit" size="sm" disabled={passwordPending}>
+                      {passwordPending ? (
+                        <Spinner className="size-4" aria-hidden="true" role="presentation" />
+                      ) : (
+                        <KeyRound className="size-4" />
+                      )}
+                      {passwordPending ? '更新中…' : '更新密码'}
+                    </Button>
+                  </div>
+                </form>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
         </CardContent>
       </Card>
+
+      <DeleteConfirmDialog
+        open={switchConfirmOpen}
+        onOpenChange={setSwitchConfirmOpen}
+        title="放弃当前未保存的修改？"
+        description={`你对「${baby?.nickname ?? ''}」的修改尚未保存，切换至「${pendingSwitchBaby?.nickname ?? ''}」后将丢失这些修改。`}
+        confirmLabel="放弃并切换"
+        destructive={false}
+        onConfirm={() => {
+          if (pendingSwitchBaby) {
+            selectBaby(pendingSwitchBaby.id);
+          }
+          setSwitchConfirmOpen(false);
+        }}
+      />
+
+      {/* 硬删除宝宝档案：要求准确输入宝宝昵称后方可确认 */}
+      <Dialog open={deleteDialogOpen} pending={deleteBaby.isPending} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>永久删除「{deleteTarget?.nickname ?? ''}」？</DialogTitle>
+            <DialogDescription>
+              此操作将永久删除该宝宝的档案以及全部喂养、睡眠、护理、健康、生长与疫苗接种记录，无法撤回。
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleConfirmDeleteBaby} noValidate className="flex flex-col gap-4">
+            <Field>
+              <FieldLabel htmlFor="delete-baby-confirm-input">
+                请输入宝宝昵称 <span className="font-semibold text-foreground">{deleteTarget?.nickname ?? ''}</span>{' '}
+                以确认删除
+              </FieldLabel>
+              <Input
+                id="delete-baby-confirm-input"
+                value={deleteConfirmInput}
+                disabled={deleteBaby.isPending}
+                placeholder={deleteTarget?.nickname ?? ''}
+                autoComplete="off"
+                onChange={(event) => {
+                  setDeleteConfirmInput(event.target.value);
+                  setDeleteError('');
+                }}
+              />
+            </Field>
+
+            {deleteError ? (
+              <Alert variant="destructive">
+                <AlertCircle className="size-4" aria-hidden="true" />
+                <AlertTitle>{deleteError}</AlertTitle>
+              </Alert>
+            ) : null}
+
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={deleteBaby.isPending}
+                onClick={() => setDeleteDialogOpen(false)}
+              >
+                取消
+              </Button>
+              <Button
+                type="submit"
+                variant="destructive"
+                disabled={deleteBaby.isPending || !deleteTarget || deleteConfirmInput !== deleteTarget.nickname}
+              >
+                {deleteBaby.isPending ? (
+                  <Spinner className="size-4" aria-hidden="true" role="presentation" />
+                ) : (
+                  <Trash2 className="size-4" />
+                )}
+                {deleteBaby.isPending ? '正在删除…' : '永久删除'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <DeleteConfirmDialog
         open={confirmOpen}

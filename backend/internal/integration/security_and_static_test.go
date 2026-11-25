@@ -33,7 +33,8 @@ func TestAPISecurityGuards(t *testing.T) {
 
 	app := NewTestApp(t)
 	s := app.Scenario()
-	s.EnsureBaby()
+	b := s.EnsureBaby()
+	feedURL := babyPath(b.ID, "/records/feeding")
 	client := app.Client()
 
 	// 1. 跨来源保护覆盖 POST/PUT/DELETE 全部写方法且零脏写；无 Origin 头由 SameSite=Strict Cookie 兜底允许正常写入。
@@ -44,7 +45,8 @@ func TestAPISecurityGuards(t *testing.T) {
 	}{
 		{"/api/auth/login", map[string]string{"username": defaultAdminUser, "password": defaultAdminPass}},
 		{"/api/auth/logout", nil},
-		{"/api/records/feeding", map[string]any{"subtype": "formula", "amount_ml": 100, "recorded_at": "2026-11-23T01:00:00Z"}},
+		{"/api/auth/change-password", map[string]string{"current_password": defaultAdminPass, "new_password": "new-cross-origin-secret"}},
+		{feedURL, map[string]any{"subtype": "formula", "amount_ml": 100, "recorded_at": "2026-11-23T01:00:00Z"}},
 	} {
 		evilClient.Post(t, tc.path, tc.body).RequireError(t, http.StatusForbidden, "跨来源")
 	}
@@ -53,7 +55,7 @@ func TestAPISecurityGuards(t *testing.T) {
 	}
 
 	// 省略 Origin 头发起合法写入（模拟同源直调或非浏览器客户端），随后验证跨源 PUT/DELETE 同样返回 403 且记录完好。
-	noOriginResp := client.WithOrigin("").Post(t, "/api/records/feeding", records.FeedingInput{
+	noOriginResp := client.WithOrigin("").Post(t, feedURL, records.FeedingInput{
 		Subtype:    records.FeedingSubtypeFormula,
 		AmountML:   ptr(100),
 		RecordedAt: "2026-11-23T01:00:00Z",
@@ -62,12 +64,12 @@ func TestAPISecurityGuards(t *testing.T) {
 		Record records.FeedingRecord `json:"record"`
 	}](t, noOriginResp, http.StatusCreated).Record
 
-	evilClient.Put(t, fmt.Sprintf("/api/records/feeding/%d", created.ID), records.FeedingInput{
+	evilClient.Put(t, fmt.Sprintf("%s/%d", feedURL, created.ID), records.FeedingInput{
 		Subtype:    records.FeedingSubtypeFormula,
 		AmountML:   ptr(180),
 		RecordedAt: "2026-11-23T01:00:00Z",
 	}).RequireError(t, http.StatusForbidden, "跨来源")
-	evilClient.Delete(t, fmt.Sprintf("/api/records/feeding/%d", created.ID)).
+	evilClient.Delete(t, fmt.Sprintf("%s/%d", feedURL, created.ID)).
 		RequireError(t, http.StatusForbidden, "跨来源")
 	if row := FirstRow[records.FeedingRecord](t, app, "id = ?", created.ID); row.AmountML == nil || *row.AmountML != 100 {
 		t.Fatalf("跨源 PUT/DELETE 被拒后原记录不应被篡改或删除：%+v", row)
@@ -76,7 +78,7 @@ func TestAPISecurityGuards(t *testing.T) {
 	// 2. 非 JSON Content-Type 返回 415，超限请求体返回 413。
 	client.DoRaw(t, http.MethodPost, "/api/auth/login", "text/plain", []byte("username=admin")).
 		RequireError(t, http.StatusUnsupportedMediaType, "")
-	client.DoRaw(t, http.MethodPost, "/api/records/feeding", "text/plain", []byte("subtype=formula")).
+	client.DoRaw(t, http.MethodPost, feedURL, "text/plain", []byte("subtype=formula")).
 		RequireError(t, http.StatusUnsupportedMediaType, "")
 
 	oversizedLogin, _ := json.Marshal(map[string]string{
@@ -92,7 +94,7 @@ func TestAPISecurityGuards(t *testing.T) {
 		"recorded_at": "2026-11-23T01:00:00Z",
 		"note":        strings.Repeat("a", 70*1024),
 	})
-	client.DoRaw(t, http.MethodPost, "/api/records/feeding", "application/json", oversizedRecord).
+	client.DoRaw(t, http.MethodPost, feedURL, "application/json", oversizedRecord).
 		RequireError(t, http.StatusRequestEntityTooLarge, "")
 
 	// 3. 登录畸形 JSON、业务未知字段（防拼写漂移静默吞掉）、尾随多余 JSON、非法方法 405 与未知路由 404 全部精确拦截。
@@ -110,7 +112,7 @@ func TestAPISecurityGuards(t *testing.T) {
 		`{"subtype":"formula","amount_ml":120,"recorded_at":"2026-11-23T01:10:00Z","unknown_field":1}`,
 		`{"subtype":"formula","amount_ml":120,"recorded_at":"2026-11-23T01:10:00Z"}{"extra":true}`,
 	} {
-		client.DoRaw(t, http.MethodPost, "/api/records/feeding", "application/json", []byte(raw)).
+		client.DoRaw(t, http.MethodPost, feedURL, "application/json", []byte(raw)).
 			RequireError(t, http.StatusBadRequest, "格式不正确")
 	}
 	if got := CountRows[records.FeedingRecord](t, app, ""); got != 1 {

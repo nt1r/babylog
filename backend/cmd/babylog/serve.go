@@ -64,12 +64,15 @@ func runServe(parentCtx context.Context) error {
 
 	// 3. 显式注入认证、宝宝档案、日常记录、首页看板、疫苗存储与静态资源配置，组装 HTTP 路由。
 	store := auth.NewStore(db.Gorm())
+	loginGuard := auth.NewLoginGuard()
 	babyStore := baby.NewStore(db.Gorm())
 	recordStore := records.NewStore(db.Gorm())
 	dashboardSvc := dashboard.NewService(recordStore)
 	vaccineStore := vaccines.NewStore(db.Gorm())
 	router := httpapi.NewRouter(httpapi.Options{
 		Store:           store,
+		LoginGuard:      loginGuard,
+		CookieSecure:    cfg.CookieSecure,
 		BabyStore:       babyStore,
 		RecordStore:     recordStore,
 		DashboardSvc:    dashboardSvc,
