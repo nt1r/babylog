@@ -6,7 +6,7 @@
 
 - **温暖克制**：保留暖米白与鼠尾草绿的品牌调性，搭配低饱和度绘本暖色与清晰细边框层级，兼顾现代仪表盘质感与亲子温度。
 - **昼夜护眼与单手友好**：同时提供浅色暖米白与深色深森绿灰护眼主题（支持跟随系统、首屏无闪烁注入）；移动端提供底部导航与底部滑出录入抽屉，保证核心入口单手可达、触控目标充足。
-- **语义优先**：业务代码禁止硬编码十六进制色值或 Tailwind 原始色阶（如 `bg-blue-500`、`text-gray-500`），统一使用语义 Token 与工具类。
+- **语义优先**：统一使用语义 Token 与 Tailwind v4 工具类承载色彩与层级，确保亮/暗主题自然适配（机械色阶与字号禁令由 `scripts/lint-guardrails.sh` 自动校验）。
 
 ## 色彩体系（OKLCH · 亮/暗双色）
 
@@ -72,7 +72,7 @@
 
 ## 样式组织与组件复用约定
 
-1. **基础 UI 原语与表单控件复用**：基础原语统一放在 `src/components/ui/`（基于 `@base-ui/react`、`react-day-picker` 与 `class-variance-authority`，配置见 [components.json](../components.json)）；新增表单与交互统一复用 [field.tsx](../src/components/ui/field.tsx)（`FieldLabel` `13px`）、[input.tsx](../src/components/ui/input.tsx)（默认 `text-base md:text-sm`，桌面紧凑覆写须带 `md:` 前缀，`type="number"` 自动隐藏原生微调箭头并拦截聚焦滚轮误改）、[checkbox.tsx](../src/components/ui/checkbox.tsx)、[date-picker.tsx](../src/components/ui/date-picker.tsx)（全端等宽 `YYYY-MM-DD`，桌面 `Popover` + 移动端嵌套 `Drawer`）、[time-picker.tsx](../src/components/ui/time-picker.tsx)（全端 24 小时制 `HH:mm`，桌面 `Popover` + 移动端嵌套 `Drawer`）、[date-time-input-row.tsx](../src/components/date-time-input-row.tsx)、[choice-controls.tsx](../src/components/ui/choice-controls.tsx)（`SegmentedControl` / `ChoiceCardButton` / `QuickChip`）、[alert.tsx](../src/components/ui/alert.tsx)（含 `size="compact"`）及 [collapsible.tsx](../src/components/ui/collapsible.tsx)，禁止在业务代码直接使用裸 `input[type="checkbox" | "date" | "time"]`、裸 `<details>`、Tailwind 原始色阶或 `100vh`/`h-screen`。
+1. **基础 UI 原语与表单控件复用**：基础原语统一放在 `src/components/ui/`（基于 `@base-ui/react`、`react-day-picker` 与 `class-variance-authority`，配置见 [components.json](../components.json)）；新增表单与交互统一复用 [field.tsx](../src/components/ui/field.tsx)（`FieldLabel` `13px`）、[input.tsx](../src/components/ui/input.tsx)（默认 `text-base md:text-sm`，桌面紧凑覆写须带 `md:` 前缀，`type="number"` 自动隐藏原生微调箭头并拦截聚焦滚轮误改）、[checkbox.tsx](../src/components/ui/checkbox.tsx)、[date-picker.tsx](../src/components/ui/date-picker.tsx)（全端等宽 `YYYY-MM-DD`，桌面 `Popover` + 移动端嵌套 `Drawer`）、[time-picker.tsx](../src/components/ui/time-picker.tsx)（全端 24 小时制 `HH:mm`，桌面 `Popover` + 移动端嵌套 `Drawer`）、[date-time-input-row.tsx](../src/components/date-time-input-row.tsx)、[choice-controls.tsx](../src/components/ui/choice-controls.tsx)（`SegmentedControl` / `ChoiceCardButton` / `QuickChip`）、[info-popover.tsx](../src/components/ui/info-popover.tsx)（点击式帮助提示，桌面 `Popover` + 移动端嵌套 `Drawer`，用于收敛长段注意事项与说明文案）、[dialog.tsx](../src/components/ui/dialog.tsx)（通用模态弹窗）、[kbd.tsx](../src/components/ui/kbd.tsx)（快捷键徽标）、[alert.tsx](../src/components/ui/alert.tsx)（含 `size="compact"`）及 [collapsible.tsx](../src/components/ui/collapsible.tsx)（移动端视口统一使用 `svh`/`dvh`，基础禁令由 `scripts/lint-guardrails.sh` 自动校验）。
 2. **主题启动无闪烁**：主题模式（`light` / `dark` / `system`）由 [src/scripts/theme-boot-script.ts](../src/scripts/theme-boot-script.ts) 在 HTML 渲染前同步写入 `<html>` 与 `<meta name="theme-color">`。
 3. **品牌与动效**：
    - UI 图标统一使用 `lucide-react`，线宽保持 `1.75–1.8`；

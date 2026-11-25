@@ -7,6 +7,7 @@ import {
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
+  RotateCcw,
   SaveIcon,
   ShareIcon,
   SmartphoneIcon,
@@ -21,6 +22,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { QuickChip } from '@/components/ui/choice-controls';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { InfoPopover } from '@/components/ui/info-popover';
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { toast } from '@/components/ui/toast';
@@ -89,19 +91,43 @@ function SettingsPage() {
   const [birthWeight, setBirthWeight] = useState('');
   const [birthHeight, setBirthHeight] = useState('');
   const [defaultClinicName, setDefaultClinicName] = useState('');
-  const [dirty, setDirty] = useState(false);
+  const [hydratedBabyId, setHydratedBabyId] = useState<number | null>(null);
   const [fieldErrors, setFieldErrors] = useState<BabyFormValidationErrors>({});
 
-  // 仅在尚未本地编辑时同步服务端档案，避免窗口切回触发 refetch 冲掉未保存修改。
+  // 与服务端档案实时比对计算真实的未保存修改态，避免改回原值或重复点击已选性别出现假阳性提示。
+  const isDirty = Boolean(
+    baby &&
+      hydratedBabyId === baby.id &&
+      (nickname !== baby.nickname ||
+        birthDate !== baby.birth_date ||
+        gender !== baby.gender ||
+        birthWeight !== (baby.birth_weight_kg !== null ? String(baby.birth_weight_kg) : '') ||
+        birthHeight !== (baby.birth_height_cm !== null ? String(baby.birth_height_cm) : '') ||
+        defaultClinicName !== (baby.default_clinic_name ?? '')),
+  );
+
+  // 仅在首次加载或无未保存本地修改时同步服务端档案，避免窗口切回触发 refetch 冲掉正在编辑的表单。
   useEffect(() => {
-    if (!baby || dirty) return;
+    if (!baby || isDirty) return;
     setNickname(baby.nickname);
     setBirthDate(baby.birth_date);
     setGender(baby.gender);
     setBirthWeight(baby.birth_weight_kg !== null ? String(baby.birth_weight_kg) : '');
     setBirthHeight(baby.birth_height_cm !== null ? String(baby.birth_height_cm) : '');
     setDefaultClinicName(baby.default_clinic_name ?? '');
-  }, [baby, dirty]);
+    setHydratedBabyId(baby.id);
+  }, [baby, isDirty]);
+
+  function handleResetBabyDraft() {
+    if (!baby) return;
+    setNickname(baby.nickname);
+    setBirthDate(baby.birth_date);
+    setGender(baby.gender);
+    setBirthWeight(baby.birth_weight_kg !== null ? String(baby.birth_weight_kg) : '');
+    setBirthHeight(baby.birth_height_cm !== null ? String(baby.birth_height_cm) : '');
+    setDefaultClinicName(baby.default_clinic_name ?? '');
+    setFieldErrors({});
+  }
 
   async function handleSaveBaby(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -123,8 +149,13 @@ function SettingsPage() {
 
     setFieldErrors({});
     try {
-      await updateBaby.mutateAsync(payload);
-      setDirty(false);
+      const updated = await updateBaby.mutateAsync(payload);
+      setNickname(updated.nickname);
+      setBirthDate(updated.birth_date);
+      setGender(updated.gender);
+      setBirthWeight(updated.birth_weight_kg !== null ? String(updated.birth_weight_kg) : '');
+      setBirthHeight(updated.birth_height_cm !== null ? String(updated.birth_height_cm) : '');
+      setDefaultClinicName(updated.default_clinic_name ?? '');
       toast.success('宝宝档案已更新');
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : '保存失败，请稍后重试');
@@ -166,7 +197,6 @@ function SettingsPage() {
                     maxLength={32}
                     aria-invalid={Boolean(fieldErrors.nickname)}
                     onChange={(event) => {
-                      setDirty(true);
                       setNickname(event.target.value);
                       if (fieldErrors.nickname) setFieldErrors((prev) => ({ ...prev, nickname: undefined }));
                     }}
@@ -185,7 +215,6 @@ function SettingsPage() {
                     ariaLabel="出生日期"
                     drawerTitle="宝宝出生日期"
                     onChange={(nextDate) => {
-                      setDirty(true);
                       setBirthDate(nextDate);
                       if (fieldErrors.birthDate) setFieldErrors((prev) => ({ ...prev, birthDate: undefined }));
                     }}
@@ -202,7 +231,6 @@ function SettingsPage() {
                         variant="outline"
                         active={gender === g}
                         onClick={() => {
-                          setDirty(true);
                           setGender(g);
                         }}
                         className="h-9 px-4 text-sm sm:h-9"
@@ -227,7 +255,6 @@ function SettingsPage() {
                     aria-invalid={Boolean(fieldErrors.birthWeight)}
                     value={birthWeight}
                     onChange={(event) => {
-                      setDirty(true);
                       setBirthWeight(event.target.value);
                       if (fieldErrors.birthWeight) setFieldErrors((prev) => ({ ...prev, birthWeight: undefined }));
                     }}
@@ -249,7 +276,6 @@ function SettingsPage() {
                     aria-invalid={Boolean(fieldErrors.birthHeight)}
                     value={birthHeight}
                     onChange={(event) => {
-                      setDirty(true);
                       setBirthHeight(event.target.value);
                       if (fieldErrors.birthHeight) setFieldErrors((prev) => ({ ...prev, birthHeight: undefined }));
                     }}
@@ -258,15 +284,21 @@ function SettingsPage() {
                 </Field>
 
                 <Field invalid={Boolean(fieldErrors.defaultClinicName)} className="sm:col-span-2">
-                  <FieldLabel htmlFor="settings-default-clinic">常去接种门诊（可选）</FieldLabel>
+                  <div className="flex items-center gap-1">
+                    <FieldLabel htmlFor="settings-default-clinic">常去接种门诊（可选）</FieldLabel>
+                    <InfoPopover title="常去接种门诊说明" ariaLabel="查看常去接种门诊说明">
+                      <p>
+                        设置后，在疫苗预约登记、打卡记录以及导出手机日历（.ics）时会自动带出该门诊；也可随时在疫苗页行内修改或清空。
+                      </p>
+                    </InfoPopover>
+                  </div>
                   <Input
                     id="settings-default-clinic"
                     value={defaultClinicName}
                     maxLength={80}
-                    placeholder="如 XX 街道社区卫生服务中心（疫苗预约/打卡时自动带出）"
+                    placeholder="如 XX 街道社区卫生服务中心"
                     aria-invalid={Boolean(fieldErrors.defaultClinicName)}
                     onChange={(event) => {
-                      setDirty(true);
                       setDefaultClinicName(event.target.value);
                       if (fieldErrors.defaultClinicName) {
                         setFieldErrors((prev) => ({ ...prev, defaultClinicName: undefined }));
@@ -277,15 +309,36 @@ function SettingsPage() {
                 </Field>
               </FieldGroup>
 
-              <div className="flex justify-end">
-                <Button type="submit" disabled={updateBaby.isPending}>
-                  {updateBaby.isPending ? (
-                    <Spinner className="size-4" aria-hidden="true" role="presentation" />
-                  ) : (
-                    <SaveIcon className="size-4" />
-                  )}
-                  {updateBaby.isPending ? '保存中…' : '保存档案'}
-                </Button>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-h-5">
+                  {isDirty ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-warning-soft-foreground">
+                      <span className="size-1.5 rounded-full bg-warning" aria-hidden="true" />
+                      有未保存的档案修改
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-2">
+                  {isDirty ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={updateBaby.isPending}
+                      onClick={handleResetBabyDraft}
+                    >
+                      <RotateCcw className="size-3.5" />
+                      还原
+                    </Button>
+                  ) : null}
+                  <Button type="submit" disabled={updateBaby.isPending}>
+                    {updateBaby.isPending ? (
+                      <Spinner className="size-4" aria-hidden="true" role="presentation" />
+                    ) : (
+                      <SaveIcon className="size-4" />
+                    )}
+                    {updateBaby.isPending ? '保存中…' : '保存档案'}
+                  </Button>
+                </div>
               </div>
             </form>
           </CardContent>
@@ -339,22 +392,18 @@ function SettingsPage() {
       {!standalone ? (
         <Card>
           <CardHeader>
-            <div className="flex items-center gap-2.5">
-              <span className="flex size-8 items-center justify-center rounded-xl bg-primary/12 text-primary">
-                <SmartphoneIcon className="size-4.5" strokeWidth={1.8} />
-              </span>
-              <div>
-                <CardTitle>添加到手机桌面</CardTitle>
-                <CardDescription>添加后可直接从桌面全屏打开，日常记录更顺手。</CardDescription>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-primary/12 text-primary">
+                  <SmartphoneIcon className="size-4.5" strokeWidth={1.8} />
+                </span>
+                <div>
+                  <CardTitle>添加到手机桌面</CardTitle>
+                  <CardDescription>像独立应用一样全屏打开，日常记录更顺手。</CardDescription>
+                </div>
               </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {canPromptInstall ? (
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/80 bg-muted/30 p-4">
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  将 BabyLog 添加到桌面，点击图标即可快速记录。
-                </p>
+
+              {canPromptInstall ? (
                 <Button
                   size="sm"
                   onClick={async () => {
@@ -371,31 +420,42 @@ function SettingsPage() {
                   <DownloadIcon className="size-4" />
                   添加到桌面
                 </Button>
-              </div>
-            ) : isIOS ? (
-              <div className="space-y-2 rounded-2xl border border-border/80 bg-muted/30 p-4 text-sm leading-relaxed text-muted-foreground">
-                <p className="font-medium text-foreground">在 Safari 添加到主屏幕：</p>
-                <ol className="list-decimal space-y-1 pl-4">
-                  <li>
-                    点击底部工具栏的
-                    <span className="mx-1 inline-flex items-center gap-0.5 font-medium text-foreground">
-                      <ShareIcon className="size-3.5" />
-                      分享
-                    </span>
-                    按钮；
-                  </li>
-                  <li>
-                    向下滑动选择<span className="mx-1 font-medium text-foreground">「添加到主屏幕」</span>
-                    ，再点击右上角「添加」即可。
-                  </li>
-                </ol>
-              </div>
-            ) : (
-              <p className="rounded-2xl border border-border/80 bg-muted/30 p-4 text-sm leading-relaxed text-muted-foreground">
-                在手机浏览器中选择「分享 → 添加到主屏幕」，或在桌面浏览器地址栏点击安装图标，即可像独立应用一样打开。
-              </p>
-            )}
-          </CardContent>
+              ) : (
+                <InfoPopover
+                  title="添加到主屏幕指南"
+                  label="查看步骤"
+                  triggerVariant="pill"
+                  align="end"
+                  triggerClassName="h-8 px-3"
+                >
+                  {isIOS ? (
+                    <div className="space-y-2">
+                      <p className="font-medium text-foreground">在 Safari 添加到主屏幕：</p>
+                      <ol className="list-decimal space-y-1.5 pl-4">
+                        <li>
+                          点击底部工具栏的
+                          <span className="mx-1 inline-flex items-center gap-0.5 font-medium text-foreground">
+                            <ShareIcon className="size-3.5" />
+                            分享
+                          </span>
+                          按钮；
+                        </li>
+                        <li>
+                          向下滑动选择<span className="mx-1 font-medium text-foreground">「添加到主屏幕」</span>
+                          ，再点击右上角「添加」即可。
+                        </li>
+                      </ol>
+                    </div>
+                  ) : (
+                    <p>
+                      在手机浏览器菜单中选择「分享 →
+                      添加到主屏幕」，或在桌面浏览器地址栏右侧点击安装图标，即可像独立应用一样打开。
+                    </p>
+                  )}
+                </InfoPopover>
+              )}
+            </div>
+          </CardHeader>
         </Card>
       ) : null}
 

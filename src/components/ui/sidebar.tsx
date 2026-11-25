@@ -244,7 +244,7 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<'li'>) {
 }
 
 const sidebarMenuButtonVariants = cva(
-  'flex w-full cursor-pointer items-center gap-2.5 overflow-hidden rounded-xl px-2.5 py-2 text-left text-sm font-medium text-sidebar-foreground/85 transition-colors outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring data-[active=true]:bg-sidebar-accent data-[active=true]:font-semibold data-[active=true]:text-sidebar-accent-foreground group-data-[collapsible=icon]:size-9 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0 [&>svg]:size-4 [&>svg]:shrink-0 [&>span:last-child]:truncate group-data-[collapsible=icon]:[&>span]:hidden',
+  'flex w-full cursor-pointer items-center gap-2.5 overflow-hidden rounded-xl px-2.5 py-2 text-left text-sm font-medium text-sidebar-foreground/85 transition-colors outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring data-[active=true]:bg-sidebar-accent data-[active=true]:font-semibold data-[active=true]:text-sidebar-accent-foreground group-data-[collapsible=icon]:size-9 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0 [&>svg]:size-4 [&>svg]:shrink-0 [&>[data-slot=sidebar-label]]:truncate group-data-[collapsible=icon]:[&>[data-slot=sidebar-label]]:hidden',
   {
     variants: {
       size: {
@@ -301,6 +301,19 @@ function SidebarMenuButton({
   );
 }
 
+function SidebarMenuBadge({ className, ...props }: React.ComponentProps<'span'>) {
+  return (
+    <span
+      data-slot="sidebar-menu-badge"
+      className={cn(
+        'pointer-events-none absolute right-2 flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-medium tabular-nums select-none group-data-[collapsible=icon]:hidden',
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
 function SidebarSeparator({ className, ...props }: React.ComponentProps<typeof Separator>) {
   return <Separator data-slot="sidebar-separator" className={cn('bg-sidebar-border', className)} {...props} />;
 }
@@ -314,6 +327,7 @@ export {
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,

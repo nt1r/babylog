@@ -10,6 +10,7 @@ import { Empty, EmptyActions, EmptyDescription, EmptyMedia, EmptyTitle } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/components/ui/toast';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { RecordCategory } from '@/lib/categories';
 import {
   type DailySummaryOf,
@@ -94,6 +95,15 @@ function RecordListError({ message, onRetry }: { readonly message: string; reado
   );
 }
 
+const TIMELINE_DOT_CLASS: Record<RecordCategory | 'warning' | 'destructive', string> = {
+  feeding: 'bg-feeding',
+  sleep: 'bg-sleep',
+  care: 'bg-care',
+  health: 'bg-health',
+  warning: 'bg-warning',
+  destructive: 'bg-destructive',
+};
+
 function RecordDayGroup({
   dateKey,
   summary,
@@ -109,13 +119,16 @@ function RecordDayGroup({
         <h2 className="text-sm font-semibold text-foreground">{formatDateGroupLabel(dateKey)}</h2>
         {summary ? <p className="text-xs text-muted-foreground tabular-nums">{summary}</p> : null}
       </div>
-      <div className="space-y-2">{children}</div>
+      <div className="relative space-y-2 pl-5 before:pointer-events-none before:absolute before:top-4 before:bottom-4 before:left-[0.4375rem] before:w-px before:bg-border/80">
+        {children}
+      </div>
     </section>
   );
 }
 
 function RecordRowCard({
   timeLabel,
+  dotTone,
   badge,
   title,
   subtitle,
@@ -125,6 +138,7 @@ function RecordRowCard({
   onDelete,
 }: {
   readonly timeLabel: string;
+  readonly dotTone: RecordCategory | 'warning' | 'destructive';
   readonly badge: ReactNode;
   readonly title: string;
   readonly subtitle?: string;
@@ -134,56 +148,85 @@ function RecordRowCard({
   readonly onDelete: () => void;
 }) {
   return (
-    <div className="flex flex-col gap-2.5 rounded-xl border border-border/80 bg-background/60 px-3.5 py-3 transition-colors hover:border-primary/40 sm:flex-row sm:items-center sm:justify-between">
-      <button
-        type="button"
-        onClick={onEdit}
-        className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <span className="mt-0.5 shrink-0 text-sm font-semibold text-muted-foreground tabular-nums">{timeLabel}</span>
-        <div className="min-w-0 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            {badge}
-            <span className="text-sm font-medium text-foreground tabular-nums">{title}</span>
-          </div>
-          {subtitle ? <p className="text-xs text-muted-foreground tabular-nums">{subtitle}</p> : null}
-          {note ? <p className="text-xs text-muted-foreground/90">备注：{note}</p> : null}
-        </div>
-      </button>
-
-      {/* 放大触控面积并在编辑与删除之间拉大安全间距，降低移动端单手误触删除风险 */}
-      <div className="flex shrink-0 items-center justify-end gap-2">
-        <Button
+    <div className="relative">
+      <span
+        aria-hidden="true"
+        className={cn(
+          'pointer-events-none absolute top-4.5 -left-[1.125rem] size-2.5 rounded-full ring-[3px] ring-card',
+          TIMELINE_DOT_CLASS[dotTone],
+        )}
+      />
+      <div className="flex flex-col gap-2.5 rounded-xl border border-border/80 bg-background/60 px-3.5 py-3 transition-colors hover:border-primary/40 sm:flex-row sm:items-center sm:justify-between">
+        <button
           type="button"
-          variant="ghost"
-          size="sm"
-          onClick={onDuplicate}
-          title="以当前时间再记一笔相同内容"
-          className="h-9 px-2.5 text-xs text-muted-foreground hover:text-foreground sm:h-8"
-        >
-          <CopyPlus className="size-3.5" />
-          再记一笔
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label="编辑记录"
           onClick={onEdit}
-          className="size-9 text-muted-foreground hover:text-foreground sm:size-8"
+          className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <PencilIcon className="size-4" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label="删除记录"
-          onClick={onDelete}
-          className="ml-2 size-9 text-muted-foreground hover:bg-destructive-soft/70 hover:text-destructive sm:ml-1.5 sm:size-8"
-        >
-          <Trash2Icon className="size-4" />
-        </Button>
+          <span className="mt-0.5 shrink-0 text-sm font-semibold text-muted-foreground tabular-nums">{timeLabel}</span>
+          <div className="min-w-0 space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              {badge}
+              <span className="text-sm font-medium text-foreground tabular-nums">{title}</span>
+            </div>
+            {subtitle ? <p className="text-xs text-muted-foreground tabular-nums">{subtitle}</p> : null}
+            {note ? <p className="line-clamp-2 text-xs text-muted-foreground/90">备注：{note}</p> : null}
+          </div>
+        </button>
+
+        {/* 放大触控面积并在编辑与删除之间拉大安全间距，降低移动端单手误触删除风险 */}
+        <div className="flex shrink-0 items-center justify-end gap-2">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={onDuplicate}
+                  className="h-9 px-2.5 text-xs text-muted-foreground hover:text-foreground sm:h-8"
+                />
+              }
+            >
+              <CopyPlus className="size-3.5" />
+              再记一笔
+            </TooltipTrigger>
+            <TooltipContent>以当前时间再记一笔相同内容</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="编辑记录"
+                  onClick={onEdit}
+                  className="size-9 text-muted-foreground hover:text-foreground sm:size-8"
+                />
+              }
+            >
+              <PencilIcon className="size-4" />
+            </TooltipTrigger>
+            <TooltipContent>编辑记录</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="删除记录"
+                  onClick={onDelete}
+                  className="ml-2 size-9 text-muted-foreground hover:bg-destructive-soft/70 hover:text-destructive sm:ml-1.5 sm:size-8"
+                />
+              }
+            >
+              <Trash2Icon className="size-4" />
+            </TooltipTrigger>
+            <TooltipContent>删除记录</TooltipContent>
+          </Tooltip>
+        </div>
       </div>
     </div>
   );
@@ -343,6 +386,7 @@ export function RecordListPage<C extends RecordCategory>({
                     <RecordRowCard
                       key={rec.id}
                       timeLabel={row.timeLabel}
+                      dotTone={row.badgeVariant ?? category}
                       badge={<Badge variant={row.badgeVariant ?? category}>{row.badge}</Badge>}
                       title={row.title}
                       subtitle={row.subtitle}

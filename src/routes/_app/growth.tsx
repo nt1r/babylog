@@ -3,16 +3,20 @@ import { AlertCircle, PencilIcon, PlusIcon, RotateCw, Ruler, Sparkles, Trash2Ico
 import { useState } from 'react';
 import { LittleMoments } from '@/components/brand/little-moments';
 import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog';
+import { GrowthTrendCard } from '@/components/growth/growth-trend-card';
 import { ListPageCard } from '@/components/list-page-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { QuickChip } from '@/components/ui/choice-controls';
 import { Empty, EmptyActions, EmptyDescription, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { InfoPopover } from '@/components/ui/info-popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/components/ui/toast';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useBabyProfileQuery } from '@/lib/baby';
 import { GROWTH_SUBTYPE_OPTIONS, HEALTH_SUBTYPE_LABELS } from '@/lib/categories';
 import {
   buildGrowthMetricTiles,
@@ -26,6 +30,7 @@ import {
   RANGE_LABELS,
   type RecordRange,
   useDeleteRecordMutation,
+  useGrowthChartQuery,
   useRecordListQuery,
 } from '@/lib/records';
 import { useGrowthRecordStore } from '@/stores/growth-record';
@@ -63,7 +68,9 @@ function GrowthPage() {
   const openEdit = useGrowthRecordStore((state) => state.openEdit);
 
   // 低频生长发育页关闭 60 秒轮询，仅在页面进入、记录提交或宝宝档案变更失效时刷新。
+  const babyQuery = useBabyProfileQuery();
   const summaryQuery = useDashboardSummaryQuery({ refetchInterval: false });
+  const growthChartQuery = useGrowthChartQuery();
   const listQuery = useRecordListQuery('health', {
     subtype: filter === 'all' ? 'growth,teeth' : filter,
     range,
@@ -73,6 +80,14 @@ function GrowthPage() {
   const growth = summaryQuery.data?.growth;
   const referenceDateStr = summaryQuery.data?.date;
   const { items, total } = flattenInfiniteList(listQuery.data);
+  const growthChartRecords = growthChartQuery.data?.items ?? [];
+  const growthChartError = growthChartQuery.isError || babyQuery.isError;
+  const growthChartErrorMessage =
+    growthChartQuery.error instanceof Error
+      ? growthChartQuery.error.message
+      : babyQuery.error instanceof Error
+        ? babyQuery.error.message
+        : undefined;
 
   function handleOpenCreate() {
     openCreate(filter === 'teeth' ? 'teeth' : 'growth');
@@ -112,13 +127,15 @@ function GrowthPage() {
       {/* 顶部生长概览卡 */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
-          <div className="space-y-0.5">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Sparkles className="size-4 text-health" strokeWidth={1.8} />
-              生长发育概览
-            </CardTitle>
-            <CardDescription>各体格指标独立取最新测量值，未手动记录时沿用宝宝出生体格</CardDescription>
-          </div>
+          <CardTitle className="flex items-center gap-1.5 text-base">
+            <Sparkles className="size-4 text-health" strokeWidth={1.8} />
+            <span>生长发育概览</span>
+            <InfoPopover title="体格指标统计说明" ariaLabel="查看生长发育指标统计说明">
+              <p>
+                体重、身高与头围各自独立取最新一次有效测量值；若某项尚未手动录入，则自动沿用宝宝档案中的出生体格数据作为基准。
+              </p>
+            </InfoPopover>
+          </CardTitle>
           <Button size="sm" variant="outline" className="hidden sm:inline-flex" onClick={() => openCreate('teeth')}>
             记一笔出牙
           </Button>
@@ -165,6 +182,21 @@ function GrowthPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* 生长发育曲线（体重 / 身高 / 头围 + WHO 参考区间） */}
+      <GrowthTrendCard
+        baby={babyQuery.data}
+        records={growthChartRecords}
+        isLoading={growthChartQuery.isLoading || babyQuery.isLoading}
+        isError={growthChartError}
+        errorMessage={growthChartErrorMessage}
+        hasMoreHistory={Boolean(growthChartQuery.data?.has_more)}
+        onRetry={() => {
+          void growthChartQuery.refetch();
+          if (babyQuery.isError) void babyQuery.refetch();
+        }}
+        onOpenCreate={() => openCreate('growth')}
+      />
 
       {/* 历史记录列表（默认全部时间，按日期展示） */}
       <ListPageCard
@@ -274,31 +306,47 @@ function GrowthPage() {
                         <Badge variant="health">{row.badge}</Badge>
                         <span className="text-sm font-medium text-foreground tabular-nums">{row.title}</span>
                       </div>
-                      {rec.note ? <p className="text-xs text-muted-foreground/90">备注：{rec.note}</p> : null}
+                      {rec.note ? (
+                        <p className="line-clamp-2 text-xs text-muted-foreground/90">备注：{rec.note}</p>
+                      ) : null}
                     </div>
                   </button>
 
                   <div className="flex shrink-0 items-center justify-end gap-2">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label="编辑记录"
-                      onClick={() => openEdit(rec)}
-                      className="size-9 text-muted-foreground hover:text-foreground sm:size-8"
-                    >
-                      <PencilIcon className="size-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label="删除记录"
-                      onClick={() => setDeleting(rec)}
-                      className="ml-2 size-9 text-muted-foreground hover:bg-destructive-soft/70 hover:text-destructive sm:ml-1.5 sm:size-8"
-                    >
-                      <Trash2Icon className="size-4" />
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label="编辑记录"
+                            onClick={() => openEdit(rec)}
+                            className="size-9 text-muted-foreground hover:text-foreground sm:size-8"
+                          />
+                        }
+                      >
+                        <PencilIcon className="size-4" />
+                      </TooltipTrigger>
+                      <TooltipContent>编辑记录</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label="删除记录"
+                            onClick={() => setDeleting(rec)}
+                            className="ml-2 size-9 text-muted-foreground hover:bg-destructive-soft/70 hover:text-destructive sm:ml-1.5 sm:size-8"
+                          />
+                        }
+                      >
+                        <Trash2Icon className="size-4" />
+                      </TooltipTrigger>
+                      <TooltipContent>删除记录</TooltipContent>
+                    </Tooltip>
                   </div>
                 </div>
               );

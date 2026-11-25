@@ -51,7 +51,7 @@ import {
 } from '@/lib/records';
 import { formatDurationMin, formatLocalTimeFromISO } from '@/lib/time';
 import { cn } from '@/lib/utils';
-import { useVaccinesOverviewQuery } from '@/lib/vaccines';
+import { useVaccinesOverviewQuery, VACCINE_OVERVIEW_STALE_MS } from '@/lib/vaccines';
 import { useGrowthRecordStore } from '@/stores/growth-record';
 import { useQuickRecordStore } from '@/stores/quick-record';
 
@@ -61,8 +61,6 @@ export const Route = createFileRoute('/_app/dashboard')({
 
 type DailyTrendPoint = DashboardTrends['daily'][number];
 type OneTapKind = 'formula' | 'pee' | 'poop' | 'bath';
-
-const VACCINE_DASHBOARD_STALE_MS = 5 * 60_000;
 
 interface OneTapPreset {
   readonly kind: OneTapKind;
@@ -187,7 +185,7 @@ function DashboardPage() {
   const trendsQuery = useDashboardTrendsQuery(7);
   const defaultsQuery = useSmartDefaultsQuery();
   // 与 60 秒轮询解耦：设置 5 分钟缓存，首次访问自动触发国家免疫规划懒初始化，疫苗变更后由 mutation 精确失效。
-  const vaccinesQuery = useVaccinesOverviewQuery(true, VACCINE_DASHBOARD_STALE_MS);
+  const vaccinesQuery = useVaccinesOverviewQuery(true, VACCINE_OVERVIEW_STALE_MS);
 
   const baby = babyQuery.data;
   const summary = summaryQuery.data;

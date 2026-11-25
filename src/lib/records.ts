@@ -364,6 +364,17 @@ export function useRecordListQuery<C extends RecordCategory>(category: C, params
   });
 }
 
+const GROWTH_CHART_LIMIT = 100;
+
+/** 生长曲线专用查询：一次拉取最多 100 条历史生长测量（对齐后端 MaxListLimit），避免受列表 20 条分页截断。 */
+export function useGrowthChartQuery() {
+  return useQuery({
+    queryKey: [...RECORDS_QUERY_KEY, 'health', 'growth-chart'],
+    queryFn: ({ signal }) =>
+      fetchRecordList('health', { subtype: 'growth', range: 'all', limit: GROWTH_CHART_LIMIT, offset: 0 }, signal),
+  });
+}
+
 export function useSaveRecordMutation() {
   const queryClient = useQueryClient();
   return useMutation({
