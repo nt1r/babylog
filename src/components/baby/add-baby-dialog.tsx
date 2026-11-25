@@ -1,3 +1,4 @@
+import { useNavigate } from '@tanstack/react-router';
 import { format } from 'date-fns';
 import { AlertCircle, Baby, ChevronDown, ChevronUp } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
@@ -31,6 +32,7 @@ const GENDER_OPTIONS: ReadonlyArray<BabyGender> = ['male', 'female', 'unknown'];
 
 /** 新增宝宝档案弹窗，供全局宝宝切换器与设置页复用；提交中锁定关闭防误触。 */
 export function AddBabyDialog({ open, onOpenChange, currentCount, onCreated }: AddBabyDialogProps) {
+  const navigate = useNavigate();
   const createBaby = useCreateBabyMutation();
   const todayStr = format(new Date(), 'yyyy-MM-dd');
 
@@ -81,7 +83,19 @@ export function AddBabyDialog({ open, onOpenChange, currentCount, onCreated }: A
     setFieldErrors({});
     try {
       const created = await createBaby.mutateAsync(payload);
-      toast.success(`已添加 ${created.nickname}`, '已自动切换至新宝宝档案。');
+      if (currentCount === 0) {
+        toast.success(`欢迎 ${created.nickname}`, '宝宝档案已创建，现在可以开始记录日常了。', {
+          timeout: 6000,
+          action: {
+            label: '前往首页',
+            onClick: () => {
+              void navigate({ to: '/dashboard' });
+            },
+          },
+        });
+      } else {
+        toast.success(`已添加 ${created.nickname}`, '已自动切换至新宝宝档案。');
+      }
       onOpenChange(false);
       onCreated?.(created);
     } catch (cause) {
@@ -100,7 +114,9 @@ export function AddBabyDialog({ open, onOpenChange, currentCount, onCreated }: A
             <div>
               <DialogTitle>添加宝宝档案</DialogTitle>
               <DialogDescription>
-                当前已创建 {currentCount} / {MAX_BABIES_PER_USER} 个宝宝档案
+                {currentCount >= MAX_BABIES_PER_USER - 2
+                  ? `已添加 ${currentCount} / ${MAX_BABIES_PER_USER} 位宝宝`
+                  : '填写基本信息即可开始记录，随时可在设置中修改'}
               </DialogDescription>
             </div>
           </div>

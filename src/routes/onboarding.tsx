@@ -1,8 +1,9 @@
-import { createFileRoute, Link, Navigate, useNavigate } from '@tanstack/react-router';
+import { createFileRoute, Navigate, useNavigate } from '@tanstack/react-router';
 import { format } from 'date-fns';
-import { AlertCircle, Baby, ChevronDown, ChevronUp, Settings2, Users } from 'lucide-react';
+import { AlertCircle, Baby, ChevronDown, ChevronUp } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
 import { ThemeSwitcher } from '@/components/app-shell/theme-switcher';
+import { UserMenu } from '@/components/app-shell/user-menu';
 import { BrandMark } from '@/components/brand/brand-mark';
 import { LittleMoments } from '@/components/brand/little-moments';
 import { Alert, AlertTitle } from '@/components/ui/alert';
@@ -117,17 +118,8 @@ function OnboardingPage() {
           </span>
         </div>
         <div className="flex items-center gap-1.5">
-          {user.role === 'admin' ? (
-            <Button variant="ghost" size="sm" render={<Link to="/admin/users" />} nativeButton={false}>
-              <Users className="size-4" />
-              <span className="hidden sm:inline">用户管理</span>
-            </Button>
-          ) : null}
-          <Button variant="ghost" size="sm" render={<Link to="/settings" />} nativeButton={false}>
-            <Settings2 className="size-4" />
-            <span className="hidden sm:inline">偏好与账号</span>
-          </Button>
           <ThemeSwitcher showTooltip={false} />
+          <UserMenu />
         </div>
       </header>
 

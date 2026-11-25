@@ -8,6 +8,7 @@ import {
   validateAndBuildGrowthSubmission,
 } from '@/components/growth/growth-codec';
 import { Alert } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { QuickChip, SegmentedControl } from '@/components/ui/choice-controls';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -15,6 +16,7 @@ import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { toast } from '@/components/ui/toast';
+import { useActiveBaby } from '@/lib/baby';
 import { GROWTH_SUBTYPE_OPTIONS } from '@/lib/categories';
 import { useGrowthSummaryQuery } from '@/lib/growth';
 import { useSaveRecordMutation } from '@/lib/records';
@@ -26,6 +28,7 @@ export function GrowthRecordDrawer() {
   const open = useGrowthRecordStore((state) => state.open);
   const intent = useGrowthRecordStore((state) => state.intent);
   const setOpen = useGrowthRecordStore((state) => state.setOpen);
+  const { babies, activeBaby } = useActiveBaby();
 
   const saveMutation = useSaveRecordMutation();
   // 复用生长非轮询概览选择器读取上次测量参考值与累计出牙数。
@@ -92,6 +95,13 @@ export function GrowthRecordDrawer() {
       }}
       title={drawerTitle}
       icon={<Ruler className="size-4.5" />}
+      badge={
+        babies.length > 1 && activeBaby ? (
+          <Badge variant="secondary" className="max-w-28 truncate font-normal">
+            {activeBaby.nickname}
+          </Badge>
+        ) : undefined
+      }
       footer={
         <div className="flex w-full flex-col gap-2.5">
           {formError ? (

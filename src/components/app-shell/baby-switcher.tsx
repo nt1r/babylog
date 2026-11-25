@@ -51,7 +51,8 @@ export function BabySwitcher({ variant }: BabySwitcherProps) {
   }
 
   if (variant === 'header') {
-    if (!activeBaby) return null;
+    // 移动端顶栏空间紧凑，仅在多娃家庭展示快捷切娃胶囊；单娃家庭在侧边栏与首页名片中已清晰可见。
+    if (!activeBaby || babies.length <= 1) return null;
     return (
       <>
         <DropdownMenu>
@@ -167,7 +168,9 @@ export function BabySwitcher({ variant }: BabySwitcherProps) {
 
             <DropdownMenuContent align="start" side={isDesktopCollapsed ? 'right' : 'bottom'} className="min-w-60">
               <DropdownMenuLabel>
-                宝宝档案（{babies.length} / {MAX_BABIES_PER_USER}）
+                {babies.length >= MAX_BABIES_PER_USER - 2
+                  ? `切换宝宝（${babies.length} / ${MAX_BABIES_PER_USER}）`
+                  : '切换宝宝'}
               </DropdownMenuLabel>
               <DropdownMenuGroup>
                 {babies.map((baby) => {

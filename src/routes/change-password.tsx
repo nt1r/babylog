@@ -4,6 +4,7 @@ import { type FormEvent, useEffect, useState } from 'react';
 import { ThemeSwitcher } from '@/components/app-shell/theme-switcher';
 import { BrandMark } from '@/components/brand/brand-mark';
 import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog';
+import { PasswordLengthHint } from '@/components/password-length-hint';
 import { Alert, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
@@ -86,7 +87,7 @@ function ChangePasswordPage() {
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
-      toast.success('密码已更新', '正在进入你的 BabyLog 空间。');
+      toast.success('密码已更新', '欢迎进入 BabyLog。');
       await navigate({ to: '/dashboard', replace: true });
     } catch (cause) {
       setSubmitError(cause instanceof Error ? cause.message : '修改密码失败，请稍后重试。');
@@ -127,8 +128,7 @@ function ChangePasswordPage() {
               </div>
             </div>
             <CardDescription className="leading-relaxed">
-              为保护宝宝与家庭记录隐私，首次登录或密码被管理员重置后，请先设置一个不少于 {PASSWORD_MIN_LENGTH}{' '}
-              位的个人密码再继续使用。
+              为保护宝宝和家人的隐私，请先设置一个不少于 {PASSWORD_MIN_LENGTH} 位的个人密码再继续使用。
             </CardDescription>
           </CardHeader>
 
@@ -215,6 +215,7 @@ function ChangePasswordPage() {
                     </InputGroupAddon>
                   </InputGroup>
                   <FieldError>{fieldErrors.newPassword}</FieldError>
+                  {!fieldErrors.newPassword ? <PasswordLengthHint value={newPassword} /> : null}
                 </Field>
 
                 <Field invalid={Boolean(fieldErrors.confirmPassword)}>
@@ -256,6 +257,9 @@ function ChangePasswordPage() {
                     </InputGroupAddon>
                   </InputGroup>
                   <FieldError>{fieldErrors.confirmPassword}</FieldError>
+                  {!fieldErrors.confirmPassword && confirmPassword && confirmPassword !== newPassword ? (
+                    <p className="text-xs text-destructive">两次输入的新密码不一致</p>
+                  ) : null}
                 </Field>
               </FieldGroup>
 

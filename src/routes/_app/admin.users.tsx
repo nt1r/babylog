@@ -87,11 +87,14 @@ function OneTimeCredentialPanel({ title, username, password, note, onClose }: On
   const [copied, setCopied] = useState(false);
 
   async function handleCopy() {
-    const text = `账号：${username}\n临时密码：${password}`;
+    const loginUrl = typeof window !== 'undefined' ? window.location.origin : '';
+    const text = loginUrl
+      ? `登录地址：${loginUrl}\n账号：${username}\n临时密码：${password}`
+      : `账号：${username}\n临时密码：${password}`;
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
-      toast.success('已复制账号与临时密码');
+      toast.success(loginUrl ? '已复制登录地址、账号与临时密码' : '已复制账号与临时密码');
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
       toast.error('无法自动复制', '请手动选中上方密码进行复制。');
@@ -262,9 +265,9 @@ function AdminUsersPage() {
     if (!trimmedUsername) {
       errors.username = '请输入用户名';
     } else if (createUsername !== trimmedUsername) {
-      errors.username = '用户名首尾不能包含空白字符';
+      errors.username = '用户名开头和结尾不能有空格';
     } else if (Array.from(trimmedUsername).length > USERNAME_MAX_LENGTH) {
-      errors.username = `用户名最多 ${USERNAME_MAX_LENGTH} 个字符`;
+      errors.username = `用户名最多 ${USERNAME_MAX_LENGTH} 个字`;
     }
 
     const passLen = Array.from(createPassword).length;
@@ -344,7 +347,7 @@ function AdminUsersPage() {
         <div className="space-y-1">
           <h1 className="text-xl font-semibold tracking-tight md:text-2xl">用户管理</h1>
           <p className="text-xs leading-relaxed text-muted-foreground sm:text-sm">
-            管理本实例家庭空间账号；为守护各家庭隐私，管理员仅可查看账号元数据，无法访问其他账号的宝宝或记录。
+            管理家庭账号；为保护隐私，管理员无法查看其他账号的宝宝档案和记录。
           </p>
         </div>
 
@@ -394,77 +397,92 @@ function AdminUsersPage() {
               </EmptyActions>
             </Empty>
           ) : (
-            <div className="divide-y divide-border/75 rounded-2xl border border-border/80">
-              {users.map((item) => {
-                const isItemAdmin = item.role === 'admin';
-                return (
-                  <div key={item.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <Avatar className="size-10 shrink-0 rounded-xl bg-primary/12 text-primary">
-                        <AvatarFallback className="rounded-xl text-sm">{getInitials(item.username)}</AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0 space-y-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="truncate font-semibold text-foreground">{item.username}</span>
-                          {isItemAdmin ? (
-                            <Badge variant="default" className="gap-1 font-normal">
-                              <ShieldCheck className="size-3" />
-                              管理员
-                            </Badge>
-                          ) : (
-                            <Badge variant="secondary" className="font-normal">
-                              普通用户
-                            </Badge>
-                          )}
-                          {renderStatusBadge(item)}
+            <div className="space-y-3">
+              <div className="divide-y divide-border/75 rounded-2xl border border-border/80">
+                {users.map((item) => {
+                  const isItemAdmin = item.role === 'admin';
+                  return (
+                    <div
+                      key={item.id}
+                      className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="flex min-w-0 items-center gap-3">
+                        <Avatar className="size-10 shrink-0 rounded-xl bg-primary/12 text-primary">
+                          <AvatarFallback className="rounded-xl text-sm">{getInitials(item.username)}</AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="truncate font-semibold text-foreground">{item.username}</span>
+                            {isItemAdmin ? (
+                              <Badge variant="default" className="gap-1 font-normal">
+                                <ShieldCheck className="size-3" />
+                                管理员
+                              </Badge>
+                            ) : (
+                              <Badge variant="secondary" className="font-normal">
+                                家庭成员
+                              </Badge>
+                            )}
+                            {renderStatusBadge(item)}
+                          </div>
+                          <p className="text-xs text-muted-foreground">创建于 {formatUserDate(item.created_at)}</p>
                         </div>
-                        <p className="text-xs text-muted-foreground">创建于 {formatUserDate(item.created_at)}</p>
+                      </div>
+
+                      <div className="flex shrink-0 flex-wrap items-center gap-2">
+                        {isItemAdmin ? (
+                          <span className="text-xs text-muted-foreground">当前管理员账号</span>
+                        ) : (
+                          <>
+                            <Button type="button" variant="outline" size="sm" onClick={() => openResetDialog(item)}>
+                              <KeyRound className="size-3.5" />
+                              重置密码
+                            </Button>
+                            <Button
+                              type="button"
+                              variant={item.disabled ? 'outline' : 'ghost'}
+                              size="sm"
+                              className={
+                                item.disabled
+                                  ? undefined
+                                  : 'text-destructive hover:bg-destructive-soft hover:text-destructive-soft-foreground'
+                              }
+                              onClick={() => openToggleDialog(item)}
+                            >
+                              {item.disabled ? <UserCheck className="size-3.5" /> : <UserX className="size-3.5" />}
+                              {item.disabled ? '启用' : '停用'}
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </div>
-
-                    <div className="flex shrink-0 flex-wrap items-center gap-2">
-                      {isItemAdmin ? (
-                        <span className="text-xs text-muted-foreground">管理员账号由本机 CLI 维护</span>
-                      ) : (
-                        <>
-                          <Button type="button" variant="outline" size="sm" onClick={() => openResetDialog(item)}>
-                            <KeyRound className="size-3.5" />
-                            重置密码
-                          </Button>
-                          <Button
-                            type="button"
-                            variant={item.disabled ? 'outline' : 'ghost'}
-                            size="sm"
-                            className={
-                              item.disabled
-                                ? undefined
-                                : 'text-destructive hover:bg-destructive-soft hover:text-destructive-soft-foreground'
-                            }
-                            onClick={() => openToggleDialog(item)}
-                          >
-                            {item.disabled ? <UserCheck className="size-3.5" /> : <UserX className="size-3.5" />}
-                            {item.disabled ? '启用' : '停用'}
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
+              {users.length <= 1 ? (
+                <p className="text-center text-xs text-muted-foreground">
+                  点击右上角「创建用户」即可为家人开通独立账号。
+                </p>
+              ) : null}
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* 创建用户弹窗 */}
-      <Dialog open={createOpen} pending={createUser.isPending} onOpenChange={setCreateOpen}>
+      {/* 创建用户弹窗：展示一次性临时密码时禁用遮罩误关，须主动点击「我已保存」或关闭按钮 */}
+      <Dialog
+        open={createOpen}
+        pending={createUser.isPending}
+        disablePointerDismissal={Boolean(createdCredential)}
+        onOpenChange={setCreateOpen}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>{createdCredential ? '账号已创建' : '创建家庭空间账号'}</DialogTitle>
+            <DialogTitle>{createdCredential ? '账号已创建' : '创建家庭账号'}</DialogTitle>
             <DialogDescription>
               {createdCredential
-                ? '请立即复制并安全交给对方，弹窗关闭后无法再次查看此临时密码。'
-                : '新账号默认在首次登录时强制修改为个人密码。'}
+                ? '请立即复制并交给对方，关闭后将无法再次查看此密码。'
+                : '对方首次登录时需要修改为自己的密码。'}
             </DialogDescription>
           </DialogHeader>
 
@@ -473,7 +491,7 @@ function AdminUsersPage() {
               title="临时密码仅展示这一次"
               username={createdCredential.username}
               password={createdCredential.password}
-              note="对方使用该账号登录后，系统会要求立即设置新的个人密码才能访问育儿空间。"
+              note="对方使用该账号登录后，需要先设置个人密码才能开始使用。"
               onClose={() => setCreateOpen(false)}
             />
           ) : (
@@ -486,7 +504,7 @@ function AdminUsersPage() {
                     value={createUsername}
                     maxLength={USERNAME_MAX_LENGTH}
                     disabled={createUser.isPending}
-                    placeholder="如 alice、王妈妈（不支持首尾空格）"
+                    placeholder="如 妈妈、alice"
                     autoCapitalize="none"
                     spellCheck={false}
                     aria-invalid={Boolean(createFieldErrors.username)}
@@ -554,8 +572,13 @@ function AdminUsersPage() {
         </DialogContent>
       </Dialog>
 
-      {/* 重置密码弹窗 */}
-      <Dialog open={resetOpen} pending={resetPassword.isPending} onOpenChange={setResetOpen}>
+      {/* 重置密码弹窗：展示一次性临时密码时禁用遮罩误关 */}
+      <Dialog
+        open={resetOpen}
+        pending={resetPassword.isPending}
+        disablePointerDismissal={Boolean(resetCredential)}
+        onOpenChange={setResetOpen}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>
@@ -563,8 +586,8 @@ function AdminUsersPage() {
             </DialogTitle>
             <DialogDescription>
               {resetCredential
-                ? '该用户的所有已登录会话已失效，请将新的临时密码交给对方。'
-                : '重置后该用户在所有设备上的登录状态会立即失效，且下次登录必须修改密码。'}
+                ? '该账号在其他设备上的登录已退出，请将新密码交给对方。'
+                : '重置后对方在所有设备上的登录都会退出，下次登录需先修改密码。'}
             </DialogDescription>
           </DialogHeader>
 
@@ -573,7 +596,7 @@ function AdminUsersPage() {
               title="新临时密码仅展示这一次"
               username={resetCredential.username}
               password={resetCredential.password}
-              note="弹窗关闭后系统不会保留明文密码，如需再次找回请重新执行重置。"
+              note="关闭后将无法再次查看此密码，如忘记可重新重置。"
               onClose={() => setResetOpen(false)}
             />
           ) : (
@@ -641,8 +664,8 @@ function AdminUsersPage() {
         }
         description={
           toggleTarget?.disabled
-            ? '重新启用后，该用户可使用原密码正常登录并访问其宝宝档案与历史记录。'
-            : '停用后该账号的全部活跃登录会话将立即失效且无法再登录，已记录的数据会保留；后续可随时重新启用。'
+            ? '重新启用后，对方可使用原密码正常登录并查看宝宝档案与记录。'
+            : '停用后对方将立即退出登录且无法再进入，已有记录会保留，随时可以重新启用。'
         }
         confirmLabel={setDisabled.isPending ? '处理中…' : toggleTarget?.disabled ? '确认启用' : '确认停用'}
         pending={setDisabled.isPending}

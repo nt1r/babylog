@@ -16,7 +16,7 @@ import {
 import { useActiveBabyId } from '@/lib/baby';
 import { cn } from '@/lib/utils';
 import { computeVaccineAttentionBadge, useVaccinesOverviewQuery, VACCINE_OVERVIEW_STALE_MS } from '@/lib/vaccines';
-import { getVisibleNavGroups } from '@/navigation/menu';
+import { getVisibleNavGroups, isAccountLevelRoute } from '@/navigation/menu';
 import { useAuthStore } from '@/stores/auth';
 
 export function AppSidebar() {
@@ -67,10 +67,13 @@ export function AppSidebar() {
               {group.items.map((item) => {
                 const Icon = item.icon;
                 const active = pathname === item.url || pathname.startsWith(`${item.url}/`);
+                const requiresBaby = activeBabyId === null && !isAccountLevelRoute(item.url);
                 const showVaccineBadge = item.id === 'vaccines' && activeBabyId !== null && vaccineAttentionCount > 0;
-                const tooltipText = showVaccineBadge
-                  ? `${item.title}（${vaccineAttentionCount} 项待关注）`
-                  : item.title;
+                const tooltipText = requiresBaby
+                  ? `${item.title}（需先添加宝宝档案）`
+                  : showVaccineBadge
+                    ? `${item.title}（${vaccineAttentionCount} 项待关注）`
+                    : item.title;
 
                 return (
                   <SidebarMenuItem key={item.id} className="relative flex items-center">
@@ -78,7 +81,10 @@ export function AppSidebar() {
                       isActive={active}
                       tooltip={tooltipText}
                       render={<Link to={item.url} onClick={() => setOpenMobile(false)} />}
-                      className={showVaccineBadge && !isDesktopCollapsed ? 'pr-9' : undefined}
+                      className={cn(
+                        showVaccineBadge && !isDesktopCollapsed && 'pr-9',
+                        requiresBaby && 'text-muted-foreground/75',
+                      )}
                     >
                       <Icon strokeWidth={1.8} />
                       <span data-slot="sidebar-label">{item.title}</span>

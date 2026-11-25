@@ -4,6 +4,7 @@ import {
   AlertCircle,
   Baby,
   CheckIcon,
+  ChevronDown,
   DownloadIcon,
   Eye,
   EyeOff,
@@ -23,12 +24,14 @@ import {
 import { type FormEvent, useEffect, useState } from 'react';
 import { AddBabyDialog } from '@/components/baby/add-baby-dialog';
 import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog';
+import { PasswordLengthHint } from '@/components/password-length-hint';
 import { Alert, AlertTitle } from '@/components/ui/alert';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { QuickChip } from '@/components/ui/choice-controls';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
@@ -116,14 +119,17 @@ function SettingsPage() {
   const [hydratedKey, setHydratedKey] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<BabyFormValidationErrors>({});
 
-  // 新增宝宝 & 删除宝宝确认弹窗（保留目标快照，避免删除成功后退场动画标题闪烁）
+  // 新增宝宝、切娃未保存确认 & 删除宝宝确认弹窗（保留目标快照，避免退场动画标题闪烁）
   const [addBabyOpen, setAddBabyOpen] = useState(false);
+  const [switchConfirmOpen, setSwitchConfirmOpen] = useState(false);
+  const [pendingSwitchBaby, setPendingSwitchBaby] = useState<{ id: number; nickname: string } | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; nickname: string } | null>(null);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
   const [deleteError, setDeleteError] = useState('');
 
-  // 自助修改密码状态
+  // 自助修改密码状态（折叠收纳在「账号与安全」卡片内，减轻移动端纵向滚动）
+  const [passwordSectionOpen, setPasswordSectionOpen] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
@@ -266,7 +272,8 @@ function SettingsPage() {
       setShowCurrentPassword(false);
       setShowNewPassword(false);
       setShowConfirmNewPassword(false);
-      toast.success('密码已修改', '其他设备的登录状态已同步失效。');
+      setPasswordSectionOpen(false);
+      toast.success('密码已修改', '其他设备需使用新密码重新登录。');
     } catch (cause) {
       setPasswordSubmitError(cause instanceof Error ? cause.message : '修改密码失败，请稍后重试。');
     } finally {
@@ -291,9 +298,11 @@ function SettingsPage() {
               </span>
               <div className="flex items-center gap-2">
                 <CardTitle>宝宝档案</CardTitle>
-                <Badge variant="secondary" className="font-normal tabular-nums">
-                  {babies.length} / {MAX_BABIES_PER_USER}
-                </Badge>
+                {babies.length > 1 ? (
+                  <Badge variant="secondary" className="font-normal tabular-nums">
+                    {babies.length} 位宝宝
+                  </Badge>
+                ) : null}
               </div>
             </div>
 
@@ -325,10 +334,15 @@ function SettingsPage() {
                     key={item.id}
                     variant="outline"
                     active={selected}
+                    disabled={updateBaby.isPending}
                     onClick={() => {
-                      if (!selected) {
-                        selectBaby(item.id);
+                      if (selected) return;
+                      if (isDirty) {
+                        setPendingSwitchBaby({ id: item.id, nickname: item.nickname });
+                        setSwitchConfirmOpen(true);
+                        return;
                       }
+                      selectBaby(item.id);
                     }}
                     className="h-8 gap-1.5 px-3 text-xs"
                   >
@@ -448,7 +462,7 @@ function SettingsPage() {
                     <FieldLabel htmlFor="settings-default-clinic">常去接种门诊（可选）</FieldLabel>
                     <InfoPopover title="常去接种门诊说明" ariaLabel="查看常去接种门诊说明">
                       <p>
-                        设置后，在疫苗预约登记、打卡记录以及导出手机日历（.ics）时会自动带出该门诊；也可随时在疫苗页行内修改或清空。
+                        设置后，在疫苗预约登记、打卡记录以及导出手机日历时会自动带出该门诊；也可随时在疫苗页行内修改或清空。
                       </p>
                     </InfoPopover>
                   </div>
@@ -648,154 +662,10 @@ function SettingsPage() {
 
       <Card>
         <CardHeader>
-          <div className="flex items-center gap-2.5">
-            <span className="flex size-8 items-center justify-center rounded-xl bg-primary/12 text-primary">
-              <KeyRound className="size-4.5" strokeWidth={1.8} />
-            </span>
-            <div>
-              <CardTitle>修改密码</CardTitle>
-              <CardDescription>修改密码后当前设备保持登录，同账号在其他设备上的登录状态会同步失效。</CardDescription>
-            </div>
-          </div>
+          <CardTitle>账号与安全</CardTitle>
+          <CardDescription>管理当前登录账号与密码安全。</CardDescription>
         </CardHeader>
-        <CardContent>
-          <form onSubmit={handleChangePassword} noValidate className="space-y-4">
-            <FieldGroup className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              <Field invalid={Boolean(passwordErrors.currentPassword)}>
-                <FieldLabel htmlFor="settings-current-password">当前密码</FieldLabel>
-                <InputGroup className="h-10">
-                  <InputGroupInput
-                    id="settings-current-password"
-                    type={showCurrentPassword ? 'text' : 'password'}
-                    value={currentPassword}
-                    disabled={passwordPending}
-                    autoComplete="current-password"
-                    placeholder="请输入当前密码"
-                    aria-invalid={Boolean(passwordErrors.currentPassword)}
-                    onChange={(event) => {
-                      setCurrentPassword(event.target.value);
-                      setPasswordSubmitError('');
-                      if (passwordErrors.currentPassword) {
-                        setPasswordErrors((prev) => ({ ...prev, currentPassword: undefined }));
-                      }
-                    }}
-                  />
-                  <InputGroupAddon align="inline-end">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      disabled={passwordPending}
-                      aria-label={showCurrentPassword ? '隐藏当前密码' : '显示当前密码'}
-                      aria-pressed={showCurrentPassword}
-                      onClick={() => setShowCurrentPassword((v) => !v)}
-                    >
-                      {showCurrentPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                    </Button>
-                  </InputGroupAddon>
-                </InputGroup>
-                <FieldError>{passwordErrors.currentPassword}</FieldError>
-              </Field>
-
-              <Field invalid={Boolean(passwordErrors.newPassword)}>
-                <FieldLabel htmlFor="settings-new-password">新密码（至少 {PASSWORD_MIN_LENGTH} 位）</FieldLabel>
-                <InputGroup className="h-10">
-                  <InputGroupInput
-                    id="settings-new-password"
-                    type={showNewPassword ? 'text' : 'password'}
-                    value={newPassword}
-                    disabled={passwordPending}
-                    autoComplete="new-password"
-                    placeholder="请输入新密码"
-                    aria-invalid={Boolean(passwordErrors.newPassword)}
-                    onChange={(event) => {
-                      setNewPassword(event.target.value);
-                      setPasswordSubmitError('');
-                      if (passwordErrors.newPassword) {
-                        setPasswordErrors((prev) => ({ ...prev, newPassword: undefined }));
-                      }
-                    }}
-                  />
-                  <InputGroupAddon align="inline-end">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      disabled={passwordPending}
-                      aria-label={showNewPassword ? '隐藏新密码' : '显示新密码'}
-                      aria-pressed={showNewPassword}
-                      onClick={() => setShowNewPassword((v) => !v)}
-                    >
-                      {showNewPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                    </Button>
-                  </InputGroupAddon>
-                </InputGroup>
-                <FieldError>{passwordErrors.newPassword}</FieldError>
-              </Field>
-
-              <Field invalid={Boolean(passwordErrors.confirmPassword)}>
-                <FieldLabel htmlFor="settings-confirm-password">确认新密码</FieldLabel>
-                <InputGroup className="h-10">
-                  <InputGroupInput
-                    id="settings-confirm-password"
-                    type={showConfirmNewPassword ? 'text' : 'password'}
-                    value={confirmNewPassword}
-                    disabled={passwordPending}
-                    autoComplete="new-password"
-                    placeholder="请再次输入新密码"
-                    aria-invalid={Boolean(passwordErrors.confirmPassword)}
-                    onChange={(event) => {
-                      setConfirmNewPassword(event.target.value);
-                      setPasswordSubmitError('');
-                      if (passwordErrors.confirmPassword) {
-                        setPasswordErrors((prev) => ({ ...prev, confirmPassword: undefined }));
-                      }
-                    }}
-                  />
-                  <InputGroupAddon align="inline-end">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      disabled={passwordPending}
-                      aria-label={showConfirmNewPassword ? '隐藏确认密码' : '显示确认密码'}
-                      aria-pressed={showConfirmNewPassword}
-                      onClick={() => setShowConfirmNewPassword((v) => !v)}
-                    >
-                      {showConfirmNewPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                    </Button>
-                  </InputGroupAddon>
-                </InputGroup>
-                <FieldError>{passwordErrors.confirmPassword}</FieldError>
-              </Field>
-            </FieldGroup>
-
-            {passwordSubmitError ? (
-              <Alert variant="destructive">
-                <AlertCircle className="size-4" aria-hidden="true" />
-                <AlertTitle>{passwordSubmitError}</AlertTitle>
-              </Alert>
-            ) : null}
-
-            <div className="flex justify-end">
-              <Button type="submit" disabled={passwordPending}>
-                {passwordPending ? (
-                  <Spinner className="size-4" aria-hidden="true" role="presentation" />
-                ) : (
-                  <KeyRound className="size-4" />
-                )}
-                {passwordPending ? '更新中…' : '更新密码'}
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>当前账号</CardTitle>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-border/80 bg-muted/30 p-4">
             <div className="flex items-center gap-3">
               <Avatar className="size-10 rounded-2xl bg-primary/15 text-primary">
@@ -816,13 +686,197 @@ function SettingsPage() {
               </div>
             </div>
 
-            <Button variant="destructive" onClick={() => setConfirmOpen(true)}>
-              <LogOutIcon className="size-4" />
-              退出登录
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                aria-expanded={passwordSectionOpen}
+                onClick={() => setPasswordSectionOpen((open) => !open)}
+              >
+                <KeyRound className="size-4" />
+                修改密码
+                <ChevronDown
+                  className={cn('size-3.5 transition-transform duration-200', passwordSectionOpen && 'rotate-180')}
+                  aria-hidden="true"
+                />
+              </Button>
+              <Button variant="destructive" size="sm" onClick={() => setConfirmOpen(true)}>
+                <LogOutIcon className="size-4" />
+                退出登录
+              </Button>
+            </div>
           </div>
+
+          <Collapsible open={passwordSectionOpen} onOpenChange={setPasswordSectionOpen}>
+            <CollapsibleTrigger className="sr-only">展开或收起修改密码表单</CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="rounded-2xl border border-border/80 bg-background/60 p-4">
+                <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
+                  改密后当前设备不受影响，其他设备需使用新密码重新登录。
+                </p>
+                <form onSubmit={handleChangePassword} noValidate className="space-y-4">
+                  <FieldGroup className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                    <Field invalid={Boolean(passwordErrors.currentPassword)}>
+                      <FieldLabel htmlFor="settings-current-password">当前密码</FieldLabel>
+                      <InputGroup className="h-10">
+                        <InputGroupInput
+                          id="settings-current-password"
+                          type={showCurrentPassword ? 'text' : 'password'}
+                          value={currentPassword}
+                          disabled={passwordPending}
+                          autoComplete="current-password"
+                          placeholder="请输入当前密码"
+                          aria-invalid={Boolean(passwordErrors.currentPassword)}
+                          onChange={(event) => {
+                            setCurrentPassword(event.target.value);
+                            setPasswordSubmitError('');
+                            if (passwordErrors.currentPassword) {
+                              setPasswordErrors((prev) => ({ ...prev, currentPassword: undefined }));
+                            }
+                          }}
+                        />
+                        <InputGroupAddon align="inline-end">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            disabled={passwordPending}
+                            aria-label={showCurrentPassword ? '隐藏当前密码' : '显示当前密码'}
+                            aria-pressed={showCurrentPassword}
+                            onClick={() => setShowCurrentPassword((v) => !v)}
+                          >
+                            {showCurrentPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                          </Button>
+                        </InputGroupAddon>
+                      </InputGroup>
+                      <FieldError>{passwordErrors.currentPassword}</FieldError>
+                    </Field>
+
+                    <Field invalid={Boolean(passwordErrors.newPassword)}>
+                      <FieldLabel htmlFor="settings-new-password">新密码（至少 {PASSWORD_MIN_LENGTH} 位）</FieldLabel>
+                      <InputGroup className="h-10">
+                        <InputGroupInput
+                          id="settings-new-password"
+                          type={showNewPassword ? 'text' : 'password'}
+                          value={newPassword}
+                          disabled={passwordPending}
+                          autoComplete="new-password"
+                          placeholder="请输入新密码"
+                          aria-invalid={Boolean(passwordErrors.newPassword)}
+                          onChange={(event) => {
+                            setNewPassword(event.target.value);
+                            setPasswordSubmitError('');
+                            if (passwordErrors.newPassword) {
+                              setPasswordErrors((prev) => ({ ...prev, newPassword: undefined }));
+                            }
+                          }}
+                        />
+                        <InputGroupAddon align="inline-end">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            disabled={passwordPending}
+                            aria-label={showNewPassword ? '隐藏新密码' : '显示新密码'}
+                            aria-pressed={showNewPassword}
+                            onClick={() => setShowNewPassword((v) => !v)}
+                          >
+                            {showNewPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                          </Button>
+                        </InputGroupAddon>
+                      </InputGroup>
+                      <FieldError>{passwordErrors.newPassword}</FieldError>
+                      {!passwordErrors.newPassword ? <PasswordLengthHint value={newPassword} /> : null}
+                    </Field>
+
+                    <Field invalid={Boolean(passwordErrors.confirmPassword)}>
+                      <FieldLabel htmlFor="settings-confirm-password">确认新密码</FieldLabel>
+                      <InputGroup className="h-10">
+                        <InputGroupInput
+                          id="settings-confirm-password"
+                          type={showConfirmNewPassword ? 'text' : 'password'}
+                          value={confirmNewPassword}
+                          disabled={passwordPending}
+                          autoComplete="new-password"
+                          placeholder="请再次输入新密码"
+                          aria-invalid={Boolean(passwordErrors.confirmPassword)}
+                          onChange={(event) => {
+                            setConfirmNewPassword(event.target.value);
+                            setPasswordSubmitError('');
+                            if (passwordErrors.confirmPassword) {
+                              setPasswordErrors((prev) => ({ ...prev, confirmPassword: undefined }));
+                            }
+                          }}
+                        />
+                        <InputGroupAddon align="inline-end">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            disabled={passwordPending}
+                            aria-label={showConfirmNewPassword ? '隐藏确认密码' : '显示确认密码'}
+                            aria-pressed={showConfirmNewPassword}
+                            onClick={() => setShowConfirmNewPassword((v) => !v)}
+                          >
+                            {showConfirmNewPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                          </Button>
+                        </InputGroupAddon>
+                      </InputGroup>
+                      <FieldError>{passwordErrors.confirmPassword}</FieldError>
+                      {!passwordErrors.confirmPassword && confirmNewPassword && confirmNewPassword !== newPassword ? (
+                        <p className="text-xs text-destructive">两次输入的新密码不一致</p>
+                      ) : null}
+                    </Field>
+                  </FieldGroup>
+
+                  {passwordSubmitError ? (
+                    <Alert variant="destructive">
+                      <AlertCircle className="size-4" aria-hidden="true" />
+                      <AlertTitle>{passwordSubmitError}</AlertTitle>
+                    </Alert>
+                  ) : null}
+
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={passwordPending}
+                      onClick={() => setPasswordSectionOpen(false)}
+                    >
+                      收起
+                    </Button>
+                    <Button type="submit" size="sm" disabled={passwordPending}>
+                      {passwordPending ? (
+                        <Spinner className="size-4" aria-hidden="true" role="presentation" />
+                      ) : (
+                        <KeyRound className="size-4" />
+                      )}
+                      {passwordPending ? '更新中…' : '更新密码'}
+                    </Button>
+                  </div>
+                </form>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
         </CardContent>
       </Card>
+
+      <DeleteConfirmDialog
+        open={switchConfirmOpen}
+        onOpenChange={setSwitchConfirmOpen}
+        title="放弃当前未保存的修改？"
+        description={`你对「${baby?.nickname ?? ''}」的修改尚未保存，切换至「${pendingSwitchBaby?.nickname ?? ''}」后将丢失这些修改。`}
+        confirmLabel="放弃并切换"
+        destructive={false}
+        onConfirm={() => {
+          if (pendingSwitchBaby) {
+            selectBaby(pendingSwitchBaby.id);
+          }
+          setSwitchConfirmOpen(false);
+        }}
+      />
 
       <AddBabyDialog open={addBabyOpen} onOpenChange={setAddBabyOpen} currentCount={babies.length} />
 

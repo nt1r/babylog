@@ -26,9 +26,10 @@ export function AdminHeader() {
   const openCommandPalette = useCommandPaletteStore((state) => state.setOpen);
   const activeBabyId = useActiveBabyId();
   const currentItem = findNavItemByPath(pathname);
+  const accountRoute = isAccountLevelRoute(pathname);
   // 仅在拥有宝宝档案且位于非列表/非账号级页面时展示顶栏「记一笔」，避免列表页双主按钮或无娃态误触发。
   const showGlobalQuickRecord =
-    activeBabyId !== null && !isAccountLevelRoute(pathname) && !currentItem?.category && currentItem?.id !== 'growth';
+    activeBabyId !== null && !accountRoute && !currentItem?.category && currentItem?.id !== 'growth';
   const modSymbol = getShortcutModifierSymbol();
 
   return (
@@ -50,7 +51,7 @@ export function AdminHeader() {
               </BreadcrumbItem>
             </BreadcrumbList>
           </Breadcrumb>
-          <BabySwitcher variant="header" />
+          {!accountRoute ? <BabySwitcher variant="header" /> : null}
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
