@@ -3,8 +3,9 @@
 
 set -eu
 
-# 1. Shell 脚本语法、可执行权限与 ShellCheck 静态检查
-for f in scripts/*.sh; do
+# 1. Shell 脚本与 Git Hooks 语法、可执行权限及 ShellCheck 静态检查
+for f in scripts/*.sh .githooks/*; do
+  [ -f "$f" ] || continue
   sh -n "$f"
   if [ ! -x "$f" ]; then
     printf 'Script is not executable (run chmod +x %s): %s\n' "$f" "$f" >&2
@@ -13,7 +14,7 @@ for f in scripts/*.sh; do
 done
 
 if command -v shellcheck >/dev/null 2>&1; then
-  shellcheck scripts/*.sh
+  shellcheck scripts/*.sh .githooks/*
 fi
 
 # 2. 全站最小字号不低于 12px
@@ -59,16 +60,38 @@ fi
 # 7. 前端业务模块未使用导出（死导出）检查
 node scripts/check-unused-exports.mjs
 
-# 8. OpenSpec 主规格与活动变更严格校验（CI 环境强制要求安装 openspec，禁止静默跳过）
+# 8. OpenSpec 主规格与活动变更严格校验 + 集成测试 Spec 引用一致性校验
 if command -v openspec >/dev/null 2>&1; then
   openspec validate --all --strict
 elif [ "${CI:-}" = "true" ]; then
   echo 'openspec CLI is required in CI to validate OpenSpec specs' >&2
   exit 1
 fi
+node scripts/check-spec-refs.mjs
 
 # 9. Go 后端跨表直接访问门禁（使用 .Table("...") 须同行标注 `// cross-table:` 说明事务意图，防止静默越界或重复查库）
 if grep -rnE --include='*.go' --exclude='*_test.go' '\.Table\("' backend/internal/ | grep -v '// cross-table:'; then
   echo 'Cross-table GORM .Table("...") access requires an inline // cross-table: justification comment' >&2
   exit 1
+fi
+
+# 10. 测试与临时验证产物防误提交门禁（前端不保留常驻自动化测试，临时预览与 SQLite 文件严禁入仓）
+bad_frontend_tests=$(find src -type f \( -name '*.test.ts' -o -name '*.test.tsx' -o -name '*.spec.ts' -o -name '*.spec.tsx' -o -name '*.test.js' -o -name '*.spec.js' -o -name '*__temp_preview__*' \) -o -type d -name '__tests__')
+if [ -n "$bad_frontend_tests" ]; then
+  printf 'Disallowed frontend test or temporary preview artifacts found under src/ (use system temp dir per docs/temp-verification.md):\n%s\n' "$bad_frontend_tests" >&2
+  exit 1
+fi
+
+bad_src_sqlite=$(find src backend scripts -type f \( -name '*.sqlite' -o -name '*.sqlite-wal' -o -name '*.sqlite-shm' \))
+if [ -n "$bad_src_sqlite" ]; then
+  printf 'SQLite database files must not reside under src/, backend/, or scripts/:\n%s\n' "$bad_src_sqlite" >&2
+  exit 1
+fi
+
+if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  tracked_disallowed=$(git ls-files -- '*.sqlite' '*.sqlite-wal' '*.sqlite-shm' '*__temp_preview__*' '*.test.ts' '*.test.tsx' '*.spec.ts' '*.spec.tsx' '*.test.js' '*.spec.js')
+  if [ -n "$tracked_disallowed" ]; then
+    printf 'Disallowed SQLite, frontend test, or temporary preview files must not be tracked by Git:\n%s\n' "$tracked_disallowed" >&2
+    exit 1
+  fi
 fi

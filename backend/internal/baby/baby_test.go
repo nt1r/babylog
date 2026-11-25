@@ -1,6 +1,7 @@
 package baby
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -16,9 +17,10 @@ func TestValidateAndNormalize(t *testing.T) {
 	now := time.Date(2026, 11, 23, 10, 0, 0, 0, shanghai)
 
 	validCases := []struct {
-		name string
-		in   UpsertInput
-		want string
+		name       string
+		in         UpsertInput
+		wantName   string
+		wantClinic *string
 	}{
 		{
 			name: "基本必填项并裁剪昵称空白",
@@ -27,7 +29,7 @@ func TestValidateAndNormalize(t *testing.T) {
 				BirthDate: "2026-07-15",
 				Gender:    "female",
 			},
-			want: "小汤圆",
+			wantName: "小汤圆",
 		},
 		{
 			name: "包含出生体重与身高以及当天出生",
@@ -38,7 +40,7 @@ func TestValidateAndNormalize(t *testing.T) {
 				BirthWeightKg: floatPtr(3.35),
 				BirthHeightCm: floatPtr(50.5),
 			},
-			want: "团子",
+			wantName: "团子",
 		},
 		{
 			name: "未知性别允许通过",
@@ -47,7 +49,7 @@ func TestValidateAndNormalize(t *testing.T) {
 				BirthDate: "2026-01-01",
 				Gender:    "unknown",
 			},
-			want: "小宝",
+			wantName: "小宝",
 		},
 		{
 			name: "合法常去接种门诊并裁剪空白",
@@ -57,17 +59,19 @@ func TestValidateAndNormalize(t *testing.T) {
 				Gender:            "female",
 				DefaultClinicName: strPtr("  阳光街道社区卫生服务中心  "),
 			},
-			want: "小宝",
+			wantName:   "小宝",
+			wantClinic: strPtr("阳光街道社区卫生服务中心"),
 		},
 		{
-			name: "空常去接种门诊允许清空",
+			name: "全空白常去接种门诊归一为空串",
 			in: UpsertInput{
 				Nickname:          "小宝",
 				BirthDate:         "2026-01-01",
 				Gender:            "female",
 				DefaultClinicName: strPtr("   "),
 			},
-			want: "小宝",
+			wantName:   "小宝",
+			wantClinic: strPtr(""),
 		},
 	}
 
@@ -77,8 +81,15 @@ func TestValidateAndNormalize(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if got.Nickname != tc.want {
-				t.Fatalf("expected nickname %q, got %q", tc.want, got.Nickname)
+			if got.Nickname != tc.wantName {
+				t.Fatalf("expected nickname %q, got %q", tc.wantName, got.Nickname)
+			}
+			if tc.wantClinic == nil {
+				if got.DefaultClinicName != nil {
+					t.Fatalf("expected nil DefaultClinicName, got %q", *got.DefaultClinicName)
+				}
+			} else if got.DefaultClinicName == nil || *got.DefaultClinicName != *tc.wantClinic {
+				t.Fatalf("expected normalized DefaultClinicName %q, got %v", *tc.wantClinic, got.DefaultClinicName)
 			}
 		})
 	}
@@ -132,8 +143,10 @@ func TestValidateAndNormalize(t *testing.T) {
 
 	for _, tc := range invalidCases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := ValidateAndNormalize(tc.in, now, shanghai); err == nil {
-				t.Errorf("expected validation error for %s, got nil", tc.name)
+			_, err := ValidateAndNormalize(tc.in, now, shanghai)
+			var valErr *ValidationError
+			if !errors.As(err, &valErr) || strings.TrimSpace(valErr.Message) == "" {
+				t.Errorf("expected non-empty *ValidationError for %s, got %T: %v", tc.name, err, err)
 			}
 		})
 	}

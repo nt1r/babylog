@@ -5,6 +5,7 @@
 ## 文档指针（按需读取）
 
 - **新增或修改前后端代码、维护中文注释或代码审查** → 先读 `CODING_STANDARDS.md`
+- **编写或审查测试、制定 OpenSpec `test-plan.md`** → 先读 `docs/testing-guide.md`
 - **架构设计、模块命名或核对业务术语** → 先读 `GLOSSARY.md`
 - **调整视觉样式、亮暗主题或分类色 Token** → 先读 `docs/design-system.md`
 - **验证前端纯 TS 模块，或新建页面/大幅调整布局后做免登录视觉自查（390px 移动 + 桌面亮暗态无头截屏审图）** → 先读 `docs/temp-verification.md`
@@ -13,7 +14,7 @@
 ## 工程硬边界
 
 - 后端根目录为 `backend/`；开发、静态检查、测试与发布全链路保持 `CGO_ENABLED=0`，静态检查覆盖所有构建标签（含 `embedwebui`），开发态与发布态内嵌资源互不污染，开发工具不写入主 `backend/go.mod`。
-- 前端包管理器固定为 `pnpm`，依赖版本保持精确固定；新增或修改路由后运行 `pnpm build:web` 重新生成 `src/routeTree.gen.ts` 并纳入版本控制（保证直接运行 `pnpm check`），避免手动编辑。
+- 前端包管理器固定为 `pnpm`，依赖版本保持精确固定；若当前 shell 的 `node -v` 与 `.node-version` 不一致，先经本机版本管理器切换（如 `nvs`：`. "${NVS_HOME:-$HOME/.nvs}/nvs.sh" && nvs use "$(cat .node-version)"`）；新增或修改路由后运行 `pnpm build:web` 重新生成 `src/routeTree.gen.ts` 并纳入版本控制（保证直接运行 `pnpm check`），避免手动编辑。
 
 ## 安全与隐私红线
 
@@ -31,8 +32,7 @@
 
 ## 测试范围与临时验证
 
-- **纳入 Git 管理的自动化测试仅限后端单元测试与集成测试**及其直接需要的 fixture；新增、改写或删除纳入 Git 的测试时，范围以对应 OpenSpec 变更的测试计划或用户明确要求为准。
-- **前端、移动端和端到端等其他自动化测试按临时验证执行**：临时脚本、数据、日志和截图必须放在系统临时目录（真实路径在任何 Git 工作区之外，仓库内未跟踪目录或 `.gitignore` 目录不满足要求）；使用隔离数据，不写入常驻脚本/Hook/CI，任务结束时清理。
+- 纳入 Git 的自动化测试仅限后端 Go 测试（范围以对应 OpenSpec `test-plan.md` 或用户要求为准）；前端与其他临时验证须放系统临时目录（Git 工作区外）、隔离数据并在结束时清理。分层、造数与写法细则见 `docs/testing-guide.md`。
 
 ## 执行与记录
 
