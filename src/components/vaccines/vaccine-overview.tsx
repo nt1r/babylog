@@ -24,11 +24,11 @@ import { Separator } from '@/components/ui/separator';
 import { Spinner } from '@/components/ui/spinner';
 import { VaccineCalendar } from '@/components/vaccines/vaccine-calendar';
 import { type BirthConfirmItem, getDefaultBirthDoseDate } from '@/components/vaccines/vaccine-codec';
+import { formatShortCnDate } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import {
   formatDaysUntilLabel,
   formatDoseShortTitle,
-  formatShortCnDate,
   getAlertBadgeMeta,
   type VaccineDose,
   type VaccineOverviewResponse,

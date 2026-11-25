@@ -16,7 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { toast } from '@/components/ui/toast';
 import { GROWTH_SUBTYPE_OPTIONS } from '@/lib/categories';
-import { useDashboardSummaryQuery } from '@/lib/dashboard';
+import { useGrowthSummaryQuery } from '@/lib/growth';
 import { useSaveRecordMutation } from '@/lib/records';
 import { formatLocalDateKey } from '@/lib/time';
 import { useGrowthRecordStore } from '@/stores/growth-record';
@@ -28,8 +28,8 @@ export function GrowthRecordDrawer() {
   const setOpen = useGrowthRecordStore((state) => state.setOpen);
 
   const saveMutation = useSaveRecordMutation();
-  // 复用既有看板/生长缓存读取上次测量参考值与累计出牙数，避免额外轮询。
-  const summaryQuery = useDashboardSummaryQuery({ enabled: open, refetchInterval: false });
+  // 复用生长非轮询概览选择器读取上次测量参考值与累计出牙数。
+  const summaryQuery = useGrowthSummaryQuery(open);
   const growthSummary = summaryQuery.data?.growth;
 
   const [form, setForm] = useState<GrowthFormState>(() => createGrowthFormState(intent, new Date()));

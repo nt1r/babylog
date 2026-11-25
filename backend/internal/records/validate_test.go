@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nt1r/babylog/backend/internal/timeutil"
 )
 
 func intPtr(v int) *int           { return &v }
@@ -183,10 +185,10 @@ func TestValidateHealth(t *testing.T) {
 
 func TestAccumulateSleepAndHealthSummary(t *testing.T) {
 	var sleepSum SleepDailySummary
-	AccumulateSleepSummary(&sleepSum, SleepRecord{Subtype: SleepSubtypeNight}, 360)
-	AccumulateSleepSummary(&sleepSum, SleepRecord{Subtype: SleepSubtypeNap}, 45)
-	AccumulateSleepSummary(&sleepSum, SleepRecord{Subtype: SleepSubtypeNap}, 0) // 忽略非正分钟数
-	AccumulateSleepSummary(&sleepSum, SleepRecord{Subtype: SleepSubtypeNight}, -10)
+	accumulateSleepSummary(&sleepSum, SleepRecord{Subtype: SleepSubtypeNight}, 360)
+	accumulateSleepSummary(&sleepSum, SleepRecord{Subtype: SleepSubtypeNap}, 45)
+	accumulateSleepSummary(&sleepSum, SleepRecord{Subtype: SleepSubtypeNap}, 0) // 忽略非正分钟数
+	accumulateSleepSummary(&sleepSum, SleepRecord{Subtype: SleepSubtypeNight}, -10)
 
 	if sleepSum.TotalMin != 405 || sleepSum.NightMin != 360 || sleepSum.NapCount != 1 {
 		t.Fatalf("unexpected sleep summary: %#v", sleepSum)
@@ -194,16 +196,67 @@ func TestAccumulateSleepAndHealthSummary(t *testing.T) {
 
 	var healthSum HealthDailySummary
 	// 按降序遍历时首条体温成为 LatestTempC
-	AccumulateHealthSummary(&healthSum, HealthRecord{Subtype: HealthSubtypeTemperature, TemperatureC: floatPtr(38.2)})
-	AccumulateHealthSummary(&healthSum, HealthRecord{Subtype: HealthSubtypeTemperature, TemperatureC: floatPtr(36.7)})
-	AccumulateHealthSummary(&healthSum, HealthRecord{Subtype: HealthSubtypeMedicine})
-	AccumulateHealthSummary(&healthSum, HealthRecord{Subtype: HealthSubtypeGrowth})
-	AccumulateHealthSummary(&healthSum, HealthRecord{Subtype: HealthSubtypeTeeth})
+	accumulateHealthSummary(&healthSum, HealthRecord{Subtype: HealthSubtypeTemperature, TemperatureC: floatPtr(38.2)})
+	accumulateHealthSummary(&healthSum, HealthRecord{Subtype: HealthSubtypeTemperature, TemperatureC: floatPtr(36.7)})
+	accumulateHealthSummary(&healthSum, HealthRecord{Subtype: HealthSubtypeMedicine})
+	accumulateHealthSummary(&healthSum, HealthRecord{Subtype: HealthSubtypeGrowth})
+	accumulateHealthSummary(&healthSum, HealthRecord{Subtype: HealthSubtypeTeeth})
 
 	if healthSum.TotalCount != 5 || healthSum.MedicineCount != 1 {
 		t.Fatalf("unexpected health counts: %#v", healthSum)
 	}
 	if healthSum.LatestTempC == nil || *healthSum.LatestTempC != 38.2 {
 		t.Fatalf("expected LatestTempC=38.2, got %v", healthSum.LatestTempC)
+	}
+}
+
+func TestSummarizeSleepByLocalDayAndMedicine(t *testing.T) {
+	shanghai, err := timeutil.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatalf("load shanghai: %v", err)
+	}
+
+	sleeps := []SleepRecord{
+		{
+			Subtype:   SleepSubtypeNight,
+			StartedAt: "2026-11-22T14:00:00Z", // 上海 22:00
+			EndedAt:   "2026-11-22T22:00:00Z", // 上海次日 06:00
+		},
+		{
+			Subtype:   SleepSubtypeNap,
+			StartedAt: "2026-11-23T05:00:00Z", // 上海 13:00
+			EndedAt:   "2026-11-23T05:45:00Z", // 上海 13:45
+		},
+		{
+			Subtype:   SleepSubtypeNap,
+			StartedAt: "invalid",
+			EndedAt:   "2026-11-23T06:00:00Z",
+		},
+	}
+	byDay := SummarizeSleepByLocalDay(sleeps, shanghai)
+	if got := byDay["2026-11-22"]; got.TotalMin != 120 || got.NightMin != 120 || got.NapCount != 0 {
+		t.Fatalf("unexpected 2026-11-22 summary: %+v", got)
+	}
+	if got := byDay["2026-11-23"]; got.TotalMin != 405 || got.NightMin != 360 || got.NapCount != 1 {
+		t.Fatalf("unexpected 2026-11-23 summary: %+v", got)
+	}
+
+	// 同时间戳按较大 ID 决胜，且最新一条药名为 nil 时应清空旧药名。
+	med := SummarizeMedicine([]HealthRecord{
+		{ID: 1, Subtype: HealthSubtypeTemperature, TemperatureC: floatPtr(37.2), RecordedAt: "2026-11-23T09:00:00Z"},
+		{ID: 2, Subtype: HealthSubtypeMedicine, MedicineName: strPtr("维生素 D3"), RecordedAt: "2026-11-23T08:00:00Z"},
+		{ID: 5, Subtype: HealthSubtypeMedicine, MedicineName: strPtr("布洛芬"), RecordedAt: "2026-11-23T08:00:00Z"},
+		{ID: 3, Subtype: HealthSubtypeMedicine, MedicineName: strPtr("早间钙剂"), RecordedAt: "2026-11-23T07:00:00Z"},
+	})
+	if med.Count != 3 || med.LatestName == nil || *med.LatestName != "布洛芬" || med.LatestAt == nil || *med.LatestAt != "2026-11-23T08:00:00Z" {
+		t.Fatalf("unexpected medicine summary: %+v", med)
+	}
+
+	medNilLatest := SummarizeMedicine([]HealthRecord{
+		{ID: 1, Subtype: HealthSubtypeMedicine, MedicineName: strPtr("维生素 D3"), RecordedAt: "2026-11-23T08:00:00Z"},
+		{ID: 2, Subtype: HealthSubtypeMedicine, MedicineName: nil, RecordedAt: "2026-11-23T09:00:00Z"},
+	})
+	if medNilLatest.Count != 2 || medNilLatest.LatestName != nil || medNilLatest.LatestAt == nil || *medNilLatest.LatestAt != "2026-11-23T09:00:00Z" {
+		t.Fatalf("expected nil LatestName when latest medicine has nil name, got %+v", medNilLatest)
 	}
 }

@@ -40,7 +40,7 @@ func openTestStores(t *testing.T, now time.Time) (*records.Store, int64) {
 	return records.NewStore(db.Gorm()).WithClock(clock), profile.ID
 }
 
-// TestReadWindowBoundariesAndOverlap 验证内部时间窗口快照查询的区间边界、跨夜重叠、按需忽略健康记录及多 babyID 隔离契约。
+// TestReadWindowBoundariesAndOverlap 验证内部时间窗口快照查询的区间边界、跨夜重叠及多 babyID 隔离契约。
 func TestReadWindowBoundariesAndOverlap(t *testing.T) {
 	ctx := context.Background()
 	shanghai, err := timeutil.LoadLocation("Asia/Shanghai")
@@ -99,7 +99,7 @@ func TestReadWindowBoundariesAndOverlap(t *testing.T) {
 		t.Fatalf("create health: %v", err)
 	}
 
-	snap, err := store.ReadWindow(ctx, babyID, dayStart, dayEnd, records.WindowOptions{IncludeHealth: true})
+	snap, err := store.ReadWindow(ctx, babyID, dayStart, dayEnd)
 	if err != nil {
 		t.Fatalf("ReadWindow: %v", err)
 	}
@@ -113,24 +113,15 @@ func TestReadWindowBoundariesAndOverlap(t *testing.T) {
 		t.Fatalf("expected 1 care & 1 health, got cares=%d healths=%d", len(snap.Cares), len(snap.Healths))
 	}
 
-	// IncludeHealth=false 时跳过健康记录查询
-	noHealthSnap, err := store.ReadWindow(ctx, babyID, dayStart, dayEnd, records.WindowOptions{IncludeHealth: false})
-	if err != nil {
-		t.Fatalf("ReadWindow without health: %v", err)
-	}
-	if len(noHealthSnap.Healths) != 0 || len(noHealthSnap.Feedings) != 1 {
-		t.Fatalf("expected 0 healths & 1 feeding when IncludeHealth=false, got healths=%d feedings=%d", len(noHealthSnap.Healths), len(noHealthSnap.Feedings))
-	}
-
 	// 空/反向窗口与无关 babyID 均应返回空快照
-	emptySnap, err := store.ReadWindow(ctx, babyID, dayEnd, dayStart, records.WindowOptions{IncludeHealth: true})
+	emptySnap, err := store.ReadWindow(ctx, babyID, dayEnd, dayStart)
 	if err != nil {
 		t.Fatalf("ReadWindow reversed: %v", err)
 	}
 	if len(emptySnap.Feedings) != 0 || len(emptySnap.Sleeps) != 0 || len(emptySnap.Cares) != 0 || len(emptySnap.Healths) != 0 {
 		t.Fatalf("expected empty snapshot for reversed window, got %#v", emptySnap)
 	}
-	otherSnap, err := store.ReadWindow(ctx, babyID+999, dayStart, dayEnd, records.WindowOptions{IncludeHealth: true})
+	otherSnap, err := store.ReadWindow(ctx, babyID+999, dayStart, dayEnd)
 	if err != nil {
 		t.Fatalf("ReadWindow other baby: %v", err)
 	}

@@ -6,18 +6,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
-  buildGrowthMetricTiles,
-  type DashboardGrowthSummary,
   type DashboardVaccineAlertBanner,
-  formatTeethSummaryText,
   type PostVaccineTempCue,
   selectDashboardVaccineCardFocus,
 } from '@/lib/dashboard';
+import { buildGrowthMetricTiles, formatTeethSummaryText, type GrowthSummary } from '@/lib/growth';
+import { formatShortCnDate } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import {
   formatDaysUntilLabel,
   formatDoseShortTitle,
-  formatShortCnDate,
   getAlertBadgeMeta,
   type VaccineOverviewResponse,
 } from '@/lib/vaccines';
@@ -271,7 +269,7 @@ export function DashboardVaccineCard({ overview, isLoading, isError, onRetry }: 
 }
 
 interface DashboardGrowthCardProps {
-  readonly growth: DashboardGrowthSummary | undefined;
+  readonly growth: GrowthSummary | undefined;
   readonly referenceDateStr: string | undefined;
   readonly isLoading: boolean;
   readonly isError: boolean;

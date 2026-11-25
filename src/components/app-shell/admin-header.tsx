@@ -16,29 +16,16 @@ import { Kbd } from '@/components/ui/kbd';
 import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { findNavItemByPath, resolveContextualCreateTarget } from '@/navigation/menu';
+import { findNavItemByPath, openContextualCreate } from '@/navigation/menu';
 import { useCommandPaletteStore } from '@/stores/command-palette';
-import { useGrowthRecordStore } from '@/stores/growth-record';
-import { useQuickRecordStore } from '@/stores/quick-record';
 
 export function AdminHeader() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const openCreate = useQuickRecordStore((state) => state.openCreate);
-  const openGrowthCreate = useGrowthRecordStore((state) => state.openCreate);
   const openCommandPalette = useCommandPaletteStore((state) => state.setOpen);
   const currentItem = findNavItemByPath(pathname);
   // 记录列表页（含生长发育页）自身卡片头部已提供带子类型上下文的主按钮，避免桌面端上下双主色按钮重复。
   const showGlobalQuickRecord = !currentItem?.category && currentItem?.id !== 'growth';
   const modSymbol = getShortcutModifierSymbol();
-
-  function handleQuickCreate() {
-    const action = resolveContextualCreateTarget(pathname);
-    if (action.target === 'growth') {
-      openGrowthCreate('growth');
-    } else {
-      openCreate(action.category, action.subtype);
-    }
-  }
 
   return (
     <header className="sticky top-0 z-10 shrink-0 border-b border-border/75 bg-background/85 pt-[env(safe-area-inset-top)] backdrop-blur-md md:rounded-t-2xl md:pt-0">
@@ -86,7 +73,9 @@ export function AdminHeader() {
           {showGlobalQuickRecord ? (
             <Tooltip>
               <TooltipTrigger
-                render={<Button size="sm" className="hidden sm:inline-flex" onClick={handleQuickCreate} />}
+                render={
+                  <Button size="sm" className="hidden sm:inline-flex" onClick={() => openContextualCreate(pathname)} />
+                }
               >
                 <PlusIcon className="size-4" />
                 <span>记一笔</span>

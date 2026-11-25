@@ -22,7 +22,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Kbd } from '@/components/ui/kbd';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
-import { NAV_GROUPS, resolveContextualCreateTarget } from '@/navigation/menu';
+import { NAV_GROUPS, openContextualCreate } from '@/navigation/menu';
 import { useCommandPaletteStore } from '@/stores/command-palette';
 import { useGrowthRecordStore } from '@/stores/growth-record';
 import { usePreferencesStore } from '@/stores/preferences';
@@ -100,18 +100,13 @@ export function CommandPalette() {
       if (!mod && !event.altKey && !event.shiftKey && key === 'n') {
         if (isEditableTarget(event.target) || hasOpenOverlay()) return;
         event.preventDefault();
-        const action = resolveContextualCreateTarget(pathname);
-        if (action.target === 'growth') {
-          openGrowthCreate('growth');
-        } else {
-          openQuickCreate(action.category, action.subtype);
-        }
+        openContextualCreate(pathname);
       }
     }
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [open, toggle, pathname, openQuickCreate, openGrowthCreate]);
+  }, [open, toggle, pathname]);
 
   useEffect(() => {
     if (!open) return;
