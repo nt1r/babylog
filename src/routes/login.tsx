@@ -51,6 +51,7 @@ function LoginPage() {
     document.title = '登录 · BabyLog';
   }, []);
 
+  // 延迟 150ms 再展示会话恢复加载指示器，避免本地快速探测时出现短暂闪烁。
   useEffect(() => {
     if (!restoring) {
       setShowRestoreSpinner(false);

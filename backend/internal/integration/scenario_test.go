@@ -27,6 +27,7 @@ type BabyParams struct {
 	Timezone      string
 }
 
+// EnsureBaby 经 POST /api/baby 创建单宝宝档案并断言返回 201（仅用于首次建档，非幂等、不可重复调用）。
 func (s *Scenario) EnsureBaby(params ...BabyParams) baby.Profile {
 	s.t.Helper()
 
@@ -201,6 +202,7 @@ func (s *Scenario) AddTemperature(tempC float64, recordedAt string) records.Heal
 	})
 }
 
+// AddMedicine 写入用药记录；dosage 留空时按未填写（nil）处理。
 func (s *Scenario) AddMedicine(name, dosage, recordedAt string) records.HealthRecord {
 	s.t.Helper()
 	in := records.HealthInput{
@@ -281,6 +283,7 @@ func (s *Scenario) AddCustomVaccine(in vaccines.CreateCustomInput, tz ...string)
 	}](s.t, resp).Doses
 }
 
+// firstString 与 resolveTZ 配合方法签名中的可变参数（...string）模拟 Go 可选参数：未传时回退空串或默认时区。
 func firstString(values []string) string {
 	if len(values) == 0 {
 		return ""

@@ -7,23 +7,28 @@ import (
 )
 
 const (
-	MaxNoteLength           = 500
-	DefaultListLimit        = 20
-	MaxListLimit            = 100
-	MinMilkML               = 1
-	MaxMilkML               = 1000
-	MinBreastMin            = 1
-	MaxBreastMin            = 180
-	MinSleepMin             = 1
-	MaxSleepMin             = 24 * 60
-	MinTemperatureC         = 34.0
-	MaxTemperatureC         = 43.0
-	MinWeightKg             = 0.3
-	MaxWeightKg             = 40.0
-	MinHeightCm             = 20.0
-	MaxHeightCm             = 150.0
-	MinHeadCm               = 20.0
-	MaxHeadCm               = 70.0
+	// 文本长度与列表分页边界（MaxListLimit 与前端列表/生长曲线查询上限对齐）。
+	MaxNoteLength    = 500
+	DefaultListLimit = 20
+	MaxListLimit     = 100
+
+	// 喂养、睡眠与健康体格字段的业务合法区间边界。
+	MinMilkML       = 1
+	MaxMilkML       = 1000
+	MinBreastMin    = 1
+	MaxBreastMin    = 180
+	MinSleepMin     = 1
+	MaxSleepMin     = 24 * 60
+	MinTemperatureC = 34.0
+	MaxTemperatureC = 43.0
+	MinWeightKg     = 0.3
+	MaxWeightKg     = 40.0
+	MinHeightCm     = 20.0
+	MaxHeightCm     = 150.0
+	MinHeadCm       = 20.0
+	MaxHeadCm       = 70.0
+
+	// 无历史记录时智能默认值使用的冷启动初始数值。
 	DefaultStarterMilk      = 90
 	DefaultStarterBreastMin = 15
 	DefaultStarterNapMin    = 60
@@ -53,6 +58,7 @@ type ValidationError struct {
 	Message string
 }
 
+// Error 实现内置 error 接口，返回可直接展示给前端的中文校验提示。
 func (e *ValidationError) Error() string { return e.Message }
 
 // ErrNotFound 表示目标记录不存在，映射为 HTTP 404。
@@ -60,7 +66,7 @@ var ErrNotFound = errors.New("记录不存在或已被删除")
 
 // FeedingRecord 对应 SQLite 中的 feeding_records 表。
 // 各子类型专属字段均使用指针类型（*string / *int），以区分“该子类型不适用（SQL NULL / JSON null）”与 Go 零值；
-// 其余记录模型（CareRecord、HealthRecord）遵循同一约定，后续不再重复说明。
+// 其余记录模型（[CareRecord]、[HealthRecord]）遵循同一约定，后续不再重复说明。
 type FeedingRecord struct {
 	ID          int64   `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
 	BabyID      int64   `gorm:"column:baby_id;not null" json:"-"`
@@ -78,6 +84,7 @@ type FeedingRecord struct {
 	UpdatedAt   string  `gorm:"column:updated_at;not null" json:"-"`
 }
 
+// TableName 指定 GORM 映射的底层 SQLite 表名为 feeding_records。
 func (FeedingRecord) TableName() string { return "feeding_records" }
 
 // FeedingInput 表示创建或更新喂养记录的输入载荷。
@@ -116,6 +123,7 @@ type SleepRecord struct {
 	UpdatedAt   string `gorm:"column:updated_at;not null" json:"-"`
 }
 
+// TableName 指定 GORM 映射的底层 SQLite 表名为 sleep_records。
 func (SleepRecord) TableName() string { return "sleep_records" }
 
 // SleepInput 表示创建或更新睡眠记录的输入载荷。
@@ -148,6 +156,7 @@ type CareRecord struct {
 	UpdatedAt        string  `gorm:"column:updated_at;not null" json:"-"`
 }
 
+// TableName 指定 GORM 映射的底层 SQLite 表名为 care_records。
 func (CareRecord) TableName() string { return "care_records" }
 
 // CareInput 表示创建或更新护理记录的输入载荷。
@@ -170,7 +179,8 @@ type CareDailySummary struct {
 	OtherCount int `json:"other_count"`
 }
 
-// HealthRecord 对应 SQLite 中的 health_records 表。
+// HealthRecord 对应 SQLite 中的 health_records 表，
+// 同时承载健康观察（temperature / medicine）与生长发育（growth / teeth）两类工作区数据。
 type HealthRecord struct {
 	ID             int64    `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
 	BabyID         int64    `gorm:"column:baby_id;not null" json:"-"`
@@ -188,6 +198,7 @@ type HealthRecord struct {
 	UpdatedAt      string   `gorm:"column:updated_at;not null" json:"-"`
 }
 
+// TableName 指定 GORM 映射的底层 SQLite 表名为 health_records。
 func (HealthRecord) TableName() string { return "health_records" }
 
 // HealthInput 表示创建或更新健康与生长记录的输入载荷。
@@ -204,7 +215,7 @@ type HealthInput struct {
 	Note           string   `json:"note"`
 }
 
-// HealthDailySummary 表示某一本地自然日的健康记录小计。
+// HealthDailySummary 表示某一本地自然日的健康与生长记录小计。
 type HealthDailySummary struct {
 	TotalCount    int      `json:"total_count"`
 	MedicineCount int      `json:"medicine_count"`
@@ -216,7 +227,7 @@ type HealthDailySummary struct {
 // ListFilter 表示记录列表查询的筛选与分页参数。
 type ListFilter struct {
 	Subtype string
-	Range   string // today | 7d | 30d | all
+	Range   string // 日期范围枚举：today / 7d / 30d / all
 	Loc     *time.Location
 	Limit   int
 	Offset  int
@@ -281,7 +292,7 @@ type SmartDefaults struct {
 	Care    CareDefaults    `json:"care"`
 }
 
-// WindowOptions 控制 ReadWindow 是否一并加载健康记录（看板今日用药与多日节律均开启，按需查询可关闭）。
+// WindowOptions 控制 [Store.ReadWindow] 是否一并加载健康与生长记录（看板今日用药与多日节律均开启，按需查询可关闭）。
 type WindowOptions struct {
 	IncludeHealth bool
 }

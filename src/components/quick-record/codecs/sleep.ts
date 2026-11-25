@@ -33,6 +33,7 @@ export function computeSleepDurationMin(
   return Math.round((new Date(et).getTime() - new Date(st).getTime()) / 60000);
 }
 
+/** 按当前时段猜测白天小睡/夜间整觉，并结合习惯中位数时长倒推默认入睡时刻。 */
 export function createDefaultSleepForm(now: Date, initialSubtype?: string, defaults?: SmartDefaults): SleepFormState {
   const subtype: SleepSubtype =
     initialSubtype === 'nap' || initialSubtype === 'night' ? initialSubtype : guessSleepSubtype(now);
@@ -75,6 +76,7 @@ export function sleepFormFromRecord(record: SleepRecord, now: Date, useOriginalT
   };
 }
 
+/** 校验睡眠起止时刻与 1 分钟至 24 小时合法时长区间并组装提交载荷。 */
 export function validateAndBuildSleepSubmission(state: SleepFormState, ctx: SleepBuildContext): CategoryBuildResult {
   const startedAt = combineLocalDateTimeToISO(state.startDate, state.startTime);
   const endedAt = combineLocalDateTimeToISO(state.endDate, state.endTime);

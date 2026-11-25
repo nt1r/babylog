@@ -354,6 +354,7 @@ export function flattenInfiniteList<T extends { id: number }, S>(
   return { items, total, dailySummaries };
 }
 
+/** 四类日常记录通用分页列表查询：基于 useInfiniteQuery 按 offset 递增拉取 PAGE_SIZE 条记录。 */
 export function useRecordListQuery<C extends RecordCategory>(category: C, params: InfiniteListParams) {
   return useInfiniteQuery({
     queryKey: [...RECORDS_QUERY_KEY, category, params],

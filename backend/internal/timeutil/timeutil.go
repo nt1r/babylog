@@ -25,7 +25,7 @@ const MaxFutureSkew = 5 * time.Minute
 // ErrInvalidTimezone 表示传入了无法识别的 IANA 时区名称。
 var ErrInvalidTimezone = errors.New("时区参数无效")
 
-// LoadLocation 解析 IANA 时区名称；空字符串回落为 DefaultTimezone（Asia/Shanghai）。
+// LoadLocation 解析 IANA 时区名称；空字符串回落为 [DefaultTimezone]（Asia/Shanghai）。
 func LoadLocation(tz string) (*time.Location, error) {
 	trimmed := strings.TrimSpace(tz)
 	if trimmed == "" {

@@ -137,6 +137,7 @@ func enforceSameOrigin(r *http.Request) error {
 // messageError 是基于 string 的轻量错误类型，使下方哨兵错误可以声明为不可变 const（普通 errors.New 只能声明为 var）。
 type messageError string
 
+// Error 实现内置 error 接口，返回静态中文错误信息。
 func (e messageError) Error() string { return string(e) }
 
 const errCrossOrigin = messageError("不允许跨来源操作")

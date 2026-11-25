@@ -145,6 +145,7 @@ export function FeedingFields({
               placeholder="例如：高铁米粉、南瓜泥"
               onChange={(event) => {
                 const nextFood = event.target.value;
+                // 手动输入仅在份量留空且精确命中历史辅食时自动补全，避免覆盖家长刚手填的份量。
                 const matched = !state.solidAmount.trim()
                   ? solidPresets.find((item) => item.food === nextFood.trim() && item.amount)
                   : undefined;
@@ -161,6 +162,7 @@ export function FeedingFields({
                   tone="feeding"
                   active={state.solidFood === item.food}
                   onClick={() =>
+                    // 主/副联动胶囊切换时同步覆写或清空份量，防止残留上一个辅食的旧份量。
                     onChange({
                       solidFood: item.food,
                       solidAmount: item.amount,

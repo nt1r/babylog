@@ -27,7 +27,7 @@ type Options struct {
 	Logger          *slog.Logger
 }
 
-// NewRouter 装配 Gin 引擎、安全中间件、认证接口与静态前端回退处理。
+// NewRouter 装配 Gin 引擎、安全中间件、认证、宝宝档案、日常记录、首页看板、疫苗管理与静态前端回退处理。
 // 调用方应在进程启动入口（而非路由构造函数内）设置 gin.SetMode，避免全局状态并发竞争。
 func NewRouter(opts Options) *gin.Engine {
 	// 未传入 Logger 时回退到 slog.DiscardHandler（静默丢弃日志），便于测试环境复用而无需到处判空。
@@ -70,7 +70,7 @@ func NewRouter(opts Options) *gin.Engine {
 				protected.PUT("/baby", babyH.updateProfile)
 			}
 
-			// 日常记录与首页看板额外挂载 requireBabyProfileMiddleware，未建档时统一前置返回 409。
+			// 日常记录、首页看板与疫苗管理额外挂载 requireBabyProfileMiddleware，未建档时统一前置返回 409。
 			if opts.BabyStore != nil && opts.RecordStore != nil {
 				recH := newRecordsHandler(opts.RecordStore, logger)
 				recGroup := protected.Group("/records", requireBabyProfileMiddleware(opts.BabyStore, logger))

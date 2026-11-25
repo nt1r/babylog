@@ -1,5 +1,5 @@
-// Package dashboard 提供基于本地时区的首页今日汇总 KPI、距上次照护时长、
-// 跨夜睡眠自然日切分、近 N 日趋势以及全天照护节律聚合服务。
+// Package dashboard 提供基于本地时区的首页今日汇总 KPI（含健康观察与生长发育概览）、
+// 距上次照护时长、跨夜睡眠自然日切分、近 N 日趋势以及全天照护节律聚合服务。
 package dashboard
 
 import (
@@ -69,7 +69,7 @@ type BirthBaseline struct {
 }
 
 // CareSummary 汇总今日护理 KPI 与上次换尿布时刻。
-// 通过内嵌 records.CareDailySummary 复用单一汇总结构并保持 JSON 顶层字段不变。
+// 通过内嵌 [records.CareDailySummary] 复用单一汇总结构并保持 JSON 顶层字段不变。
 type CareSummary struct {
 	records.CareDailySummary
 	LastDiaperAt *string `json:"last_diaper_at"`
@@ -110,7 +110,7 @@ type TrendsResponse struct {
 	Slots    []SlotDistributionPoint `json:"slots"`
 }
 
-// Service 负责通过 records.Store 读取时间窗口快照与最近标记，并聚合首页看板数据。
+// Service 负责通过 [records.Store] 读取时间窗口快照与最近标记，并聚合首页看板数据。
 type Service struct {
 	store *records.Store
 	now   func() time.Time
@@ -150,8 +150,8 @@ func daySlotLabel(t time.Time, loc *time.Location) string {
 	}
 }
 
-// GetSummary 按指定本地时区聚合今日 4 项 KPI、距上次照护时间戳及独立解析的生长发育概览。
-// 可选 baseline 来自宝宝档案（出生日期及出生体重/身高），在尚无手动测量记录时兜底填充。
+// GetSummary 按指定本地时区聚合今日 5 维概览（喂养、睡眠、健康观察、生长发育与护理）及距上次照护时间戳。
+// 可选 [BirthBaseline] 来自宝宝档案（出生日期及出生体重/身高），在尚无手动测量记录时独立兜底填充。
 func (s *Service) GetSummary(ctx context.Context, babyID int64, loc *time.Location, baseline *BirthBaseline) (*SummaryResponse, error) {
 	if loc == nil {
 		loc, _ = timeutil.LoadLocation("")
@@ -181,6 +181,9 @@ func (s *Service) GetSummary(ctx context.Context, babyID int64, loc *time.Locati
 		LatestToothNote:  highlights.Growth.LatestToothNote,
 		LatestToothAt:    highlights.Growth.LatestToothAt,
 	}
+	// 体重与身高各自独立回退出生基准（头围无出生基准）；
+	// 兜底写入的 RecordedAt 为宝宝档案日期 YYYY-MM-DD（区别于手动测量的 UTC RFC3339），前端凭 WeightIsBirth/HeightIsBirth 区分渲染，
+	// 且拷贝标量后再取地址，避免与调用方 baseline 指针共享内存。
 	if baseline != nil {
 		if growth.LatestWeightKg == nil && baseline.WeightKg != nil {
 			v := *baseline.WeightKg
@@ -239,7 +242,7 @@ func (s *Service) GetSummary(ctx context.Context, babyID int64, loc *time.Locati
 		records.AccumulateCareSummary(&resp.Care.CareDailySummary, r)
 	}
 
-	// 4. 今日用药汇总：按记录时刻与 ID 确定性选取当日最新一条用药记录。
+	// 4. 今日用药汇总：利用 UTC RFC3339 字典序与时刻顺序等价的特性，按 RecordedAt 与 ID 确定性选取当日最新用药。
 	var latestMedID int64
 	var latestMedAt string
 	for _, r := range snap.Healths {
@@ -256,6 +259,7 @@ func (s *Service) GetSummary(ctx context.Context, babyID int64, loc *time.Locati
 				name := *r.MedicineName
 				resp.Health.LatestMedicineName = &name
 			} else {
+				// 显式清空，避免最新一条用药名称为空时残留先前较早记录的药名。
 				resp.Health.LatestMedicineName = nil
 			}
 		}
@@ -324,7 +328,7 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 		}
 	}
 
-	// 3. 护理与健康记录计入全天照护节律时段分布
+	// 3. 护理与健康/生长记录（snap.Healths 含体温/用药/生长/长牙全部子类型）统一计入全天照护节律时段分布
 	for _, r := range snap.Cares {
 		if ts, parseErr := timeutil.ParseTimestamp(r.RecordedAt); parseErr == nil {
 			slotCounts[daySlotLabel(ts, loc)]++

@@ -12,6 +12,7 @@ function themeBootPlugin(): Plugin {
   return {
     name: 'babylog:theme-boot',
     transformIndexHtml(html) {
+      // 使用替换函数而非字符串字面量，防止脚本中含 $& / $' 被 String.prototype.replace 误解析。
       return html.replace('<!--theme-boot-->', () => `<script>${buildThemeBootScript()}</script>`);
     },
   };
@@ -47,6 +48,7 @@ export default defineConfig({
   plugins: [
     themeBootPlugin(),
     swVersionPlugin(),
+    // TanStack Router 插件必须位于 react() 之前，才能正确转换路由文件并生成 routeTree.gen.ts。
     tanstackRouter({ target: 'react', autoCodeSplitting: true }),
     react(),
     tailwindcss(),
@@ -58,6 +60,8 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: `http://127.0.0.1:${process.env.PORT ?? '21115'}`,
+        // 必须保持 false 使后端收到的 Host 与浏览器 Origin（127.0.0.1:11115）一致，
+        // 否则开发态所有写请求都会被后端 Same-Origin 中间件拦截返回 403。
         changeOrigin: false,
       },
     },

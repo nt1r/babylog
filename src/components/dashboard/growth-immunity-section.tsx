@@ -96,7 +96,7 @@ interface DashboardVaccineCardProps {
   readonly onRetry: () => void;
 }
 
-/** 看板下方左卡：疫苗接种计划与免疫进度。 */
+/** 首页看板疫苗接种计划与免疫进度卡片。 */
 export function DashboardVaccineCard({ overview, isLoading, isError, onRetry }: DashboardVaccineCardProps) {
   const focus = overview?.summary.next_focus ?? null;
   const { showBirthConfirm, birthPendingDoses, focusDoses, nipPercent } = selectDashboardVaccineCardFocus(overview);
@@ -279,7 +279,7 @@ interface DashboardGrowthCardProps {
   readonly onOpenCreate: (subtype: GrowthEntrySubtype) => void;
 }
 
-/** 看板下方右卡：最新生长发育（复用共享体格指标构建器与出牙里程碑汇总）。 */
+/** 首页看板最新生长发育卡片（复用共享体格指标构建器与出牙里程碑汇总）。 */
 export function DashboardGrowthCard({
   growth,
   referenceDateStr,

@@ -165,6 +165,7 @@ export function TimePicker({
       className={className}
       footer={footer}
     >
+      {/* 标注 data-base-ui-swipe-ignore，防止移动端滚动时/分滚轮被底部 Drawer 下滑关闭手势劫持 */}
       <div
         data-base-ui-swipe-ignore=""
         className={cn(

@@ -3,6 +3,7 @@ import { parseOptionalStrictNumber } from '@/lib/number';
 import type { HealthInput, HealthRecord, MedicinePreset, SmartDefaults } from '@/lib/records';
 import { combineLocalDateTimeToISO } from '@/lib/time';
 
+/** 体温合法区间与步进配置（与后端 records.MinTemperatureC / MaxTemperatureC 对齐）。 */
 export const HEALTH_BOUNDS = {
   tempMin: 34.0,
   tempMax: 43.0,
@@ -31,12 +32,14 @@ interface HealthBuildContext {
   readonly editId?: number;
 }
 
+/** 解析常用药品与营养剂建议（有历史时优先使用最近用药，否则回退默认维 D 建议）。 */
 export function resolveHealthPresets(defaults?: SmartDefaults): readonly MedicinePreset[] {
   return defaults && defaults.health.recent_medicines.length > 0
     ? defaults.health.recent_medicines
     : MEDICINE_FALLBACKS;
 }
 
+/** 构建临床健康工作区（仅覆盖体温与用药子类型）的新建表单初始状态。 */
 export function createDefaultHealthForm(initialSubtype?: string, defaults?: SmartDefaults): HealthFormState {
   const subtype: ClinicalHealthSubtype = initialSubtype === 'medicine' ? 'medicine' : 'temperature';
   return {
@@ -47,6 +50,7 @@ export function createDefaultHealthForm(initialSubtype?: string, defaults?: Smar
   };
 }
 
+/** 将健康记录 DTO 回填为临床健康表单状态（体温保留 1 位小数受控文本）。 */
 export function healthFormFromRecord(record: HealthRecord, defaults?: SmartDefaults): HealthFormState {
   return {
     subtype: record.subtype === 'medicine' ? 'medicine' : 'temperature',
@@ -58,6 +62,7 @@ export function healthFormFromRecord(record: HealthRecord, defaults?: SmartDefau
   };
 }
 
+/** 校验体温或用药表单并组装提交载荷（体格生长与长牙由独立 growth-codec 承载）。 */
 export function validateAndBuildHealthSubmission(state: HealthFormState, ctx: HealthBuildContext): CategoryBuildResult {
   const recordedAt = combineLocalDateTimeToISO(ctx.dateStr, ctx.timeStr);
   if (!recordedAt) {

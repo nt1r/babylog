@@ -28,7 +28,7 @@ func TestAPISecurityGuards(t *testing.T) {
 	app.Scenario().EnsureBaby()
 	client := app.Client()
 
-	// 1. 跨来源写请求（登录、登出、业务记录）均返回 403 且不写入记录。
+	// 1. 认证接口与业务写接口受跨来源（403）、非 JSON（415）与请求体大小上限（413）三重门禁保护。
 	evilClient := client.WithOrigin("http://evil.example")
 	for _, tc := range []struct {
 		path string
@@ -44,13 +44,13 @@ func TestAPISecurityGuards(t *testing.T) {
 		t.Fatalf("expected 0 feeding rows after cross-origin 403, got %d", got)
 	}
 
-	// 2. 非 JSON Content-Type 返回 415。
+	// 非 JSON Content-Type 返回 415。
 	client.DoRaw(t, http.MethodPost, "/api/auth/login", "text/plain", []byte("username=admin")).
 		RequireError(t, http.StatusUnsupportedMediaType, "")
 	client.DoRaw(t, http.MethodPost, "/api/records/feeding", "text/plain", []byte("subtype=formula")).
 		RequireError(t, http.StatusUnsupportedMediaType, "")
 
-	// 3. 超出请求体限制（登录 >16KiB，业务接口 >64KiB）返回 413。
+	// 超出请求体限制（登录 >16KiB，业务接口 >64KiB）返回 413。
 	oversizedLogin, _ := json.Marshal(map[string]string{
 		"username": defaultAdminUser,
 		"password": strings.Repeat("x", 20*1024),
@@ -67,7 +67,7 @@ func TestAPISecurityGuards(t *testing.T) {
 	client.DoRaw(t, http.MethodPost, "/api/records/feeding", "application/json", oversizedRecord).
 		RequireError(t, http.StatusRequestEntityTooLarge, "")
 
-	// 4. 畸形登录 JSON、非对象或字段类型错误返回 400。
+	// 2. 畸形登录载荷返回 400，方法不匹配返回 405，未知 /api/* 返回 404 JSON。
 	for _, raw := range []string{
 		`{invalid`,
 		`["admin","secret"]`,
@@ -78,12 +78,10 @@ func TestAPISecurityGuards(t *testing.T) {
 		client.DoRaw(t, http.MethodPost, "/api/auth/login", "application/json", []byte(raw)).
 			RequireError(t, http.StatusBadRequest, "")
 	}
-
-	// 5. 方法不匹配返回 405，未知 /api/* 返回 404 JSON。
 	client.Delete(t, "/api/auth/session").RequireError(t, http.StatusMethodNotAllowed, "")
 	client.Get(t, "/api/unknown").RequireError(t, http.StatusNotFound, "")
 
-	// 6. 未预期 panic 由恢复中间件统一兜底为中文 500 JSON。
+	// 3. 未预期 panic 由恢复中间件统一兜底为中文 500 JSON。
 	app.Router.GET("/api/test-panic", func(_ *gin.Context) {
 		panic("simulated panic")
 	})
@@ -91,6 +89,7 @@ func TestAPISecurityGuards(t *testing.T) {
 }
 
 /*
+ * 范围：基础设施（无对应 OpenSpec 规格）
  * 场景：验证静态资源托管、SPA 路由回退、PWA 缓存头及路径穿越/符号链接逃逸防护。
  * 前置：启用 WithDistFixtures() 挂载隔离临时 dist 产物及指向外部敏感文件的符号链接。
  * 目标：

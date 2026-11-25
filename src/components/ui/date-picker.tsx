@@ -70,6 +70,7 @@ export function DatePicker({
     const now = new Date();
     const minDate = min ? parseLocalDateKey(min) : undefined;
     const maxDate = max ? parseLocalDateKey(max) : undefined;
+    // 未指定 min/max 时以当前年 [-15, +12] 为下拉年份兜底范围，并向已选年份自动扩界防止无法回显。
     const fallbackStartYear = Math.min(now.getFullYear() - 15, selectedDate?.getFullYear() ?? now.getFullYear());
     const fallbackEndYear = Math.max(now.getFullYear() + 12, selectedDate?.getFullYear() ?? now.getFullYear());
     return {

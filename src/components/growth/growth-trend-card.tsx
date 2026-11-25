@@ -212,6 +212,7 @@ export function GrowthTrendCard({
                 />
                 <YAxis domain={series.yDomain} tickLine={false} axisLine={false} tickMargin={8} width={42} />
                 <ChartTooltip content={<GrowthCurveTooltip unit={series.unit} metricLabel={series.label} />} />
+                {/* 关闭 Recharts 入场动画，确保切换体重/身高/头围指标时曲线与参考带即时重绘不抖动 */}
                 <Area
                   type="monotone"
                   dataKey="whoRange"

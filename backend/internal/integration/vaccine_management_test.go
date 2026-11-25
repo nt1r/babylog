@@ -104,9 +104,9 @@ func TestVaccinesSeedClampingAndAlertStates(t *testing.T) {
 		VaccineName: "状态边界测试疫苗",
 		Category:    vaccines.CategoryOptional,
 		Doses: []vaccines.DosePlanInput{
-			{AgeMonths: 4, PlannedDate: ptr("2026-05-20")}, // -26d → overdue
-			{AgeMonths: 5, PlannedDate: ptr("2026-06-25")}, // +10d → due_soon
-			{AgeMonths: 6, PlannedDate: ptr("2026-07-10")}, // +25d → upcoming
+			{AgeMonths: 4, PlannedDate: ptr("2026-05-20")}, // 逾期 26 天 → overdue
+			{AgeMonths: 5, PlannedDate: ptr("2026-06-25")}, // 距预计日 +10 天 → due_soon
+			{AgeMonths: 6, PlannedDate: ptr("2026-07-10")}, // 距预计日 +25 天 → upcoming
 		},
 	})
 	if len(custom) != 3 ||
@@ -144,7 +144,7 @@ func TestVaccinesTemplatesCustomAndDeletion(t *testing.T) {
 		return DecodeJSON[vaccines.CatalogResponse](t, resp)
 	}
 
-	// 1. 自费目录包含 5 套模板与默认剂次明细；定制添加 3 剂 pcv13，重复添加返回 409。
+	// 1. 自费目录包含 5 套模板与默认剂次明细；定制添加 3 剂 pcv13，重复添加返回 409；同时验证 flu 保留定制 AgeLabel。
 	cat := fetchCatalog()
 	if len(cat.Templates) != 5 || len(cat.Templates[0].Doses) == 0 {
 		t.Fatalf("expected 5 optional templates with default doses, got %+v", cat.Templates)
@@ -168,7 +168,7 @@ func TestVaccinesTemplatesCustomAndDeletion(t *testing.T) {
 		TemplateCode: "pcv13",
 	}).RequireError(t, http.StatusConflict, "")
 
-	// 2. 添加 flu 模板并保留默认月龄（6/7），验证定制 AgeLabel 保留且同月龄更新时不丢失。
+	// 添加 flu 模板并保留默认月龄（6/7），验证定制 AgeLabel 保留且同月龄更新时不丢失。
 	flu := s.AddVaccineTemplate("flu", 6, 7)
 	if len(flu) != 2 || flu[0].AgeLabel != "6月龄起" || flu[1].AgeLabel != "首季第2剂" {
 		t.Fatalf("expected flu custom AgeLabel preserved, got %+v", flu)
@@ -185,7 +185,7 @@ func TestVaccinesTemplatesCustomAndDeletion(t *testing.T) {
 		t.Fatalf("expected flu AgeLabel kept on same age_months update, got %q", got)
 	}
 
-	// 3. 删除 pcv13 中间第 2 剂，回读 SQLite 验证剩余重排为 1/2（7m）与 2/2（12m）；整套移出后库中清空且目录恢复 added=false。
+	// 2. 删除 pcv13 与自定义疫苗的中间第 2 剂验证剩余重排为连续 1..N-1，并验证整套移出模板后目录恢复 added=false。
 	client.Delete(t, fmt.Sprintf("/api/vaccines/%d", pcv[1].ID)).RequireStatus(t, http.StatusOK)
 	pcvRows := FindRows[vaccines.DoseRecord](t, app, "dose_number ASC", "template_code = ?", "pcv13")
 	if len(pcvRows) != 2 || pcvRows[0].DoseNumber != 1 || pcvRows[0].TotalDoses != 2 || pcvRows[0].AgeMonths != 7 ||
@@ -204,7 +204,7 @@ func TestVaccinesTemplatesCustomAndDeletion(t *testing.T) {
 		}
 	}
 
-	// 4. 创建 3 剂自定义疫苗并删除中间第 2 剂，回读 SQLite 验证剩余重排为 1/2（2m）、2/2（4m）。
+	// 创建 3 剂自定义疫苗并删除中间第 2 剂，回读 SQLite 验证剩余重排为 1/2（2m）、2/2（4m）。
 	custom := s.AddCustomVaccine(vaccines.CreateCustomInput{
 		VaccineName: "五联疫苗",
 		Category:    vaccines.CategoryOptional,
@@ -225,7 +225,7 @@ func TestVaccinesTemplatesCustomAndDeletion(t *testing.T) {
 		t.Fatalf("unexpected custom renumbered rows in SQLite: %+v", customRows)
 	}
 
-	// 5. 拒绝删除内置 NIP 单剂与内置 NIP 模板，SQLite 原行保持不变。
+	// 3. 拒绝删除内置 NIP 单剂/模板（原行保留），并拒绝全部非法自定义疫苗载荷（库行数不变）。
 	nipDoseID := ov.Doses[0].ID
 	client.Delete(t, fmt.Sprintf("/api/vaccines/%d", nipDoseID)).RequireError(t, http.StatusBadRequest, "")
 	client.Delete(t, "/api/vaccines/template/hepb").RequireError(t, http.StatusBadRequest, "")
@@ -233,7 +233,7 @@ func TestVaccinesTemplatesCustomAndDeletion(t *testing.T) {
 		t.Fatalf("expected protected NIP dose preserved in SQLite, count=%d", got)
 	}
 
-	// 6. 非法自定义疫苗载荷全部返回 400 且 SQLite 剂次总数不变。
+	// 非法自定义疫苗载荷全部返回 400 且 SQLite 剂次总数不变。
 	beforeCount := CountRows[vaccines.DoseRecord](t, app, "")
 	badDate := "2026/05/01"
 	for _, in := range []vaccines.CreateCustomInput{
@@ -270,7 +270,7 @@ func TestVaccinesDoseTransitionsAndBatchAtomicity(t *testing.T) {
 
 		app := NewTestApp(t)
 		s := app.Scenario()
-		s.EnsureBaby() // birth_date=2026-07-15, fixedNow=2026-11-23+08
+		s.EnsureBaby() // 默认出生日 2026-07-15，固定时钟 2026-11-23+08
 		ov := s.SeedVaccines()
 		client := app.Client()
 
@@ -280,7 +280,7 @@ func TestVaccinesDoseTransitionsAndBatchAtomicity(t *testing.T) {
 		}
 		endpoint := fmt.Sprintf("/api/vaccines/%d?tz=Asia/Shanghai", hepb2.ID)
 
-		// 1. pending → scheduled，回读 SQLite 确认预约列落库且 vaccinated_at 为 NULL。
+		// pending → scheduled，回读 SQLite 确认预约列落库且 vaccinated_at 为 NULL。
 		client.Put(t, endpoint, vaccines.UpdateDoseInput{
 			Status:        vaccines.StatusScheduled,
 			ScheduledDate: ptr("2026-11-28"),
@@ -294,7 +294,7 @@ func TestVaccinesDoseTransitionsAndBatchAtomicity(t *testing.T) {
 			t.Fatalf("unexpected scheduled SQLite row: %+v", row)
 		}
 
-		// 2. 拒绝未来日期（2026-11-24）与早于出生日（2020-01-01）的接种完成请求。
+		// 拒绝未来日期（2026-11-24）与早于出生日（2020-01-01）的接种完成请求。
 		client.Put(t, endpoint, vaccines.UpdateDoseInput{
 			Status: vaccines.StatusCompleted, VaccinatedAt: ptr("2026-11-24"),
 		}).RequireError(t, http.StatusBadRequest, "")
@@ -302,7 +302,7 @@ func TestVaccinesDoseTransitionsAndBatchAtomicity(t *testing.T) {
 			Status: vaccines.StatusCompleted, VaccinatedAt: ptr("2020-01-01"),
 		}).RequireError(t, http.StatusBadRequest, "")
 
-		// 3. scheduled → completed，回读 SQLite 确认 scheduled_date/time 清空为 NULL、接种字段落库。
+		// scheduled → completed，回读 SQLite 确认 scheduled_date/time 清空为 NULL、接种字段落库。
 		client.Put(t, endpoint, vaccines.UpdateDoseInput{
 			Status:       vaccines.StatusCompleted,
 			VaccinatedAt: ptr("2026-11-23"),
@@ -322,7 +322,7 @@ func TestVaccinesDoseTransitionsAndBatchAtomicity(t *testing.T) {
 			t.Fatalf("expected recent_clinics to contain 城西社区卫生服务中心, got %v", ovAfter.RecentClinics)
 		}
 
-		// 4. completed → pending，回读 SQLite 确认全部预约与接种列均已清空。
+		// completed → pending，回读 SQLite 确认全部预约与接种列均已清空。
 		client.Put(t, endpoint, vaccines.UpdateDoseInput{
 			Status: vaccines.StatusPending,
 		}).RequireStatus(t, http.StatusOK)
@@ -343,7 +343,7 @@ func TestVaccinesDoseTransitionsAndBatchAtomicity(t *testing.T) {
 		ov := s.SeedVaccines()
 		client := app.Client()
 
-		// 1. 批量完成产院两针并验证 birth_confirm_pending 清除、进度计数与 recent_clinics 更新。
+		// 批量完成产院两针并验证 birth_confirm_pending 清除、进度计数与 recent_clinics 更新。
 		client.Post(t, "/api/vaccines/batch?tz=Asia/Shanghai", vaccines.BatchUpdateInput{
 			Action:       vaccines.BatchActionComplete,
 			DoseIDs:      ov.Summary.BirthPendingDoseIDs,
@@ -358,7 +358,7 @@ func TestVaccinesDoseTransitionsAndBatchAtomicity(t *testing.T) {
 				ovAfterBirth.Summary, ovAfterBirth.RecentClinics)
 		}
 
-		// 2. 批量预约三态语义：传 nil 保留既有门诊与备注，传 "" 显式清空门诊。
+		// 批量预约三态语义：传 nil 保留既有门诊与备注，传 "" 显式清空门诊。
 		polio1 := findDoseViewByTemplate(ovAfterBirth.Doses, "polio", 1)
 		if polio1 == nil {
 			t.Fatalf("polio dose #1 not found")
@@ -390,7 +390,7 @@ func TestVaccinesDoseTransitionsAndBatchAtomicity(t *testing.T) {
 			t.Fatalf("expected empty batch clinic cleared while note preserved, got clinic=%q note=%q", polioRow.ClinicName, polioRow.Note)
 		}
 
-		// 3. 批量请求包含不存在 ID 且携带 set_default_clinic=true：返回 404 且剂次与 default_clinic_name 均回滚未改。
+		// 批量请求包含不存在 ID 且携带 set_default_clinic=true：返回 404 且剂次与 default_clinic_name 均回滚未改。
 		dtap1 := findDoseViewByTemplate(ovAfterBirth.Doses, "dtap", 1)
 		if dtap1 == nil {
 			t.Fatalf("dtap dose #1 not found")
@@ -437,7 +437,7 @@ func TestVaccinesDefaultClinicManagementAndAutoRemember(t *testing.T) {
 		ov := s.SeedVaccines()
 		client := app.Client()
 
-		// 1. PUT /api/vaccines/default-clinic 显式设置、跨端点同步校验、超长 400 与清空。
+		// PUT /api/vaccines/default-clinic 显式设置、跨端点同步校验、超长 400 与清空。
 		setResp := client.Put(t, "/api/vaccines/default-clinic", map[string]string{
 			"clinic_name": "  阳光街道社区卫生服务中心  ",
 		})
@@ -470,7 +470,7 @@ func TestVaccinesDefaultClinicManagementAndAutoRemember(t *testing.T) {
 			t.Fatalf("expected default_clinic_name cleared in SQLite, got %q", got)
 		}
 
-		// 2. 产院出生剂次（HepB#1）不污染空默认门诊。
+		// 产院出生剂次（HepB#1）不污染空默认门诊。
 		hepb1 := findDoseViewByTemplate(ov.Doses, "hepb", 1)
 		hepb2 := findDoseViewByTemplate(ov.Doses, "hepb", 2)
 		polio1 := findDoseViewByTemplate(ov.Doses, "polio", 1)
@@ -488,7 +488,7 @@ func TestVaccinesDefaultClinicManagementAndAutoRemember(t *testing.T) {
 			t.Fatalf("expected birth dose not to pollute default_clinic_name, got %q", got)
 		}
 
-		// 3. 首次常规剂次自动记住常去门诊。
+		// 首次常规剂次自动记住常去门诊。
 		client.Put(t, fmt.Sprintf("/api/vaccines/%d?tz=Asia/Shanghai", hepb2.ID), vaccines.UpdateDoseInput{
 			Status:        vaccines.StatusScheduled,
 			ScheduledDate: ptr("2026-11-28"),
@@ -498,7 +498,7 @@ func TestVaccinesDefaultClinicManagementAndAutoRemember(t *testing.T) {
 			t.Fatalf("expected auto-remembered default_clinic_name, got %q", got)
 		}
 
-		// 4. 偶发其他医院（未传 set_default_clinic）不覆盖既有默认门诊。
+		// 偶发其他医院（未传 set_default_clinic）不覆盖既有默认门诊。
 		client.Put(t, fmt.Sprintf("/api/vaccines/%d?tz=Asia/Shanghai", polio1.ID), vaccines.UpdateDoseInput{
 			Status:        vaccines.StatusScheduled,
 			ScheduledDate: ptr("2026-11-28"),
@@ -508,7 +508,7 @@ func TestVaccinesDefaultClinicManagementAndAutoRemember(t *testing.T) {
 			t.Fatalf("expected one-off clinic not to overwrite default_clinic_name, got %q", got)
 		}
 
-		// 5. 显式 set_default_clinic=true 覆写默认门诊并落库。
+		// 显式 set_default_clinic=true 覆写默认门诊并落库。
 		client.Put(t, fmt.Sprintf("/api/vaccines/%d?tz=Asia/Shanghai", dtap1.ID), vaccines.UpdateDoseInput{
 			Status:           vaccines.StatusScheduled,
 			ScheduledDate:    ptr("2026-11-29"),
@@ -531,6 +531,7 @@ func TestVaccinesDefaultClinicManagementAndAutoRemember(t *testing.T) {
 		profile := s.EnsureBaby()
 		ov := s.SeedVaccines()
 
+		// 收集 2 月龄常规待接种剂次并发起批量预约，验证空默认门诊被自动记住且剂次状态落库。
 		var twoMonthIDs []int64
 		for _, d := range ov.Doses {
 			if d.AgeMonths == 2 {

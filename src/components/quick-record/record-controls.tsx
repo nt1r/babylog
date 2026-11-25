@@ -78,6 +78,7 @@ export function NumberStepperCard({
           placeholder={placeholder}
           aria-label={inputAriaLabel}
           onWheel={(event) => {
+            // 聚焦状态下滚轮滚动页面前主动失焦，防止浏览器原生 number 输入框误增减数值。
             if (document.activeElement === event.currentTarget) {
               event.currentTarget.blur();
             }

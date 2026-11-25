@@ -31,7 +31,7 @@ func TestAuthSessionLifecycle(t *testing.T) {
 		app := NewTestApp(t, WithoutAutoLogin())
 		anon := app.UnauthenticatedClient()
 
-		// 1. 匿名探测会话返回 200 {user: null} 且禁止缓存。
+		// 匿名探测会话返回 200 {user: null} 且禁止缓存。
 		initResp := anon.Get(t, "/api/auth/session")
 		initResp.RequireStatus(t, http.StatusOK)
 		if got := initResp.Header.Get("Cache-Control"); got != "no-store" {
@@ -44,7 +44,7 @@ func TestAuthSessionLifecycle(t *testing.T) {
 			t.Fatalf("expected user=nil before login, got %+v", initBody.User)
 		}
 
-		// 2. 正确凭据登录返回管理员信息、安全属性完整的 43 位会话 Cookie，并在 SQLite 落库。
+		// 正确凭据登录返回管理员信息、安全属性完整的 43 位会话 Cookie，并在 SQLite 落库。
 		loginResp := anon.Login(t, defaultAdminUser, defaultAdminPass)
 		loginResp.RequireStatus(t, http.StatusOK)
 		loginBody := DecodeJSON[struct {
@@ -71,7 +71,7 @@ func TestAuthSessionLifecycle(t *testing.T) {
 		}
 		authed := anon.WithCookie(cookiePair)
 
-		// 3. 携带有效 Cookie 恢复活跃会话。
+		// 携带有效 Cookie 恢复活跃会话。
 		restoreResp := authed.Get(t, "/api/auth/session")
 		restoreResp.RequireStatus(t, http.StatusOK)
 		restoreBody := DecodeJSON[struct {
@@ -81,7 +81,7 @@ func TestAuthSessionLifecycle(t *testing.T) {
 			t.Fatalf("unexpected restored user: %+v", restoreBody.User)
 		}
 
-		// 4. 登出吊销 SQLite 会话并下发 Max-Age=0，旧令牌再次探测返回 null 且被清除。
+		// 登出吊销 SQLite 会话并下发 Max-Age=0，旧令牌再次探测返回 null 且被清除。
 		logoutResp := authed.Post(t, "/api/auth/logout", nil)
 		logoutResp.RequireStatus(t, http.StatusOK)
 		if !strings.Contains(logoutResp.SetCookieHeader(), "Max-Age=0") {
@@ -116,7 +116,7 @@ func TestAuthSessionLifecycle(t *testing.T) {
 		app := NewTestApp(t)
 		oldClient := app.Client()
 
-		// 1. 携带现有有效会话再次登录，服务端应签发全新令牌并吊销旧令牌。
+		// 携带现有有效会话再次登录，服务端应签发全新令牌并吊销旧令牌。
 		rotateResp := oldClient.Login(t, defaultAdminUser, defaultAdminPass)
 		rotateResp.RequireStatus(t, http.StatusOK)
 		newCookiePair, ok := rotateResp.CookiePair(auth.SessionCookieName)
@@ -125,7 +125,7 @@ func TestAuthSessionLifecycle(t *testing.T) {
 		}
 		newClient := app.UnauthenticatedClient().WithCookie(newCookiePair)
 
-		// 2. 验证 SQLite 仅保留 1 条新会话，旧 Cookie 立即失效且被清除，新 Cookie 正常可用。
+		// 验证 SQLite 仅保留 1 条新会话，旧 Cookie 立即失效且被清除，新 Cookie 正常可用。
 		if got := CountRows[auth.Session](t, app, ""); got != 1 {
 			t.Fatalf("expected exactly 1 session after rotation, got %d", got)
 		}
@@ -154,10 +154,10 @@ func TestAuthSessionLifecycle(t *testing.T) {
 
 		app := NewTestApp(t)
 
-		// 1. 推进时钟越过 7 天有效期。
+		// 推进时钟越过 7 天有效期。
 		app.Clock.Advance(time.Duration(auth.SessionMaxAgeSeconds+1) * time.Second)
 
-		// 2. 访问受保护接口返回 401；探测会话返回 {user: null} + Max-Age=0 且 SQLite 清理过期行。
+		// 访问受保护接口返回 401；探测会话返回 {user: null} + Max-Age=0 且 SQLite 清理过期行。
 		unauthBaby := app.Client().Get(t, "/api/baby")
 		unauthBaby.RequireError(t, http.StatusUnauthorized, "")
 
@@ -182,7 +182,7 @@ func TestAuthSessionLifecycle(t *testing.T) {
 		app := NewTestApp(t, WithoutAutoLogin())
 		anon := app.UnauthenticatedClient()
 
-		// 1. 错误密码与错误用户名均返回 401 且不签发 Cookie、不写库。
+		// 错误密码与错误用户名均返回 401 且不签发 Cookie、不写库。
 		for _, tc := range []struct {
 			name string
 			user string
@@ -201,7 +201,7 @@ func TestAuthSessionLifecycle(t *testing.T) {
 			t.Fatalf("expected 0 sessions after failed logins, got %d", got)
 		}
 
-		// 2. 携带畸形或未知 Cookie 探测会话返回 {user: null} 并下发 Max-Age=0 清除。
+		// 携带畸形或未知 Cookie 探测会话返回 {user: null} 并下发 Max-Age=0 清除。
 		for _, badCookie := range []string{
 			auth.SessionCookieName + "=malformed-short",
 			auth.SessionCookieName + "=" + strings.Repeat("A", 43),
@@ -218,7 +218,7 @@ func TestAuthSessionLifecycle(t *testing.T) {
 			}
 		}
 
-		// 3. 未初始化管理员时登录返回 401 且不产生会话。
+		// 未初始化管理员时登录返回 401 且不产生会话。
 		uninitApp := NewTestApp(t, WithoutAdmin())
 		uninitResp := uninitApp.UnauthenticatedClient().Login(t, defaultAdminUser, defaultAdminPass)
 		uninitResp.RequireError(t, http.StatusUnauthorized, "")

@@ -12,8 +12,9 @@ import (
 	"github.com/nt1r/babylog/backend/internal/vaccines"
 )
 
-// vaccinesHandler 处理疫苗接种计划、模板库、自定义添加、单剂更新、批量操作与删除接口。
-// 路由组已挂载 requireBabyProfileMiddleware（注入完整宝宝档案），处理器直接从上下文读取 babyID 与 birthDate。
+// vaccinesHandler 处理疫苗接种计划、模板库、常去接种门诊、自定义添加、单剂更新、批量操作与删除接口。
+// 路由组已挂载 requireBabyProfileMiddleware（注入完整宝宝档案），处理器直接从上下文读取档案信息，
+// 并注入 babyStore 供 PUT /api/vaccines/default-clinic 复用档案持久化。
 type vaccinesHandler struct {
 	store     *vaccines.Store
 	babyStore *baby.Store
@@ -28,6 +29,7 @@ func newVaccinesHandler(store *vaccines.Store, babyStore *baby.Store, logger *sl
 	}
 }
 
+// registerRoutes 注册疫苗路由；静态子路径显式排在 /:id 之前，避免路由语义歧义。
 func (h *vaccinesHandler) registerRoutes(group *gin.RouterGroup) {
 	group.GET("", h.getOverview)
 	group.GET("/catalog", h.getCatalog)
@@ -57,9 +59,7 @@ func parseBabyTimezoneContext(c *gin.Context) (int64, string, *time.Location, bo
 	return babyID, birthDate, loc, true
 }
 
-// handleErr 将领域层错误映射为统一的中文 HTTP 状态码与 JSON 响应：
-// errors.As 沿错误包装链提取具体自定义错误类型（*[vaccines.ValidationError]），
-// errors.Is 则按值匹配包级哨兵错误（如 [vaccines.ErrNotFound]）。
+// handleErr 将 vaccines 领域错误统一映射为中文 HTTP 状态码（400/404/409/500）。
 func (h *vaccinesHandler) handleErr(c *gin.Context, op string, err error) {
 	var valErr *vaccines.ValidationError
 	if errors.As(err, &valErr) {
@@ -82,6 +82,7 @@ func (h *vaccinesHandler) handleErr(c *gin.Context, op string, err error) {
 	c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 }
 
+// getOverview 处理 GET /api/vaccines，按请求时区返回完整疫苗计划与提醒概览（200）。
 func (h *vaccinesHandler) getOverview(c *gin.Context) {
 	profile, ok := mustBabyProfile(c)
 	if !ok {
@@ -99,6 +100,7 @@ func (h *vaccinesHandler) getOverview(c *gin.Context) {
 	c.JSON(http.StatusOK, overview)
 }
 
+// getCatalog 处理 GET /api/vaccines/catalog，返回内置自费疫苗模板库及已加入状态（200）。
 func (h *vaccinesHandler) getCatalog(c *gin.Context) {
 	babyID, ok := mustBabyID(c)
 	if !ok {
@@ -112,6 +114,7 @@ func (h *vaccinesHandler) getCatalog(c *gin.Context) {
 	c.JSON(http.StatusOK, catalog)
 }
 
+// addFromTemplate 处理 POST /api/vaccines/from-template，按默认或定制排期导入自费模板（201 / 409）。
 func (h *vaccinesHandler) addFromTemplate(c *gin.Context) {
 	babyID, birthDate, loc, ok := parseBabyTimezoneContext(c)
 	if !ok {
@@ -130,6 +133,7 @@ func (h *vaccinesHandler) addFromTemplate(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"doses": doses})
 }
 
+// createCustom 处理 POST /api/vaccines，新增单剂或多剂自定义疫苗（201）。
 func (h *vaccinesHandler) createCustom(c *gin.Context) {
 	babyID, birthDate, loc, ok := parseBabyTimezoneContext(c)
 	if !ok {
@@ -148,6 +152,7 @@ func (h *vaccinesHandler) createCustom(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"doses": doses})
 }
 
+// updateDose 处理 PUT /api/vaccines/:id，更新单剂状态、排期、预约或接种记录（200 / 404）。
 func (h *vaccinesHandler) updateDose(c *gin.Context) {
 	babyID, birthDate, loc, ok := parseBabyTimezoneContext(c)
 	if !ok {
@@ -170,6 +175,7 @@ func (h *vaccinesHandler) updateDose(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"dose": dose})
 }
 
+// batchUpdate 处理 POST /api/vaccines/batch，在单事务内批量预约或批量标记已接种（200 / 404）。
 func (h *vaccinesHandler) batchUpdate(c *gin.Context) {
 	babyID, birthDate, loc, ok := parseBabyTimezoneContext(c)
 	if !ok {
@@ -210,6 +216,7 @@ func (h *vaccinesHandler) updateDefaultClinic(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"default_clinic_name": updated})
 }
 
+// deleteTemplate 处理 DELETE /api/vaccines/template/:code，整套移出已加入的自费模板（200 / 400 / 404）。
 func (h *vaccinesHandler) deleteTemplate(c *gin.Context) {
 	babyID, ok := mustBabyID(c)
 	if !ok {
@@ -222,6 +229,7 @@ func (h *vaccinesHandler) deleteTemplate(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"deleted": true})
 }
 
+// deleteDose 处理 DELETE /api/vaccines/:id，删除单剂自定义或自费剂次并重排剩余编号（200 / 400 / 404）。
 func (h *vaccinesHandler) deleteDose(c *gin.Context) {
 	babyID, ok := mustBabyID(c)
 	if !ok {

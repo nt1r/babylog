@@ -173,13 +173,14 @@ export function formatLocalDateTimeShort(isoStr: string): string {
   return `${format(date, 'M月d日')} ${timeText}`;
 }
 
-/** 获取 ISO 时间戳在浏览器本地时区下的 YYYY-MM-DD 键与 HH:mm 显示值。 */
+/** 获取 ISO 时间戳在浏览器本地时区下的 YYYY-MM-DD 自然日键。 */
 export function getLocalDateKeyFromISO(isoStr: string): string {
   const date = parseISO(isoStr);
   if (Number.isNaN(date.getTime())) return '';
   return format(date, 'yyyy-MM-dd');
 }
 
+/** 获取 ISO 时间戳在浏览器本地时区下的 HH:mm 显示值。 */
 export function formatLocalTimeFromISO(isoStr: string): string {
   const date = parseISO(isoStr);
   if (Number.isNaN(date.getTime())) return '--:--';

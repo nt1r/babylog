@@ -14,7 +14,7 @@ pnpm dev
 
 常用校验命令：
 
-- `pnpm lint`：运行 Biome 代码规范检查与 `go vet`（`pnpm format` 可自动格式化前后端代码）
+- `pnpm lint`：运行全仓静态检查、格式校验与工程门禁（详见 `package.json` 与 `scripts/lint-guardrails.sh`；`pnpm format` 可自动格式化前后端代码）
 - `pnpm check`：运行 TypeScript 类型检查（`tsc --noEmit`）
 - `pnpm test`：运行 Go 后端单元与集成测试（`CGO_ENABLED=0 go test`）
 - `pnpm build`：构建前端生产产物并打包单二进制 `bin/babylog`

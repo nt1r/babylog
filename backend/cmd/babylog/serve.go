@@ -62,7 +62,7 @@ func runServe(parentCtx context.Context) error {
 	}
 	defer func() { _ = db.Close() }()
 
-	// 3. 显式注入各领域存储、看板服务与静态资源配置，组装 HTTP 路由。
+	// 3. 显式注入认证、宝宝档案、日常记录、首页看板、疫苗存储与静态资源配置，组装 HTTP 路由。
 	store := auth.NewStore(db.Gorm())
 	babyStore := baby.NewStore(db.Gorm())
 	recordStore := records.NewStore(db.Gorm())

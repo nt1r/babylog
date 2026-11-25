@@ -19,6 +19,7 @@ func TestLoadLocation(t *testing.T) {
 		t.Fatalf("expected UTC, got %v, err=%v", utcLoc, err)
 	}
 
+	// Go 标准库允许 "Local"，BabyLog 刻意将其归为非法时区以消除宿主机时区依赖。
 	for _, bad := range []string{"Invalid/Zone", "Local", "Mars/Olympus"} {
 		if _, err := LoadLocation(bad); err == nil {
 			t.Errorf("expected error for tz %q, got nil", bad)

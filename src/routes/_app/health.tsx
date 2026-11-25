@@ -80,6 +80,7 @@ function HealthPage() {
           note: '',
         },
       });
+      // 单次撤销守卫：防止连点 Toast 撤销按钮触发重复 DELETE 导致误报 404。
       let undone = false;
       toast.success(`已记录 · ${med.name}${med.dosage ? `（${med.dosage}）` : ''}`, `记录时间 ${timeText}`, {
         action: {

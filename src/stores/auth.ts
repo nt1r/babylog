@@ -24,6 +24,7 @@ function cancelActiveRestore() {
   activeRestorePromise = null;
 }
 
+/** 管理员认证会话 Zustand Store，内置在途恢复请求取消与版本号防竞态机制。 */
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   initialized: false,
@@ -81,6 +82,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   login: async (username, password) => {
+    // 发起前递增并取消在途恢复，返回后再递增一次，确保请求期间新触发的恢复结果不会覆盖本次登录态。
     authRevision += 1;
     cancelActiveRestore();
     const user = await loginWithCredentials(username, password);
@@ -90,6 +92,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   logout: async () => {
+    // 与 login 相同的前后双递增版本号守卫，阻断并发会话恢复回写已登出状态。
     authRevision += 1;
     cancelActiveRestore();
     await logoutSession();

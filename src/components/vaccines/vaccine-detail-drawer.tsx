@@ -114,6 +114,7 @@ export function VaccineDetailDrawer({
     setClinicTouched(false);
     setClinicAutoFilled(false);
     setPinAsDefault(false);
+    // 实际接种日回填优先级：已有实打日期 > 未晚于今天的预计/预约日期 > 今天（避免预填未来日期触发校验拦截）。
     let defaultVacDate = currentToday;
     if (currentDose.vaccinated_at) {
       defaultVacDate = currentDose.vaccinated_at;
@@ -146,7 +147,7 @@ export function VaccineDetailDrawer({
     }
   }
 
-  // 仅在从「待接种」切入「已预约」或「已接种」且用户尚未手改接种地点时，自动预填常去门诊（或最近门诊）。
+  // 从「待接种」切入「已预约/已接种」且未手改地点时预填常去门诊；切入「已接种」且同苗有历史厂家时自动展开补充区。
   function handleStatusChange(nextStatus: VaccineStatus) {
     const prevStatus = status;
     setStatus(nextStatus);
@@ -218,6 +219,7 @@ export function VaccineDetailDrawer({
           status,
           age_months: parsedAgeMonths,
           planned_date: plannedDate.trim() || null,
+          // 按目标状态显式清空非当前态字段，与后端 UpdateDose 全量覆写契约对齐。
           scheduled_date: status === 'scheduled' ? scheduledDate : null,
           scheduled_time: status === 'scheduled' ? scheduledTime.trim() || null : null,
           clinic_name: status === 'pending' ? '' : clinicName.trim(),

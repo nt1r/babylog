@@ -53,6 +53,7 @@ export function TimeOffsetPicker({
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   useEffect(() => {
+    // 借 resetKey 变更显式重置折叠区展开态，避免切换抽屉意图或重开后残留上次手动展开状态。
     void resetKey;
     setExpanded(defaultExpanded);
   }, [defaultExpanded, resetKey]);

@@ -13,12 +13,12 @@ func TestAddCalendarMonthsClamped(t *testing.T) {
 		months int
 		want   string
 	}{
-		{"zero months", "2026-01-31", 0, "2026-01-31"},
-		{"non-leap february clamp", "2026-01-31", 1, "2026-02-28"},
-		{"leap february clamp", "2024-01-31", 1, "2024-02-29"},
-		{"cross-year february clamp", "2026-08-31", 6, "2027-02-28"},
-		{"thirty-day month clamp", "2026-03-31", 1, "2026-04-30"},
-		{"six years", "2026-05-15", 72, "2032-05-15"},
+		{"加0个月保持原日", "2026-01-31", 0, "2026-01-31"},
+		{"平年2月末钳位", "2026-01-31", 1, "2026-02-28"},
+		{"闰年2月末钳位", "2024-01-31", 1, "2024-02-29"},
+		{"跨年2月末钳位", "2026-08-31", 6, "2027-02-28"},
+		{"小月30日钳位", "2026-03-31", 1, "2026-04-30"},
+		{"跨6年整月累加", "2026-05-15", 72, "2032-05-15"},
 	}
 
 	for _, tc := range cases {
@@ -64,6 +64,8 @@ func TestBuildDoseViewPlannedDateOverride(t *testing.T) {
 	}
 }
 
+// 验证 7 态提醒状态机精确阈值：待接种 ±14 天内为 due_soon、逾期超 14 天为 overdue；
+// 已预约 0~7 天为 scheduled_soon、过日为 scheduled_overdue。
 func TestDeriveAlertStateBoundaries(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -71,16 +73,16 @@ func TestDeriveAlertStateBoundaries(t *testing.T) {
 		daysUntil int
 		want      string
 	}{
-		{"pending +15d upcoming", StatusPending, 15, AlertUpcoming},
-		{"pending +14d due_soon", StatusPending, 14, AlertDueSoon},
-		{"pending 0d due_soon", StatusPending, 0, AlertDueSoon},
-		{"pending -14d due_soon", StatusPending, -14, AlertDueSoon},
-		{"pending -15d overdue", StatusPending, -15, AlertOverdue},
-		{"scheduled +8d scheduled", StatusScheduled, 8, AlertScheduled},
-		{"scheduled +7d scheduled_soon", StatusScheduled, 7, AlertScheduledSoon},
-		{"scheduled 0d scheduled_soon", StatusScheduled, 0, AlertScheduledSoon},
-		{"scheduled -1d scheduled_overdue", StatusScheduled, -1, AlertScheduledOverdue},
-		{"completed always completed", StatusCompleted, -100, AlertCompleted},
+		{"待接种提前15天_未到龄", StatusPending, 15, AlertUpcoming},
+		{"待接种提前14天_近期可接种", StatusPending, 14, AlertDueSoon},
+		{"待接种当天_近期可接种", StatusPending, 0, AlertDueSoon},
+		{"待接种逾期14天_近期可接种", StatusPending, -14, AlertDueSoon},
+		{"待接种逾期15天_待补种", StatusPending, -15, AlertOverdue},
+		{"已预约提前8天_远期已预约", StatusScheduled, 8, AlertScheduled},
+		{"已预约提前7天_即将接种", StatusScheduled, 7, AlertScheduledSoon},
+		{"已预约当天_即将接种", StatusScheduled, 0, AlertScheduledSoon},
+		{"已预约逾期1天_预约已过期", StatusScheduled, -1, AlertScheduledOverdue},
+		{"已接种恒为已完成", StatusCompleted, -100, AlertCompleted},
 	}
 
 	for _, tc := range cases {
@@ -92,6 +94,7 @@ func TestDeriveAlertStateBoundaries(t *testing.T) {
 	}
 }
 
+// 验证内置目录符合 2025 年国家免疫规划基线（8 种共 22 剂 NIP、百白破 2/4/6/18/72 月龄 5 剂、2 剂产院疫苗）及 5 套自费模板完整性。
 func TestBuiltInCatalogIntegrity(t *testing.T) {
 	nips := nipTemplates()
 	if len(nips) != 8 {
@@ -156,17 +159,17 @@ func TestValidationRules(t *testing.T) {
 		name string
 		in   CreateCustomInput
 	}{
-		{"empty name", CreateCustomInput{VaccineName: "   ", Category: CategoryOptional, Doses: []DosePlanInput{{AgeMonths: 2}}}},
-		{"invalid category", CreateCustomInput{VaccineName: "四联", Category: "free", Doses: []DosePlanInput{{AgeMonths: 2}}}},
-		{"empty doses", CreateCustomInput{VaccineName: "四联", Category: CategoryOptional}},
-		{"too many doses", CreateCustomInput{VaccineName: "四联", Category: CategoryOptional, Doses: make([]DosePlanInput, MaxTotalDoses+1)}},
-		{"negative age", CreateCustomInput{VaccineName: "四联", Category: CategoryOptional, Doses: []DosePlanInput{{AgeMonths: -1}}}},
-		{"age above upper bound", CreateCustomInput{VaccineName: "四联", Category: CategoryOptional, Doses: []DosePlanInput{{AgeMonths: MaxAgeMonths + 1}}}},
-		{"malformed planned date", CreateCustomInput{VaccineName: "四联", Category: CategoryOptional, Doses: []DosePlanInput{{AgeMonths: 2, PlannedDate: &badDate}}}},
-		{"note too long", CreateCustomInput{VaccineName: "四联", Category: CategoryOptional, Doses: []DosePlanInput{{AgeMonths: 2}}, Note: strings.Repeat("a", MaxNoteLength+1)}},
+		{"空疫苗名称", CreateCustomInput{VaccineName: "   ", Category: CategoryOptional, Doses: []DosePlanInput{{AgeMonths: 2}}}},
+		{"非法疫苗分类", CreateCustomInput{VaccineName: "四联", Category: "free", Doses: []DosePlanInput{{AgeMonths: 2}}}},
+		{"空剂次列表", CreateCustomInput{VaccineName: "四联", Category: CategoryOptional}},
+		{"剂次数超上限", CreateCustomInput{VaccineName: "四联", Category: CategoryOptional, Doses: make([]DosePlanInput, MaxTotalDoses+1)}},
+		{"负适龄月龄", CreateCustomInput{VaccineName: "四联", Category: CategoryOptional, Doses: []DosePlanInput{{AgeMonths: -1}}}},
+		{"适龄月龄超上限", CreateCustomInput{VaccineName: "四联", Category: CategoryOptional, Doses: []DosePlanInput{{AgeMonths: MaxAgeMonths + 1}}}},
+		{"预计日期格式错误", CreateCustomInput{VaccineName: "四联", Category: CategoryOptional, Doses: []DosePlanInput{{AgeMonths: 2, PlannedDate: &badDate}}}},
+		{"备注超长", CreateCustomInput{VaccineName: "四联", Category: CategoryOptional, Doses: []DosePlanInput{{AgeMonths: 2}}, Note: strings.Repeat("a", MaxNoteLength+1)}},
 	}
 	for _, tc := range createCases {
-		t.Run("create/"+tc.name, func(t *testing.T) {
+		t.Run("新增/"+tc.name, func(t *testing.T) {
 			_, err := validateCreateInput(tc.in)
 			var valErr *ValidationError
 			if !errors.As(err, &valErr) {
@@ -179,15 +182,15 @@ func TestValidationRules(t *testing.T) {
 		name string
 		in   UpdateDoseInput
 	}{
-		{"invalid status", UpdateDoseInput{Status: "skipped"}},
-		{"scheduled without date", UpdateDoseInput{Status: StatusScheduled}},
-		{"scheduled bad time", UpdateDoseInput{Status: StatusScheduled, ScheduledDate: &validDate, ScheduledTime: &badTime}},
-		{"completed without date", UpdateDoseInput{Status: StatusCompleted}},
-		{"completed future date", UpdateDoseInput{Status: StatusCompleted, VaccinatedAt: &futureDate}},
-		{"completed before birth date", UpdateDoseInput{Status: StatusCompleted, VaccinatedAt: &beforeBirth}},
+		{"非法状态", UpdateDoseInput{Status: "skipped"}},
+		{"已预约缺少日期", UpdateDoseInput{Status: StatusScheduled}},
+		{"已预约时间格式错误", UpdateDoseInput{Status: StatusScheduled, ScheduledDate: &validDate, ScheduledTime: &badTime}},
+		{"已接种缺少日期", UpdateDoseInput{Status: StatusCompleted}},
+		{"已接种未来日期", UpdateDoseInput{Status: StatusCompleted, VaccinatedAt: &futureDate}},
+		{"已接种早于出生日", UpdateDoseInput{Status: StatusCompleted, VaccinatedAt: &beforeBirth}},
 	}
 	for _, tc := range updateCases {
-		t.Run("update/"+tc.name, func(t *testing.T) {
+		t.Run("更新/"+tc.name, func(t *testing.T) {
 			_, err := validateUpdateInput(tc.in, birthDate, today)
 			var valErr *ValidationError
 			if !errors.As(err, &valErr) {
@@ -204,16 +207,16 @@ func TestValidationRules(t *testing.T) {
 		name string
 		in   BatchUpdateInput
 	}{
-		{"invalid action", BatchUpdateInput{Action: "delete", DoseIDs: []int64{1}}},
-		{"empty dose ids", BatchUpdateInput{Action: BatchActionSchedule, ScheduledDate: &validDate}},
-		{"too many dose ids", BatchUpdateInput{Action: BatchActionSchedule, DoseIDs: tooManyIDs, ScheduledDate: &validDate}},
-		{"non-positive dose id", BatchUpdateInput{Action: BatchActionSchedule, DoseIDs: []int64{0}, ScheduledDate: &validDate}},
-		{"schedule without date", BatchUpdateInput{Action: BatchActionSchedule, DoseIDs: []int64{1}}},
-		{"complete future date", BatchUpdateInput{Action: BatchActionComplete, DoseIDs: []int64{1}, VaccinatedAt: &futureDate}},
-		{"complete before birth date", BatchUpdateInput{Action: BatchActionComplete, DoseIDs: []int64{1}, VaccinatedAt: &beforeBirth}},
+		{"非法批量动作", BatchUpdateInput{Action: "delete", DoseIDs: []int64{1}}},
+		{"空剂次ID列表", BatchUpdateInput{Action: BatchActionSchedule, ScheduledDate: &validDate}},
+		{"剂次ID超上限", BatchUpdateInput{Action: BatchActionSchedule, DoseIDs: tooManyIDs, ScheduledDate: &validDate}},
+		{"非正剂次ID", BatchUpdateInput{Action: BatchActionSchedule, DoseIDs: []int64{0}, ScheduledDate: &validDate}},
+		{"批量预约缺少日期", BatchUpdateInput{Action: BatchActionSchedule, DoseIDs: []int64{1}}},
+		{"批量已接种未来日期", BatchUpdateInput{Action: BatchActionComplete, DoseIDs: []int64{1}, VaccinatedAt: &futureDate}},
+		{"批量已接种早于出生日", BatchUpdateInput{Action: BatchActionComplete, DoseIDs: []int64{1}, VaccinatedAt: &beforeBirth}},
 	}
 	for _, tc := range batchCases {
-		t.Run("batch/"+tc.name, func(t *testing.T) {
+		t.Run("批量/"+tc.name, func(t *testing.T) {
 			_, err := validateBatchInput(tc.in, birthDate, today)
 			var valErr *ValidationError
 			if !errors.As(err, &valErr) {

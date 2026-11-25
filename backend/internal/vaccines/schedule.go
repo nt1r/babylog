@@ -43,6 +43,7 @@ func daysInMonth(year int, month time.Month) int {
 }
 
 // calendarDayDiff 计算 target - today 的自然日天数差（两参数均为 YYYY-MM-DD）。
+// 依赖 time.Parse 默认按 UTC 解析（无夏令时 23h/25h 偏移），确保按 24 小时整除无 1 天误差。
 func calendarDayDiff(targetDateStr, todayDateStr string) int {
 	target, err1 := time.Parse(timeutil.DateLayout, targetDateStr)
 	today, err2 := time.Parse(timeutil.DateLayout, todayDateStr)
@@ -52,7 +53,10 @@ func calendarDayDiff(targetDateStr, todayDateStr string) int {
 	return int(target.Sub(today).Hours() / 24)
 }
 
-// deriveAlertState 根据持久化状态与距今自然日天数差推导前端提醒状态。
+// deriveAlertState 根据持久化状态与距今自然日天数差推导 7 态提醒状态：
+//   - completed：恒为 AlertCompleted
+//   - scheduled：< 0 为 scheduled_overdue，[0, 7] 为 scheduled_soon，> 7 为 scheduled
+//   - pending：< -14 为 overdue，[-14, 14] 为 due_soon，> 14 为 upcoming
 func deriveAlertState(status string, daysUntil int) string {
 	switch status {
 	case StatusCompleted:
@@ -105,7 +109,9 @@ func isBirthHospitalDose(rec DoseRecord) bool {
 	return false
 }
 
-// buildDoseView 组合数据库记录、内置知识库与实时派生字段。
+// buildDoseView 组合数据库记录、内置知识库与实时派生字段：
+// EffectiveDate 按三态优先级（vaccinated_at / scheduled_date / planned_date）取非空值，否则回退 defaultDue；
+// Deletable 仅保护内置国家免疫规划模板，放行自费模板与家长自定义（含自定义免费）剂次。
 func buildDoseView(rec DoseRecord, birthDate string, todayKey string) DoseView {
 	defaultDue, err := addCalendarMonthsClamped(birthDate, rec.AgeMonths)
 	if err != nil {
@@ -154,7 +160,7 @@ func buildDoseView(rec DoseRecord, birthDate string, todayKey string) DoseView {
 			view.PrecautionsAfter = append([]string(nil), tpl.PrecautionsAfter...)
 			view.RiskWarning = tpl.RiskWarning
 
-			// 未删改剂次总数时按剂次序号精确匹配提示；若用户删改过剂次数，则按月龄回退匹配，避免序号错位。
+			// 未删改剂次总数时按剂次序号精确匹配提示；若家长删改过剂次数，则按月龄回退匹配，避免序号错位。
 			var matchedDose *templateDose
 			if rec.TotalDoses == len(tpl.Doses) {
 				for i := range tpl.Doses {
@@ -250,6 +256,8 @@ func focusPriority(alertState string) int {
 	}
 }
 
+// pickNextFocus 从全部未完成剂次中按优先级与日期选出主焦点，并合并同提醒状态、同目标日期的同期剂次；
+// 首条剂次缺少门诊或预约时间时，由后续同组剂次补齐以保证焦点卡信息完整。
 func pickNextFocus(doses []DoseView) *NextFocus {
 	candidates := make([]DoseView, 0, len(doses))
 	for _, d := range doses {

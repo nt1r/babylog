@@ -149,6 +149,7 @@ interface BatchVaccineInput {
 export type VaccineStatusFilter = 'all' | 'attention' | 'scheduled' | 'pending' | 'completed';
 export type VaccineCategoryFilter = 'all' | VaccineCategory;
 
+/** 疫苗总览查询的 5 分钟缓存窗口，避免侧栏角标与首页看板切换时重复拉取。 */
 export const VACCINE_OVERVIEW_STALE_MS = 5 * 60_000;
 
 /**
@@ -370,7 +371,7 @@ export function formatShortCnDate(dateStr: string, referenceDateStr?: string): s
   return `${y}年${m}月${d}日`;
 }
 
-/** 按筛选条件过滤剂次列表。 */
+/** 按状态与分类筛选疫苗剂次（其中 attention 聚合四类紧急/临期提醒态）。 */
 export function filterVaccineDoses(
   doses: readonly VaccineDose[],
   statusFilter: VaccineStatusFilter,
@@ -467,10 +468,10 @@ interface CalendarCell {
   readonly doses: VaccineDose[];
 }
 
-/** 构建以周一为起始的自然月日历网格及当月全部剂次列表。 */
+/** 构建以周一为起始的自然月日历网格及当月全部剂次列表（monthIndex 取值 0–11，对应 1–12 月）。 */
 export function buildVaccineCalendarMonth(
   year: number,
-  monthIndex: number, // 0..11
+  monthIndex: number,
   doses: readonly VaccineDose[],
   todayKey: string,
 ): { cells: CalendarCell[]; monthDoses: VaccineDose[] } {
@@ -516,7 +517,7 @@ export function buildVaccineCalendarMonth(
   return { cells, monthDoses };
 }
 
-// ===================== API & TanStack Query Hooks =====================
+// --- API 请求与 TanStack Query Hooks ---
 
 async function fetchVaccinesOverview(signal?: AbortSignal): Promise<VaccineOverviewResponse> {
   const tz = encodeURIComponent(getBrowserTimeZone());

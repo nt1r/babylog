@@ -62,6 +62,7 @@ export async function triggerPwaInstall(): Promise<'accepted' | 'dismissed' | 'u
   return choice.outcome;
 }
 
+/** 订阅 PWA 安装可用态与独立主屏幕运行态，供设置页与安装引导卡片复用。 */
 export function usePwaInstallState() {
   const [standalone, setStandalone] = useState(() => isStandaloneMode());
   const [canPromptInstall, setCanPromptInstall] = useState(() => deferredInstallPrompt !== null);
@@ -101,6 +102,7 @@ export function registerServiceWorker(onUpdateReady?: (applyUpdate: () => void) 
   }
   swRegistered = true;
 
+  // 防止新 SW 接管期间重复触发 controllerchange 造成多次刷新。
   let reloaded = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (reloaded) return;

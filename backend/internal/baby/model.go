@@ -12,6 +12,7 @@ import (
 )
 
 const (
+	// 宝宝档案文本长度（按 Unicode 字符数计）与出生体格合法区间边界。
 	MaxNicknameLength   = 32
 	MaxClinicNameLength = 80
 	MinBirthWeightKg    = 0.3
@@ -20,14 +21,15 @@ const (
 	MaxBirthHeightCm    = 100.0
 )
 
-// ValidationError 表示用户输入不符合业务规则，映射为 HTTP 400。
+// ValidationError 表示宝宝档案输入不符合业务规则，映射为 HTTP 400。
 type ValidationError struct {
 	Message string
 }
 
+// Error 实现内置 error 接口，返回可直接展示给前端的中文校验提示。
 func (e *ValidationError) Error() string { return e.Message }
 
-// ErrAlreadyExists 表示已存在宝宝档案，第 1 期单宝宝模式拒绝重复创建（映射 HTTP 409）。
+// ErrAlreadyExists 表示已存在宝宝档案，单宝宝模式拒绝重复创建（映射 HTTP 409）。
 var ErrAlreadyExists = errors.New("已存在宝宝档案，请直接修改现有信息")
 
 // ErrNotFound 表示尚未创建宝宝档案（映射 HTTP 404 或记录接口前置 409）。

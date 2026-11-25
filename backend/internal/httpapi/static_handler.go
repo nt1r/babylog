@@ -28,6 +28,8 @@ type staticHandler struct {
 	logger          *slog.Logger
 }
 
+// newStaticHandler 初始化静态文件处理器：仅在未显式指定 distDir 时探测内嵌文件系统，
+// 并以打开 index.html 验证构建产物非空，防止空内嵌目录屏蔽本地 fallbackDistDir。
 func newStaticHandler(distDir, fallbackDistDir string, logger *slog.Logger) *staticHandler {
 	var embedded fs.FS
 	if distDir == "" {
@@ -131,7 +133,7 @@ func (h *staticHandler) serveFile(c *gin.Context, relPath string) (bool, error) 
 		return false, nil
 	}
 
-	// 1. 显式指定 BABYLOG_DIST_DIR 时使用 os.OpenRoot（内核级防止符号链接与目录穿越）。
+	// 1. 显式指定 BABYLOG_DIST_DIR 时优先从外部磁盘目录读取。
 	if h.distDir != "" {
 		return serveFromDiskRoot(c, h.distDir, relPath)
 	}

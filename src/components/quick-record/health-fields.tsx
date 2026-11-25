@@ -94,6 +94,7 @@ export function HealthFields({ state, medicinePresets, onChange }: HealthFieldsP
               placeholder="例如：维生素 D3、布洛芬混悬液"
               onChange={(event) => {
                 const nextName = event.target.value;
+                // 手动输入仅在剂量留空且精确命中历史药品时自动补全，避免覆盖家长手填剂量。
                 const matched = !state.medicineDosage.trim()
                   ? medicinePresets.find((med) => med.name === nextName.trim() && med.dosage)
                   : undefined;
@@ -110,6 +111,7 @@ export function HealthFields({ state, medicinePresets, onChange }: HealthFieldsP
                   tone="health"
                   active={state.medicineName === med.name}
                   onClick={() =>
+                    // 主/副联动胶囊切换时同步覆写或清空剂量，防止残留上一个药品的旧剂量。
                     onChange({
                       medicineName: med.name,
                       medicineDosage: med.dosage,

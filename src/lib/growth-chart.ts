@@ -181,6 +181,7 @@ function computeAgeMonths(birthDateKey: string, targetDateKey: string): number |
   return round2(diffDays / 30.4375);
 }
 
+// 按性别取 WHO 参考锚点；性别未填（unknown）时取男女锚点均值作为“综合”参考线。
 function getWhoAnchors(metric: GrowthChartMetric, gender: BabyGender): WhoAnchorPoint[] {
   const pair = WHO_STANDARDS[metric];
   if (gender === 'male') return [...pair.male];
@@ -270,6 +271,7 @@ export function buildGrowthChartSeries(
         ageMonths: 0,
         value: birthValue,
         dateKey: baby.birth_date,
+        // 赋负无穷时间戳确保出生当天只要存在任意手动测量记录即可无条件覆盖基准点。
         recordedAtMs: Number.NEGATIVE_INFINITY,
         isBirth: true,
       });

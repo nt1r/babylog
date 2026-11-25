@@ -12,6 +12,7 @@ import type {
 } from '@/lib/records';
 import { combineLocalDateTimeToISO } from '@/lib/time';
 
+/** 喂养数值边界与步进配置（milkMin < milkStepMin 用于保证手输小奶量时步进控件单调不反向）。 */
 export const FEEDING_BOUNDS = {
   milkMin: 1,
   milkStepMin: 10,
@@ -51,6 +52,7 @@ interface FeedingBuildContext {
   readonly editId?: number;
 }
 
+/** 合并智能默认值与冷启动兜底，解析喂养表单的高频奶量、辅食与亲喂侧别建议。 */
 export function resolveFeedingPresets(defaults?: SmartDefaults): {
   frequentMilk: readonly number[];
   solidPresets: readonly SolidFoodPreset[];
@@ -66,6 +68,7 @@ export function resolveFeedingPresets(defaults?: SmartDefaults): {
   };
 }
 
+/** 基于初始子类型与智能默认值构建新建态喂养表单状态。 */
 export function createDefaultFeedingForm(initialSubtype?: string, defaults?: SmartDefaults): FeedingFormState {
   const subtype: FeedingSubtype =
     initialSubtype === 'breast' || initialSubtype === 'formula' || initialSubtype === 'solid'
@@ -84,6 +87,7 @@ export function createDefaultFeedingForm(initialSubtype?: string, defaults?: Sma
   };
 }
 
+/** 将后端喂养记录 DTO 回填为受控字符串表单状态。 */
 export function feedingFormFromRecord(record: FeedingRecord, defaults?: SmartDefaults): FeedingFormState {
   return {
     subtype: record.subtype,
@@ -97,6 +101,7 @@ export function feedingFormFromRecord(record: FeedingRecord, defaults?: SmartDef
   };
 }
 
+/** 仅校验当前激活子类型可见字段并组装喂养提交载荷（隐藏子类型字段不参与校验）。 */
 export function validateAndBuildFeedingSubmission(
   state: FeedingFormState,
   ctx: FeedingBuildContext,

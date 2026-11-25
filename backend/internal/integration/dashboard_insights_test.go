@@ -59,7 +59,7 @@ func TestDashboardSummaryTimezoneSplitMedicineAndGrowth(t *testing.T) {
 		s := app.Scenario()
 		s.EnsureBaby()
 
-		// 1. 写入跨 UTC 日界线凌晨配方奶（11-23 00:30+08）、两条当日亲喂、跨夜睡眠、尿布、体温与跨日/当日用药。
+		// 写入跨 UTC 日界线凌晨配方奶（11-23 00:30+08）、两条当日亲喂、跨夜睡眠、尿布、体温与跨日/当日用药。
 		s.AddFormula(120, "2026-11-22T16:30:00Z")
 		s.AddDirectBreast("left", 18, "2026-11-22T16:40:00Z")
 		s.AddDirectBreast("right", 12, "2026-11-23T01:30:00Z")
@@ -70,7 +70,7 @@ func TestDashboardSummaryTimezoneSplitMedicineAndGrowth(t *testing.T) {
 		s.AddMedicine("维生素 D3", "1 粒", "2026-11-23T00:30:00Z") // 11-23 08:30+08
 		s.AddMedicine("布洛芬", "2.5 ml", "2026-11-23T06:00:00Z") // 11-23 14:00+08
 
-		// 2. 验证 GET /api/dashboard/summary?tz=Asia/Shanghai 全字段汇总。
+		// 验证 GET /api/dashboard/summary?tz=Asia/Shanghai 全字段汇总。
 		resp := app.Client().Get(t, "/api/dashboard/summary?tz=Asia/Shanghai")
 		resp.RequireStatus(t, http.StatusOK)
 		sum := DecodeJSON[dashboard.SummaryResponse](t, resp)
@@ -108,7 +108,7 @@ func TestDashboardSummaryTimezoneSplitMedicineAndGrowth(t *testing.T) {
 		})
 		client := app.Client()
 
-		// 1. 尚无手动生长记录时，体重与身高均回落出生体格（is_birth=true，日期等于 birth_date），头围为 null。
+		// 尚无手动生长记录时，体重与身高均回落出生体格（is_birth=true，日期等于 birth_date），头围为 null。
 		initResp := client.Get(t, "/api/dashboard/summary?tz=Asia/Shanghai")
 		initResp.RequireStatus(t, http.StatusOK)
 		initGrowth := DecodeJSON[dashboard.SummaryResponse](t, initResp).Growth
@@ -120,7 +120,7 @@ func TestDashboardSummaryTimezoneSplitMedicineAndGrowth(t *testing.T) {
 			t.Fatalf("unexpected birth-fallback growth summary: %+v", initGrowth)
 		}
 
-		// 2. 仅写一条体重记录时，体重转为手动值，身高仍保持出生兜底。
+		// 仅写一条体重记录时，体重转为手动值，身高仍保持出生兜底。
 		s.AddGrowth(GrowthParams{WeightKg: ptr(7.2), RecordedAt: "2026-11-20T04:00:00Z"})
 		midResp := client.Get(t, "/api/dashboard/summary?tz=Asia/Shanghai")
 		midResp.RequireStatus(t, http.StatusOK)
@@ -130,7 +130,7 @@ func TestDashboardSummaryTimezoneSplitMedicineAndGrowth(t *testing.T) {
 			t.Fatalf("unexpected partial weight + birth height summary: %+v", midGrowth)
 		}
 
-		// 3. 追加更早的一条仅含身高的生长记录与两条长牙记录，验证体重/身高跨记录独立解析且头围仍为 null。
+		// 追加更早的一条仅含身高的生长记录与两条长牙记录，验证体重/身高跨记录独立解析且头围仍为 null。
 		s.AddGrowth(GrowthParams{HeightCm: ptr(62.5), RecordedAt: "2026-11-10T04:00:00Z"})
 		s.AddTooth("下中切牙（第 1 颗）", "2026-11-15T04:00:00Z")
 		s.AddTooth("下中切牙（第 2 颗）", "2026-11-22T04:00:00Z")
@@ -155,6 +155,7 @@ func TestDashboardSummaryTimezoneSplitMedicineAndGrowth(t *testing.T) {
  * 1. 验证返回连续 7 个有序日桶且前 5 个空日全零填充。
  * 2. 验证跨夜睡眠拆分为 2026-11-22 的 2.0 小时与 2026-11-23 的 6.0 小时；亲喂 30 分钟/2 次计入当日且不混入 feeding_ml。
  * 3. 验证 5 个有序照护节律时段（清晨/上午/下午/傍晚/夜间）分布计数准确。
+ * 4. 验证跨 7 天窗口起点的睡眠切分、省略 days 默认 7 天、days=14 日期标签及非法 days 返回 400。
  */
 func TestDashboardSevenDayTrendsAndCareRhythm(t *testing.T) {
 	t.Parallel()
@@ -163,7 +164,7 @@ func TestDashboardSevenDayTrendsAndCareRhythm(t *testing.T) {
 	s := app.Scenario()
 	s.EnsureBaby()
 
-	// 1. 仅在最近 2 天写入跨 UTC 凌晨记录、跨夜睡眠及上午照护记录。
+	// 前置造数：仅在最近 2 天写入跨 UTC 凌晨记录、跨夜睡眠及上午照护记录。
 	s.AddFormula(120, "2026-11-22T16:30:00Z")                                             // 11-23 00:30+08（夜间）
 	s.AddDirectBreast("left", 18, "2026-11-22T16:40:00Z")                                 // 11-23 00:40+08（夜间）
 	s.AddDirectBreast("right", 12, "2026-11-23T01:30:00Z")                                // 11-23 09:30+08（上午）
@@ -171,7 +172,7 @@ func TestDashboardSevenDayTrendsAndCareRhythm(t *testing.T) {
 	s.AddDiaper("both", "", "", "2026-11-23T01:00:00Z")                                   // 11-23 09:00+08（上午）
 	s.AddTemperature(36.7, "2026-11-23T01:10:00Z")                                        // 11-23 09:10+08（上午）
 
-	// 2. 请求 7 日趋势并核验空日补零、跨夜拆分与亲喂分离统计。
+	// 1. 请求 7 日趋势并核验返回连续 7 个有序日桶与前 5 个空日全零填充。
 	resp := app.Client().Get(t, "/api/dashboard/trends?days=7&tz=Asia/Shanghai")
 	resp.RequireStatus(t, http.StatusOK)
 	tr := DecodeJSON[dashboard.TrendsResponse](t, resp)
@@ -185,6 +186,8 @@ func TestDashboardSevenDayTrendsAndCareRhythm(t *testing.T) {
 			t.Errorf("expected zero-filled empty day %s, got %+v", d.Date, d)
 		}
 	}
+
+	// 2. 核验跨夜睡眠双日切分及亲喂分钟/次数与 feeding_ml 分离统计。
 	dayPrev, dayToday := tr.Daily[5], tr.Daily[6]
 	if dayPrev.Date != "2026-11-22" || dayPrev.SleepHours != 2.0 ||
 		dayPrev.FeedingML != 0 || dayPrev.DirectBreastMin != 0 || dayPrev.DirectBreastCount != 0 {
