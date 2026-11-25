@@ -6,10 +6,15 @@ import { Button } from '@/components/ui/button';
 import { QuickChip } from '@/components/ui/choice-controls';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/components/ui/toast';
-import { type BatchDrawerIntent, VaccineBatchDrawer } from '@/components/vaccines/vaccine-batch-drawer';
+import { VaccineBatchDrawer } from '@/components/vaccines/vaccine-batch-drawer';
 import { VaccineCatalogDrawer } from '@/components/vaccines/vaccine-catalog-drawer';
+import {
+  type BatchDrawerIntent,
+  type BirthConfirmItem,
+  validateAndBuildBirthConfirmRequests,
+} from '@/components/vaccines/vaccine-codec';
 import { VaccineDetailDrawer } from '@/components/vaccines/vaccine-detail-drawer';
-import { type BirthConfirmItem, VaccineOverview } from '@/components/vaccines/vaccine-overview';
+import { VaccineOverview } from '@/components/vaccines/vaccine-overview';
 import { VaccineTimeline } from '@/components/vaccines/vaccine-timeline';
 import { useBabyProfileQuery } from '@/lib/baby';
 import {
@@ -133,38 +138,17 @@ function VaccinesPage() {
     if (birthConfirmLockRef.current || !overview || items.length === 0) {
       return;
     }
-    // 串行逐剂提交前先对全部勾选剂次统一预校验日期范围，避免第 1 剂落库后第 2 剂因越界报 400 导致半成功状态。
-    for (const { dose, vaccinatedAt } of items) {
-      if (!vaccinatedAt) {
-        toast.error(`请填写「${dose.short_name}」的实际接种日期`);
-        return;
-      }
-      if (vaccinatedAt < overview.birth_date || vaccinatedAt > overview.today) {
-        toast.error(`「${dose.short_name}」的接种日期需在出生日期至今天之间`);
-        return;
-      }
+    const result = validateAndBuildBirthConfirmRequests(items, overview.birth_date, overview.today);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
     }
     birthConfirmLockRef.current = true;
     setConfirmingBirth(true);
     try {
       // 产院乙肝第 1 剂（常为出生当天）与卡介苗（常为出生次日）可能接种日期不同，逐剂按各自确认日期落库。
-      for (const { dose, vaccinatedAt } of items) {
-        await updateDoseMutation.mutateAsync({
-          id: dose.id,
-          input: {
-            status: 'completed',
-            planned_date: dose.planned_date,
-            scheduled_date: null,
-            scheduled_time: null,
-            clinic_name: dose.clinic_name,
-            vaccinated_at: vaccinatedAt,
-            site: dose.site,
-            manufacturer: dose.manufacturer,
-            batch_no: dose.batch_no,
-            reaction: dose.reaction,
-            note: dose.note,
-          },
-        });
+      for (const req of result.requests) {
+        await updateDoseMutation.mutateAsync(req);
       }
       toast.success(`已确认 ${items.length} 剂产院疫苗记录`);
     } catch (cause) {

@@ -14,6 +14,15 @@ import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { toast } from '@/components/ui/toast';
 import { ClinicInputField } from '@/components/vaccines/clinic-input-field';
+import {
+  applyDetailClinicChange,
+  applyDetailStatusChange,
+  createDoseDetailDraft,
+  createEmptyDoseDetailDraft,
+  type DoseDetailDraft,
+  MAX_AGE_MONTHS,
+  validateAndBuildDoseUpdate,
+} from '@/components/vaccines/vaccine-codec';
 import { VaccineKnowledgeSection } from '@/components/vaccines/vaccine-knowledge-section';
 import {
   formatDoseOrderLabel,
@@ -21,7 +30,6 @@ import {
   getAlertBadgeMeta,
   getSameDaySiteSuggestion,
   getSuggestedManufacturers,
-  resolvePreferredClinic,
   useDeleteVaccineDoseMutation,
   useDeleteVaccineTemplateMutation,
   useUpdateVaccineDoseMutation,
@@ -67,101 +75,42 @@ export function VaccineDetailDrawer({
 
   // 关闭动画期间保留上一个 dose 引用，防止抽屉滑出瞬间内容闪烁。
   const [renderedDose, setRenderedDose] = useState<VaccineDose | null>(dose);
-  const [status, setStatus] = useState<VaccineStatus>('pending');
-  const [ageMonths, setAgeMonths] = useState('0');
-  // plannedDate 仅保存用户手动覆盖值；为空时输入框回显 default_due_date，提交仍传 null 以保持出生日期变更联动。
-  const [plannedDate, setPlannedDate] = useState('');
-  const [scheduledDate, setScheduledDate] = useState('');
-  const [scheduledTime, setScheduledTime] = useState('');
-  const [clinicName, setClinicName] = useState('');
-  const [clinicTouched, setClinicTouched] = useState(false);
-  const [clinicAutoFilled, setClinicAutoFilled] = useState(false);
-  const [pinAsDefault, setPinAsDefault] = useState(false);
-  const [vaccinatedAt, setVaccinatedAt] = useState('');
-  const [site, setSite] = useState('');
-  const [manufacturer, setManufacturer] = useState('');
-  const [batchNo, setBatchNo] = useState('');
-  const [reaction, setReaction] = useState('');
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const [note, setNote] = useState('');
+  const [draft, setDraft] = useState<DoseDetailDraft>(createEmptyDoseDetailDraft);
   const [formError, setFormError] = useState<string | null>(null);
   const [deleteMode, setDeleteMode] = useState<'dose' | 'template' | null>(null);
 
   // 仅在抽屉打开或切换不同剂次 ID 时重置表单，防止窗口重连触发后台 refetch 覆盖未保存编辑。
-  const latestDoseRef = useRef(dose);
-  latestDoseRef.current = dose;
-  const allDosesRef = useRef(allDoses);
-  allDosesRef.current = allDoses;
-  const todayRef = useRef(today);
-  todayRef.current = today;
-  const defaultClinicRef = useRef(defaultClinicName);
-  defaultClinicRef.current = defaultClinicName;
-  const recentClinicsRef = useRef(recentClinics);
-  recentClinicsRef.current = recentClinics;
+  const latestRef = useRef({ dose, allDoses, today, defaultClinicName, recentClinics });
+  latestRef.current = { dose, allDoses, today, defaultClinicName, recentClinics };
   const doseId = dose?.id ?? null;
 
   useEffect(() => {
-    const currentDose = latestDoseRef.current;
-    if (!open || !currentDose) return;
-    const currentToday = todayRef.current;
-    setRenderedDose(currentDose);
-    setStatus(currentDose.status);
-    setAgeMonths(String(currentDose.age_months));
-    setPlannedDate(currentDose.planned_date ?? '');
-    setScheduledDate(currentDose.scheduled_date ?? currentDose.effective_date);
-    setScheduledTime(currentDose.scheduled_time ?? '');
-    setClinicName(currentDose.clinic_name);
-    setClinicTouched(false);
-    setClinicAutoFilled(false);
-    setPinAsDefault(false);
-    // 实际接种日回填优先级：已有实打日期 > 未晚于今天的预计/预约日期 > 今天（避免预填未来日期触发校验拦截）。
-    let defaultVacDate = currentToday;
-    if (currentDose.vaccinated_at) {
-      defaultVacDate = currentDose.vaccinated_at;
-    } else if (currentDose.effective_date <= currentToday) {
-      defaultVacDate = currentDose.effective_date;
-    }
-    setVaccinatedAt(defaultVacDate);
-    setSite(currentDose.site || (currentDose.route.includes('口服') ? '口服' : ''));
-    setManufacturer(currentDose.manufacturer);
-    setBatchNo(currentDose.batch_no);
-    setReaction(currentDose.reaction);
-    // 已有绿本厂家/批号/反应或同疫苗存在历史推荐厂家时默认展开补充区，确保同苗厂家建议立即可见。
-    const hasSiblingMakers = getSuggestedManufacturers(currentDose, allDosesRef.current).length > 0;
-    setDetailsOpen(
-      Boolean(currentDose.manufacturer || currentDose.batch_no || currentDose.reaction || hasSiblingMakers),
-    );
-    setNote(currentDose.note);
+    const current = latestRef.current;
+    if (!open || !current.dose) return;
+    setRenderedDose(current.dose);
+    setDraft(createDoseDetailDraft(current.dose, { allDoses: current.allDoses, today: current.today }));
     setFormError(null);
     setDeleteMode(null);
   }, [open, doseId]);
 
-  function handleClinicChange(nextValue: string) {
-    setClinicName(nextValue);
-    setClinicTouched(true);
-    setClinicAutoFilled(false);
-    const trimmed = nextValue.trim();
-    // 输入清空或切回当前默认门诊（此时置顶勾选框会隐藏）时同步复位 pinAsDefault，避免后续改填其他医院时残留勾选态误改默认门诊。
-    if (!trimmed || trimmed === defaultClinicRef.current.trim()) {
-      setPinAsDefault(false);
-    }
+  function patchDraft(patch: Partial<DoseDetailDraft>) {
+    setDraft((prev) => ({ ...prev, ...patch }));
   }
 
-  // 从「待接种」切入「已预约/已接种」且未手改地点时预填常去门诊；切入「已接种」且同苗有历史厂家时自动展开补充区。
+  function handleClinicChange(nextValue: string) {
+    setDraft((prev) => applyDetailClinicChange(prev, nextValue, latestRef.current.defaultClinicName));
+  }
+
   function handleStatusChange(nextStatus: VaccineStatus) {
-    const prevStatus = status;
-    setStatus(nextStatus);
+    const current = latestRef.current;
     setFormError(null);
-    if (prevStatus === 'pending' && nextStatus !== 'pending' && !clinicTouched && !clinicName.trim()) {
-      const preferred = resolvePreferredClinic(defaultClinicRef.current, recentClinicsRef.current);
-      if (preferred) {
-        setClinicName(preferred);
-        setClinicAutoFilled(true);
-      }
-    }
-    if (nextStatus === 'completed' && active && getSuggestedManufacturers(active, allDosesRef.current).length > 0) {
-      setDetailsOpen(true);
-    }
+    setDraft((prev) =>
+      applyDetailStatusChange(prev, nextStatus, renderedDose, {
+        allDoses: current.allDoses,
+        defaultClinicName: current.defaultClinicName,
+        recentClinics: current.recentClinics,
+      }),
+    );
   }
 
   const busy = updateMutation.isPending || deleteMutation.isPending || deleteTemplateMutation.isPending;
@@ -176,65 +125,16 @@ export function VaccineDetailDrawer({
     event.preventDefault();
     if (!renderedDose || busy) return;
 
-    if (status === 'scheduled' && !scheduledDate) {
-      setFormError('登记预约时请选择预约日期');
+    const result = validateAndBuildDoseUpdate(draft, renderedDose, { birthDate, today });
+    if (!result.ok) {
+      setFormError(result.error);
       return;
-    }
-    if (status === 'completed') {
-      if (!vaccinatedAt) {
-        setFormError('标记已接种时请选择实际接种日期');
-        return;
-      }
-      if (vaccinatedAt > today) {
-        setFormError('实际接种日期不能晚于今天');
-        return;
-      }
-      if (birthDate && vaccinatedAt < birthDate) {
-        setFormError('实际接种日期不能早于宝宝出生日期');
-        return;
-      }
-    }
-
-    // 适龄月龄输入框仅在 pending 态渲染，非 pending 态不校验也不下发，避免隐藏字段拦阻提交或覆盖模板阶段文案。
-    let parsedAgeMonths: number | undefined;
-    if (status === 'pending' && renderedDose.deletable) {
-      const trimmedAge = ageMonths.trim();
-      if (!/^\d+$/.test(trimmedAge)) {
-        setFormError('适龄月龄请填写 0 至 144 之间的整数');
-        return;
-      }
-      const n = Number.parseInt(trimmedAge, 10);
-      if (n < 0 || n > 144) {
-        setFormError('适龄月龄应在 0 至 144 个月之间');
-        return;
-      }
-      parsedAgeMonths = n;
     }
 
     setFormError(null);
     try {
-      await updateMutation.mutateAsync({
-        id: renderedDose.id,
-        input: {
-          status,
-          age_months: parsedAgeMonths,
-          planned_date: plannedDate.trim() || null,
-          // 按目标状态显式清空非当前态字段，与后端 UpdateDose 全量覆写契约对齐。
-          scheduled_date: status === 'scheduled' ? scheduledDate : null,
-          scheduled_time: status === 'scheduled' ? scheduledTime.trim() || null : null,
-          clinic_name: status === 'pending' ? '' : clinicName.trim(),
-          set_default_clinic: status !== 'pending' && Boolean(clinicName.trim()) && pinAsDefault,
-          vaccinated_at: status === 'completed' ? vaccinatedAt : null,
-          site: status === 'completed' ? site.trim() : '',
-          manufacturer: status === 'completed' ? manufacturer.trim() : '',
-          batch_no: status === 'completed' ? batchNo.trim() : '',
-          reaction: status === 'completed' ? reaction.trim() : '',
-          note: note.trim(),
-        },
-      });
-      toast.success(
-        status === 'completed' ? '接种记录已保存' : status === 'scheduled' ? '疫苗预约已登记' : '疫苗计划已更新',
-      );
+      await updateMutation.mutateAsync({ id: renderedDose.id, input: result.input });
+      toast.success(result.toastTitle);
       onOpenChange(false);
     } catch (cause) {
       setFormError(cause instanceof Error ? cause.message : '保存失败，请稍后重试');
@@ -263,8 +163,8 @@ export function VaccineDetailDrawer({
   const isOptionalTemplate = Boolean(active?.template_code && active.category === 'optional');
   const suggestedManufacturers = active ? getSuggestedManufacturers(active, allDoses) : [];
   const sameDaySite =
-    active && status === 'completed' && !active.route.includes('口服')
-      ? getSameDaySiteSuggestion(active.id, vaccinatedAt, allDoses)
+    active && draft.status === 'completed' && !active.route.includes('口服')
+      ? getSameDaySiteSuggestion(active.id, draft.vaccinatedAt, allDoses)
       : { usedSites: [], recommendedSite: null };
 
   return (
@@ -343,7 +243,7 @@ export function VaccineDetailDrawer({
                     <ChoiceCardButton
                       key={opt.value}
                       disabled={busy}
-                      active={status === opt.value}
+                      active={draft.status === opt.value}
                       onClick={() => handleStatusChange(opt.value)}
                     >
                       {opt.label}
@@ -359,7 +259,7 @@ export function VaccineDetailDrawer({
                 </Alert>
               ) : null}
 
-              {status === 'pending' ? (
+              {draft.status === 'pending' ? (
                 <FieldGroup className="space-y-3">
                   {active.deletable ? (
                     <Field>
@@ -369,11 +269,11 @@ export function VaccineDetailDrawer({
                           id="vac-age-months"
                           type="number"
                           inputMode="numeric"
-                          min="0"
-                          max="144"
-                          value={ageMonths}
+                          min={0}
+                          max={MAX_AGE_MONTHS}
+                          value={draft.ageMonths}
                           className="w-28 tabular-nums"
-                          onChange={(e) => setAgeMonths(e.target.value)}
+                          onChange={(e) => patchDraft({ ageMonths: e.target.value })}
                         />
                         <span className="text-xs text-muted-foreground">月龄（修改后自动更新默认推算日）</span>
                       </div>
@@ -385,13 +285,18 @@ export function VaccineDetailDrawer({
                     <div className="flex items-center gap-2">
                       <DatePicker
                         id="vac-planned-date"
-                        value={plannedDate || active.default_due_date}
+                        value={draft.plannedDate || active.default_due_date}
                         ariaLabel="预计日期"
                         drawerTitle="预计接种日期"
-                        onChange={setPlannedDate}
+                        onChange={(plannedDate) => patchDraft({ plannedDate })}
                       />
-                      {plannedDate ? (
-                        <Button type="button" variant="outline" size="sm" onClick={() => setPlannedDate('')}>
+                      {draft.plannedDate ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => patchDraft({ plannedDate: '' })}
+                        >
                           恢复默认
                         </Button>
                       ) : null}
@@ -403,7 +308,7 @@ export function VaccineDetailDrawer({
                 </FieldGroup>
               ) : null}
 
-              {status === 'scheduled' ? (
+              {draft.status === 'scheduled' ? (
                 <FieldGroup className="space-y-3">
                   <DateTimeInputRow
                     dateId="vac-sched-date"
@@ -414,27 +319,27 @@ export function VaccineDetailDrawer({
                     timeAriaLabel="预约时间（可选）"
                     timePlaceholder="可选"
                     timeClearable
-                    dateValue={scheduledDate}
-                    timeValue={scheduledTime}
-                    onDateChange={setScheduledDate}
-                    onTimeChange={setScheduledTime}
+                    dateValue={draft.scheduledDate}
+                    timeValue={draft.scheduledTime}
+                    onDateChange={(scheduledDate) => patchDraft({ scheduledDate })}
+                    onTimeChange={(scheduledTime) => patchDraft({ scheduledTime })}
                   />
 
                   <ClinicInputField
                     id="vac-clinic"
                     label="接种地点 / 社区门诊"
-                    value={clinicName}
+                    value={draft.clinicName}
                     defaultClinicName={defaultClinicName}
                     recentClinics={recentClinics}
-                    autoFilled={clinicAutoFilled}
-                    pinAsDefault={pinAsDefault}
-                    onPinAsDefaultChange={setPinAsDefault}
+                    autoFilled={draft.clinicAutoFilled}
+                    pinAsDefault={draft.pinAsDefault}
+                    onPinAsDefaultChange={(pinAsDefault) => patchDraft({ pinAsDefault })}
                     onChange={handleClinicChange}
                   />
                 </FieldGroup>
               ) : null}
 
-              {status === 'completed' ? (
+              {draft.status === 'completed' ? (
                 <FieldGroup className="space-y-3">
                   <Field>
                     <FieldLabel htmlFor="vac-completed-date">实际接种日期</FieldLabel>
@@ -442,22 +347,22 @@ export function VaccineDetailDrawer({
                       id="vac-completed-date"
                       min={birthDate}
                       max={today}
-                      value={vaccinatedAt}
+                      value={draft.vaccinatedAt}
                       ariaLabel="实际接种日期"
                       drawerTitle="实际接种日期"
-                      onChange={setVaccinatedAt}
+                      onChange={(vaccinatedAt) => patchDraft({ vaccinatedAt })}
                     />
                   </Field>
 
                   <ClinicInputField
                     id="vac-done-clinic"
                     label="接种地点（可选）"
-                    value={clinicName}
+                    value={draft.clinicName}
                     defaultClinicName={defaultClinicName}
                     recentClinics={recentClinics}
-                    autoFilled={clinicAutoFilled}
-                    pinAsDefault={pinAsDefault}
-                    onPinAsDefaultChange={setPinAsDefault}
+                    autoFilled={draft.clinicAutoFilled}
+                    pinAsDefault={draft.pinAsDefault}
+                    onPinAsDefaultChange={(pinAsDefault) => patchDraft({ pinAsDefault })}
                     onChange={handleClinicChange}
                   />
 
@@ -473,22 +378,22 @@ export function VaccineDetailDrawer({
                     </div>
                     <Input
                       id="vac-site"
-                      value={site}
+                      value={draft.site}
                       maxLength={32}
                       placeholder="如 左上臂 / 左大腿前外侧 / 口服"
-                      onChange={(e) => setSite(e.target.value)}
+                      onChange={(e) => patchDraft({ site: e.target.value })}
                     />
                     <div className="flex flex-wrap gap-1.5 pt-1">
                       {VACCINE_SITE_PRESETS.map((preset) => {
-                        const isRecommended = !site && sameDaySite.recommendedSite === preset;
+                        const isRecommended = !draft.site && sameDaySite.recommendedSite === preset;
                         return (
                           <QuickChip
                             key={preset}
                             variant="outline"
                             tone={isRecommended ? 'primary' : 'health'}
                             disabled={busy}
-                            active={site === preset}
-                            onClick={() => setSite(preset)}
+                            active={draft.site === preset}
+                            onClick={() => patchDraft({ site: preset })}
                             className={isRecommended ? 'border-primary/60 text-primary' : undefined}
                           >
                             {preset}
@@ -500,16 +405,18 @@ export function VaccineDetailDrawer({
                   </Field>
 
                   <Collapsible
-                    open={detailsOpen}
-                    onOpenChange={setDetailsOpen}
+                    open={draft.detailsOpen}
+                    onOpenChange={(detailsOpen) => patchDraft({ detailsOpen })}
                     className="rounded-xl border border-border/75 bg-muted/20 px-3 py-2.5"
                   >
                     <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 text-left text-[13px] font-medium text-foreground">
                       <span className="flex min-w-0 items-center gap-2">
                         <span>补充绿本与反应记录</span>
                         <span className="truncate text-xs font-normal text-muted-foreground">
-                          {manufacturer || batchNo || reaction
-                            ? [manufacturer, batchNo && `批号 ${batchNo}`, reaction].filter(Boolean).join(' · ')
+                          {draft.manufacturer || draft.batchNo || draft.reaction
+                            ? [draft.manufacturer, draft.batchNo && `批号 ${draft.batchNo}`, draft.reaction]
+                                .filter(Boolean)
+                                .join(' · ')
                             : suggestedManufacturers.length > 0
                               ? '可快捷选曾用厂家 · 批号与反应（选填）'
                               : '厂家、批号、反应观察（选填）'}
@@ -525,10 +432,10 @@ export function VaccineDetailDrawer({
                             <FieldLabel htmlFor="vac-maker">疫苗品牌 / 厂家（可选）</FieldLabel>
                             <Input
                               id="vac-maker"
-                              value={manufacturer}
+                              value={draft.manufacturer}
                               maxLength={60}
                               placeholder="对照绿本选填"
-                              onChange={(e) => setManufacturer(e.target.value)}
+                              onChange={(e) => patchDraft({ manufacturer: e.target.value })}
                             />
                             {suggestedManufacturers.length > 0 ? (
                               <div className="flex flex-wrap gap-1.5 pt-1">
@@ -537,8 +444,8 @@ export function VaccineDetailDrawer({
                                     key={maker}
                                     variant="outline"
                                     disabled={busy}
-                                    active={manufacturer === maker}
-                                    onClick={() => setManufacturer(maker)}
+                                    active={draft.manufacturer === maker}
+                                    onClick={() => patchDraft({ manufacturer: maker })}
                                   >
                                     {maker}
                                   </QuickChip>
@@ -550,11 +457,11 @@ export function VaccineDetailDrawer({
                             <FieldLabel htmlFor="vac-batch">疫苗批号（可选）</FieldLabel>
                             <Input
                               id="vac-batch"
-                              value={batchNo}
+                              value={draft.batchNo}
                               maxLength={60}
                               placeholder="对照绿本选填"
                               className="tabular-nums"
-                              onChange={(e) => setBatchNo(e.target.value)}
+                              onChange={(e) => patchDraft({ batchNo: e.target.value })}
                             />
                           </Field>
                         </div>
@@ -563,10 +470,10 @@ export function VaccineDetailDrawer({
                           <FieldLabel htmlFor="vac-reaction">接种后反应观察（可选）</FieldLabel>
                           <Input
                             id="vac-reaction"
-                            value={reaction}
+                            value={draft.reaction}
                             maxLength={200}
                             placeholder="如 无异常 / 低热 37.6℃"
-                            onChange={(e) => setReaction(e.target.value)}
+                            onChange={(e) => patchDraft({ reaction: e.target.value })}
                           />
                           <div className="flex flex-wrap gap-1.5 pt-1">
                             {VACCINE_REACTION_PRESETS.map((preset) => (
@@ -574,8 +481,8 @@ export function VaccineDetailDrawer({
                                 key={preset}
                                 variant="outline"
                                 disabled={busy}
-                                active={reaction === preset}
-                                onClick={() => setReaction(preset)}
+                                active={draft.reaction === preset}
+                                onClick={() => patchDraft({ reaction: preset })}
                               >
                                 {preset}
                               </QuickChip>
@@ -612,10 +519,10 @@ export function VaccineDetailDrawer({
                 <FieldLabel htmlFor="vac-note">备注（可选）</FieldLabel>
                 <Input
                   id="vac-note"
-                  value={note}
+                  value={draft.note}
                   maxLength={500}
                   placeholder="如 医生建议间隔时间、携带资料提醒等"
-                  onChange={(e) => setNote(e.target.value)}
+                  onChange={(e) => patchDraft({ note: e.target.value })}
                 />
               </Field>
             </form>

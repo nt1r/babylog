@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/nt1r/babylog/backend/internal/baby"
 	"github.com/nt1r/babylog/backend/internal/timeutil"
 )
 
@@ -165,7 +166,7 @@ func validateUpdateInput(in UpdateDoseInput, birthDate, todayKey string) (Update
 	if err != nil {
 		return UpdateDoseInput{}, err
 	}
-	clinicName, err := normalizeText(in.ClinicName, MaxClinicLength, "接种地点")
+	clinicName, err := normalizeText(in.ClinicName, baby.MaxClinicNameLength, "接种地点")
 	if err != nil {
 		return UpdateDoseInput{}, err
 	}
@@ -266,7 +267,7 @@ func validateBatchInput(in BatchUpdateInput, birthDate, todayKey string) (BatchU
 		uniqueIDs = append(uniqueIDs, id)
 	}
 
-	clinicName, err := normalizeOptionalTextPtr(in.ClinicName, MaxClinicLength, "接种地点")
+	clinicName, err := normalizeOptionalTextPtr(in.ClinicName, baby.MaxClinicNameLength, "接种地点")
 	if err != nil {
 		return BatchUpdateInput{}, err
 	}

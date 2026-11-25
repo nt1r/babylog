@@ -1,13 +1,16 @@
 # 前端临时验证说明
 
-根据 `AGENTS.md`，纳入 Git 的自动化测试仅限后端 Go 测试；前端纯逻辑（codec、视图模型、列表聚合等）通过系统临时目录（`$TMPDIR`）执行 `in-process` 断言验证，任务结束立即清理。
+根据 `AGENTS.md`，纳入 Git 的自动化测试仅限后端 Go 测试；前端纯逻辑（codec、视图模型、列表聚合等）通过系统临时目录（`$TMPDIR`）执行 `in-process` 断言验证，任务结束立即清理。编辑完前后端代码后建议先执行 `pnpm format`，再串联 `pnpm check && pnpm lint`，避免因格式差异触发额外重试。
 
 ## 在 `$TMPDIR` 下加载工作区 TS 模块（避免 `ERR_MODULE_NOT_FOUND`）
 
-由于临时脚本位于 Git 工作区之外，Node ESM 无法直接按裸包名 `import 'vite'` 解析工作区 `node_modules`。通过 `pathToFileURL` 指向当前工作区的 Vite 入口并调用 `ssrLoadModule`，即可复用 `@/` 路径别名与 TypeScript 转译：
+由于临时脚本位于 Git 工作区之外，Node ESM 无法直接按裸包名 `import 'vite'` 解析工作区 `node_modules`。通过 `pathToFileURL` 指向当前工作区的 Vite 入口并调用 `ssrLoadModule`，即可复用 `@/` 路径别名与 TypeScript 转译；脚本开头务必启用 `set -euo pipefail` 与 `trap`，防止前置步骤失败后残留临时文件或误入交互式 `node` REPL：
 
 ```bash
+set -euo pipefail
 TMP_TEST="${TMPDIR:-/tmp}/verify-frontend-$$.mjs"
+trap 'rm -f "$TMP_TEST"' EXIT
+
 cat <<'EOF' > "$TMP_TEST"
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -31,7 +34,8 @@ try {
   await server.close();
 }
 EOF
-node "$TMP_TEST"; STATUS=$?; rm -f "$TMP_TEST"; exit $STATUS
+
+node "$TMP_TEST"
 ```
 
 ## 免登录隔离 UI 组件视觉预览（按需用于新页面/大幅排版与配色调整）

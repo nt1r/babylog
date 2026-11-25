@@ -12,20 +12,17 @@ import (
 	"github.com/nt1r/babylog/backend/internal/vaccines"
 )
 
-// vaccinesHandler 处理疫苗接种计划、模板库、常去接种门诊、自定义添加、单剂更新、批量操作与删除接口。
-// 路由组已挂载 requireBabyProfileMiddleware（注入完整宝宝档案），处理器直接从上下文读取档案信息，
-// 并注入 babyStore 供 PUT /api/vaccines/default-clinic 复用档案持久化。
+// vaccinesHandler 处理疫苗接种计划、模板库、自定义添加、单剂更新、批量操作与删除接口。
+// 路由组已挂载 requireBabyProfileMiddleware（注入完整宝宝档案），处理器直接透传 *baby.Profile 给 vaccines.Store。
 type vaccinesHandler struct {
-	store     *vaccines.Store
-	babyStore *baby.Store
-	logger    *slog.Logger
+	store  *vaccines.Store
+	logger *slog.Logger
 }
 
-func newVaccinesHandler(store *vaccines.Store, babyStore *baby.Store, logger *slog.Logger) *vaccinesHandler {
+func newVaccinesHandler(store *vaccines.Store, logger *slog.Logger) *vaccinesHandler {
 	return &vaccinesHandler{
-		store:     store,
-		babyStore: babyStore,
-		logger:    logger,
+		store:  store,
+		logger: logger,
 	}
 }
 
@@ -33,7 +30,6 @@ func newVaccinesHandler(store *vaccines.Store, babyStore *baby.Store, logger *sl
 func (h *vaccinesHandler) registerRoutes(group *gin.RouterGroup) {
 	group.GET("", h.getOverview)
 	group.GET("/catalog", h.getCatalog)
-	group.PUT("/default-clinic", h.updateDefaultClinic)
 	group.POST("/from-template", h.addFromTemplate)
 	group.POST("/batch", h.batchUpdate)
 	group.POST("", h.createCustom)
@@ -43,20 +39,16 @@ func (h *vaccinesHandler) registerRoutes(group *gin.RouterGroup) {
 }
 
 // parseBabyTimezoneContext 统一提取中间件注入的宝宝档案上下文与请求 IANA 时区，避免各处理器重复校验样板。
-func parseBabyTimezoneContext(c *gin.Context) (int64, string, *time.Location, bool) {
-	babyID, ok := mustBabyID(c)
+func parseBabyTimezoneContext(c *gin.Context) (*baby.Profile, *time.Location, bool) {
+	profile, ok := mustBabyProfile(c)
 	if !ok {
-		return 0, "", nil, false
-	}
-	birthDate, ok := mustBabyBirthDate(c)
-	if !ok {
-		return 0, "", nil, false
+		return nil, nil, false
 	}
 	loc, ok := parseTimezoneQuery(c)
 	if !ok {
-		return 0, "", nil, false
+		return nil, nil, false
 	}
-	return babyID, birthDate, loc, true
+	return profile, loc, true
 }
 
 // handleErr 将 vaccines 领域错误统一映射为中文 HTTP 状态码（400/404/409/500）。
@@ -84,15 +76,11 @@ func (h *vaccinesHandler) handleErr(c *gin.Context, op string, err error) {
 
 // getOverview 处理 GET /api/vaccines，按请求时区返回完整疫苗计划与提醒概览（200）。
 func (h *vaccinesHandler) getOverview(c *gin.Context) {
-	profile, ok := mustBabyProfile(c)
+	profile, loc, ok := parseBabyTimezoneContext(c)
 	if !ok {
 		return
 	}
-	loc, ok := parseTimezoneQuery(c)
-	if !ok {
-		return
-	}
-	overview, err := h.store.GetOverview(c.Request.Context(), profile.ID, profile.BirthDate, profile.DefaultClinicName, loc)
+	overview, err := h.store.GetOverview(c.Request.Context(), profile, loc)
 	if err != nil {
 		h.handleErr(c, "getVaccineOverview", err)
 		return
@@ -116,7 +104,7 @@ func (h *vaccinesHandler) getCatalog(c *gin.Context) {
 
 // addFromTemplate 处理 POST /api/vaccines/from-template，按默认或定制排期导入自费模板（201 / 409）。
 func (h *vaccinesHandler) addFromTemplate(c *gin.Context) {
-	babyID, birthDate, loc, ok := parseBabyTimezoneContext(c)
+	profile, loc, ok := parseBabyTimezoneContext(c)
 	if !ok {
 		return
 	}
@@ -125,7 +113,7 @@ func (h *vaccinesHandler) addFromTemplate(c *gin.Context) {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
-	doses, err := h.store.AddFromTemplate(c.Request.Context(), babyID, birthDate, loc, input)
+	doses, err := h.store.AddFromTemplate(c.Request.Context(), profile, loc, input)
 	if err != nil {
 		h.handleErr(c, "addVaccineTemplate", err)
 		return
@@ -135,7 +123,7 @@ func (h *vaccinesHandler) addFromTemplate(c *gin.Context) {
 
 // createCustom 处理 POST /api/vaccines，新增单剂或多剂自定义疫苗（201）。
 func (h *vaccinesHandler) createCustom(c *gin.Context) {
-	babyID, birthDate, loc, ok := parseBabyTimezoneContext(c)
+	profile, loc, ok := parseBabyTimezoneContext(c)
 	if !ok {
 		return
 	}
@@ -144,7 +132,7 @@ func (h *vaccinesHandler) createCustom(c *gin.Context) {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
-	doses, err := h.store.CreateCustom(c.Request.Context(), babyID, birthDate, loc, input)
+	doses, err := h.store.CreateCustom(c.Request.Context(), profile, loc, input)
 	if err != nil {
 		h.handleErr(c, "createCustomVaccine", err)
 		return
@@ -154,7 +142,7 @@ func (h *vaccinesHandler) createCustom(c *gin.Context) {
 
 // updateDose 处理 PUT /api/vaccines/:id，更新单剂状态、排期、预约或接种记录（200 / 404）。
 func (h *vaccinesHandler) updateDose(c *gin.Context) {
-	babyID, birthDate, loc, ok := parseBabyTimezoneContext(c)
+	profile, loc, ok := parseBabyTimezoneContext(c)
 	if !ok {
 		return
 	}
@@ -167,7 +155,7 @@ func (h *vaccinesHandler) updateDose(c *gin.Context) {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
-	dose, err := h.store.UpdateDose(c.Request.Context(), babyID, id, birthDate, loc, input)
+	dose, err := h.store.UpdateDose(c.Request.Context(), profile, id, loc, input)
 	if err != nil {
 		h.handleErr(c, "updateVaccineDose", err)
 		return
@@ -177,7 +165,7 @@ func (h *vaccinesHandler) updateDose(c *gin.Context) {
 
 // batchUpdate 处理 POST /api/vaccines/batch，在单事务内批量预约或批量标记已接种（200 / 404）。
 func (h *vaccinesHandler) batchUpdate(c *gin.Context) {
-	babyID, birthDate, loc, ok := parseBabyTimezoneContext(c)
+	profile, loc, ok := parseBabyTimezoneContext(c)
 	if !ok {
 		return
 	}
@@ -186,34 +174,12 @@ func (h *vaccinesHandler) batchUpdate(c *gin.Context) {
 		c.JSON(status, gin.H{"error": msg})
 		return
 	}
-	doses, err := h.store.BatchUpdate(c.Request.Context(), babyID, birthDate, loc, input)
+	doses, err := h.store.BatchUpdate(c.Request.Context(), profile, loc, input)
 	if err != nil {
 		h.handleErr(c, "batchUpdateVaccines", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"doses": doses})
-}
-
-// updateDefaultClinic 处理 PUT /api/vaccines/default-clinic：
-// 路由归属疫苗工作区以便直接行内设置常去门诊，底层字段归属单宝宝档案因此委派给 babyStore 持久化。
-func (h *vaccinesHandler) updateDefaultClinic(c *gin.Context) {
-	babyID, ok := mustBabyID(c)
-	if !ok {
-		return
-	}
-	var input struct {
-		ClinicName string `json:"clinic_name"`
-	}
-	if status, msg := decodeJSONBody(c, &input); status != 0 {
-		c.JSON(status, gin.H{"error": msg})
-		return
-	}
-	updated, err := h.babyStore.UpdateDefaultClinic(c.Request.Context(), babyID, input.ClinicName)
-	if err != nil {
-		handleBabyStoreError(c, h.logger, "updateDefaultClinic", err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"default_clinic_name": updated})
 }
 
 // deleteTemplate 处理 DELETE /api/vaccines/template/:code，整套移出已加入的自费模板（200 / 400 / 404）。

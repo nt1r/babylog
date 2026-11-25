@@ -12,19 +12,14 @@ import { Spinner } from '@/components/ui/spinner';
 import { toast } from '@/components/ui/toast';
 import { ClinicInputField } from '@/components/vaccines/clinic-input-field';
 import {
-  formatDoseShortTitle,
-  resolvePreferredClinic,
-  useBatchVaccineMutation,
-  type VaccineDose,
-} from '@/lib/vaccines';
-
-export interface BatchDrawerIntent {
-  readonly action: 'schedule' | 'complete';
-  readonly stageLabel: string;
-  readonly doseIds: number[];
-  readonly defaultDate: string;
-  readonly defaultClinic?: string;
-}
+  applyBatchClinicChange,
+  type BatchDoseDraft,
+  type BatchDrawerIntent,
+  createBatchDoseDraft,
+  createEmptyBatchDoseDraft,
+  validateAndBuildBatchUpdate,
+} from '@/components/vaccines/vaccine-codec';
+import { formatDoseShortTitle, useBatchVaccineMutation, type VaccineDose } from '@/lib/vaccines';
 
 interface VaccineBatchDrawerProps {
   readonly open: boolean;
@@ -51,68 +46,23 @@ export function VaccineBatchDrawer({
   const batchMutation = useBatchVaccineMutation();
   // 关闭动画期间保留上一次意图，避免抽屉滑出瞬间标题与剂次列表闪烁。
   const [renderedIntent, setRenderedIntent] = useState<BatchDrawerIntent | null>(intent);
-  const [date, setDate] = useState('');
-  const [time, setTime] = useState('');
-  const [clinicName, setClinicName] = useState('');
-  const [clinicAutoFilled, setClinicAutoFilled] = useState(false);
-  const [preserveExistingClinicsHint, setPreserveExistingClinicsHint] = useState(false);
-  const [pinAsDefault, setPinAsDefault] = useState(false);
-  const [note, setNote] = useState('');
+  const [draft, setDraft] = useState<BatchDoseDraft>(createEmptyBatchDoseDraft);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // 通过 ref 读取最新常去/常用门诊、剂次快照与今天日期，避免抽屉打开期间后台刷新触发 effect 冲掉用户正在填写的表单。
-  const allDosesRef = useRef(allDoses);
-  allDosesRef.current = allDoses;
-  const defaultClinicRef = useRef(defaultClinicName);
-  defaultClinicRef.current = defaultClinicName;
-  const recentClinicsRef = useRef(recentClinics);
-  recentClinicsRef.current = recentClinics;
-  const todayRef = useRef(today);
-  todayRef.current = today;
+  // 通过单一快照 ref 读取最新常去/常用门诊、剂次与今天日期，避免抽屉打开期间后台刷新冲掉未保存表单。
+  const latestRef = useRef({ allDoses, today, defaultClinicName, recentClinics });
+  latestRef.current = { allDoses, today, defaultClinicName, recentClinics };
 
   useEffect(() => {
     if (!open || !intent) return;
-    const currentToday = todayRef.current;
     setRenderedIntent(intent);
-    setDate(
-      intent.action === 'complete' && intent.defaultDate > currentToday
-        ? currentToday
-        : intent.defaultDate || currentToday,
-    );
-    setTime('');
-
-    const matchedDoses = allDosesRef.current.filter((d) => intent.doseIds.includes(d.id));
-    const distinctExisting = Array.from(new Set(matchedDoses.map((d) => d.clinic_name.trim()).filter(Boolean)));
-    const allHaveClinic = matchedDoses.length > 0 && matchedDoses.every((d) => Boolean(d.clinic_name.trim()));
-    const bookedClinic = intent.defaultClinic?.trim() ?? '';
-
-    // 门诊预填优先级：
-    // 1. 焦点卡已预约批次显式传入 bookedClinic，或所有目标剂次共用同一既有门诊 -> 直接沿用，不展示「自动填入」提示；
-    // 2. 目标剂次中已有部分/混杂的偶发医院记录 -> 留空不预填，依赖后端 *string 留空语义保留各剂原门诊，防止静默覆盖；
-    // 3. 目标剂次均尚无门诊 -> 自动预填常去门诊（或最近门诊）。
-    if (bookedClinic) {
-      setClinicName(bookedClinic);
-      setClinicAutoFilled(false);
-      setPreserveExistingClinicsHint(false);
-    } else if (distinctExisting.length === 1 && allHaveClinic) {
-      setClinicName(distinctExisting[0]);
-      setClinicAutoFilled(false);
-      setPreserveExistingClinicsHint(false);
-    } else if (distinctExisting.length > 0) {
-      setClinicName('');
-      setClinicAutoFilled(false);
-      setPreserveExistingClinicsHint(true);
-    } else {
-      const preferred = resolvePreferredClinic(defaultClinicRef.current, recentClinicsRef.current);
-      setClinicName(preferred);
-      setClinicAutoFilled(Boolean(preferred));
-      setPreserveExistingClinicsHint(false);
-    }
-
-    setPinAsDefault(false);
-    setNote('');
+    setDraft(createBatchDoseDraft(intent, latestRef.current));
     setErrorMsg(null);
   }, [open, intent]);
+
+  function patchDraft(patch: Partial<BatchDoseDraft>) {
+    setDraft((prev) => ({ ...prev, ...patch }));
+  }
 
   const active = renderedIntent;
   const targetDoses = active ? allDoses.filter((d) => active.doseIds.includes(d.id)) : [];
@@ -126,40 +76,16 @@ export function VaccineBatchDrawer({
     event.preventDefault();
     if (!active || batchMutation.isPending) return;
 
-    if (!date) {
-      setErrorMsg(active.action === 'schedule' ? '请选择预约日期' : '请选择实际接种日期');
+    const result = validateAndBuildBatchUpdate(draft, active, { birthDate, today });
+    if (!result.ok) {
+      setErrorMsg(result.error);
       return;
-    }
-    if (active.action === 'complete') {
-      if (date > today) {
-        setErrorMsg('实际接种日期不能晚于今天');
-        return;
-      }
-      if (birthDate && date < birthDate) {
-        setErrorMsg('实际接种日期不能早于宝宝出生日期');
-        return;
-      }
     }
 
     setErrorMsg(null);
-    const trimmedClinic = clinicName.trim();
-    const trimmedNote = note.trim();
     try {
-      // 留空不传 clinic_name / note（undefined），遵守后端 *string 三态约定以保留目标剂次已有门诊与备注。
-      await batchMutation.mutateAsync({
-        action: active.action,
-        dose_ids: active.doseIds,
-        ...(active.action === 'schedule'
-          ? { scheduled_date: date, scheduled_time: time.trim() || null }
-          : { vaccinated_at: date }),
-        ...(trimmedClinic ? { clinic_name: trimmedClinic, set_default_clinic: pinAsDefault } : {}),
-        ...(trimmedNote ? { note: trimmedNote } : {}),
-      });
-      toast.success(
-        active.action === 'schedule'
-          ? `已合并预约 ${active.doseIds.length} 剂疫苗`
-          : `已标记 ${active.doseIds.length} 剂疫苗为已接种`,
-      );
+      await batchMutation.mutateAsync(result.input);
+      toast.success(result.toastTitle);
       onOpenChange(false);
     } catch (cause) {
       setErrorMsg(cause instanceof Error ? cause.message : '批量更新失败，请稍后重试');
@@ -228,10 +154,10 @@ export function VaccineBatchDrawer({
                 timeAriaLabel="预约时间（可选）"
                 timePlaceholder="可选"
                 timeClearable
-                dateValue={date}
-                timeValue={time}
-                onDateChange={setDate}
-                onTimeChange={setTime}
+                dateValue={draft.date}
+                timeValue={draft.time}
+                onDateChange={(date) => patchDraft({ date })}
+                onTimeChange={(time) => patchDraft({ time })}
               />
             ) : (
               <Field>
@@ -240,10 +166,10 @@ export function VaccineBatchDrawer({
                   id="batch-vac-date"
                   min={birthDate}
                   max={today}
-                  value={date}
+                  value={draft.date}
                   ariaLabel="实际接种日期"
                   drawerTitle="实际接种日期"
-                  onChange={setDate}
+                  onChange={(date) => patchDraft({ date })}
                 />
               </Field>
             )}
@@ -251,23 +177,17 @@ export function VaccineBatchDrawer({
             <ClinicInputField
               id="batch-vac-clinic"
               label="接种地点 / 门诊（可选）"
-              value={clinicName}
+              value={draft.clinicName}
               defaultClinicName={defaultClinicName}
               recentClinics={recentClinics}
-              autoFilled={clinicAutoFilled}
-              pinAsDefault={pinAsDefault}
-              onPinAsDefaultChange={setPinAsDefault}
-              onChange={(nextValue) => {
-                setClinicName(nextValue);
-                setClinicAutoFilled(false);
-                const trimmed = nextValue.trim();
-                // 门诊清空或切回当前默认门诊（置顶复选框隐藏）时同步复位勾选态，防止后续改填其他门诊时残留误置顶。
-                if (!trimmed || trimmed === defaultClinicRef.current.trim()) {
-                  setPinAsDefault(false);
-                }
-              }}
+              autoFilled={draft.clinicAutoFilled}
+              pinAsDefault={draft.pinAsDefault}
+              onPinAsDefaultChange={(pinAsDefault) => patchDraft({ pinAsDefault })}
+              onChange={(nextValue) =>
+                setDraft((prev) => applyBatchClinicChange(prev, nextValue, latestRef.current.defaultClinicName))
+              }
             />
-            {preserveExistingClinicsHint && !clinicName.trim() ? (
+            {draft.preserveExistingClinicsHint && !draft.clinicName.trim() ? (
               <p className="-mt-2 text-xs text-muted-foreground">部分剂次已记录接种地点，留空将保留各自原有地点。</p>
             ) : null}
 
@@ -275,10 +195,10 @@ export function VaccineBatchDrawer({
               <FieldLabel htmlFor="batch-vac-note">备注（可选）</FieldLabel>
               <Input
                 id="batch-vac-note"
-                value={note}
+                value={draft.note}
                 maxLength={500}
                 placeholder="如 同一天不同部位接种"
-                onChange={(e) => setNote(e.target.value)}
+                onChange={(e) => patchDraft({ note: e.target.value })}
               />
             </Field>
           </FieldGroup>

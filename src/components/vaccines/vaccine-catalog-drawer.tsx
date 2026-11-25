@@ -13,12 +13,14 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/components/ui/toast';
+import { DoseScheduleEditor } from '@/components/vaccines/dose-schedule-editor';
 import {
-  DoseScheduleEditor,
+  createInitialCustomRows,
+  createRowsFromTemplate,
   type EditableDoseRow,
-  nextDoseRowKey,
-  parseEditableDoseRows,
-} from '@/components/vaccines/dose-schedule-editor';
+  validateAndBuildCustomVaccine,
+  validateAndBuildTemplateAdd,
+} from '@/components/vaccines/vaccine-codec';
 import { cn } from '@/lib/utils';
 import {
   useAddVaccineTemplateMutation,
@@ -32,19 +34,6 @@ import {
 interface VaccineCatalogDrawerProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
-}
-
-function createRowsFromTemplate(tpl: VaccineCatalogItem): EditableDoseRow[] {
-  return tpl.doses.map((d) => ({
-    key: nextDoseRowKey(),
-    ageMonths: String(d.age_months),
-    plannedDate: '',
-    tip: d.dose_tip,
-  }));
-}
-
-function createInitialCustomRows(): EditableDoseRow[] {
-  return [{ key: nextDoseRowKey(), ageMonths: '6', plannedDate: '' }];
 }
 
 /** 自费疫苗模板库（含默认剂次明细、按需调删后加入与整套移出）及多剂自定义疫苗新增抽屉。 */
@@ -124,25 +113,18 @@ export function VaccineCatalogDrawer({ open, onOpenChange }: VaccineCatalogDrawe
   async function handleConfirmAddTemplate(tpl: VaccineCatalogItem) {
     if (addLockRef.current || busy) return;
     const rows = templateDrafts[tpl.code] ?? createRowsFromTemplate(tpl);
-    const parsed = parseEditableDoseRows(rows);
-    if (!parsed.plans) {
-      setTemplateError(parsed.error);
+    const result = validateAndBuildTemplateAdd(tpl, rows);
+    if (!result.ok) {
+      setTemplateError(result.error);
       return;
     }
 
     addLockRef.current = true;
     setTemplateError(null);
     setAddingCode(tpl.code);
-    // 若用户未修改默认排期，则省略 doses 让后端直接按内置模板默认排期入库（完整保留各剂阶段标签）。
-    const matchesTemplateDefault =
-      parsed.plans.length === tpl.doses.length &&
-      parsed.plans.every((plan, idx) => plan.age_months === tpl.doses[idx]?.age_months && plan.planned_date === null);
     try {
-      await addTemplateMutation.mutateAsync({
-        templateCode: tpl.code,
-        ...(matchesTemplateDefault ? {} : { doses: parsed.plans }),
-      });
-      toast.success(`已将「${tpl.name}（共 ${parsed.plans.length} 剂）」加入计划`);
+      await addTemplateMutation.mutateAsync(result.request);
+      toast.success(`已将「${tpl.name}（共 ${result.doseCount} 剂）」加入计划`);
       setExpandedCode(null);
       clearTemplateDraft(tpl.code);
     } catch (cause) {
@@ -170,27 +152,16 @@ export function VaccineCatalogDrawer({ open, onOpenChange }: VaccineCatalogDrawe
     event.preventDefault();
     if (busy) return;
 
-    const trimmedName = vaccineName.trim();
-    if (!trimmedName) {
-      setCustomError('请填写疫苗名称');
-      return;
-    }
-
-    const parsed = parseEditableDoseRows(customRows);
-    if (!parsed.plans) {
-      setCustomError(parsed.error);
+    const result = validateAndBuildCustomVaccine(vaccineName, category, customRows, note);
+    if (!result.ok) {
+      setCustomError(result.error);
       return;
     }
 
     setCustomError(null);
     try {
-      await createCustomMutation.mutateAsync({
-        vaccine_name: trimmedName,
-        category,
-        note: note.trim(),
-        doses: parsed.plans,
-      });
-      toast.success(`已添加「${trimmedName}（共 ${parsed.plans.length} 剂）」`);
+      await createCustomMutation.mutateAsync(result.input);
+      toast.success(`已添加「${result.input.vaccine_name}（共 ${result.input.doses.length} 剂）」`);
       setVaccineName('');
       setCustomRows(createInitialCustomRows());
       setNote('');

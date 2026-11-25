@@ -30,8 +30,8 @@ func (h *babyHandler) getProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"baby": profile})
 }
 
-// handleBabyStoreError 统一将 baby 领域层校验与查询错误映射为中文 JSON HTTP 响应，供档案与默认门诊处理器复用。
-func handleBabyStoreError(c *gin.Context, logger *slog.Logger, op string, err error) {
+// handleErr 统一将 baby 领域层校验与查询错误映射为中文 JSON HTTP 响应。
+func (h *babyHandler) handleErr(c *gin.Context, op string, err error) {
 	var valErr *baby.ValidationError
 	if errors.As(err, &valErr) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": valErr.Error()})
@@ -45,7 +45,7 @@ func handleBabyStoreError(c *gin.Context, logger *slog.Logger, op string, err er
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
-	logger.Error(op+" failed", "error", err)
+	h.logger.Error(op+" failed", "error", err)
 	c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
 }
 
@@ -64,7 +64,7 @@ func (h *babyHandler) createProfile(c *gin.Context) {
 
 	profile, err := h.store.Create(c.Request.Context(), input, loc)
 	if err != nil {
-		handleBabyStoreError(c, h.logger, "createBabyProfile", err)
+		h.handleErr(c, "createBabyProfile", err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"baby": profile})
@@ -85,8 +85,29 @@ func (h *babyHandler) updateProfile(c *gin.Context) {
 
 	profile, err := h.store.Update(c.Request.Context(), input, loc)
 	if err != nil {
-		handleBabyStoreError(c, h.logger, "updateBabyProfile", err)
+		h.handleErr(c, "updateBabyProfile", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"baby": profile})
+}
+
+// updateDefaultClinic 处理 PUT /api/vaccines/default-clinic，单独更新或清空当前宝宝档案的常去接种门诊名称。
+func (h *babyHandler) updateDefaultClinic(c *gin.Context) {
+	babyID, ok := mustBabyID(c)
+	if !ok {
+		return
+	}
+	var input struct {
+		ClinicName string `json:"clinic_name"`
+	}
+	if status, msg := decodeJSONBody(c, &input); status != 0 {
+		c.JSON(status, gin.H{"error": msg})
+		return
+	}
+	updated, err := h.store.UpdateDefaultClinic(c.Request.Context(), babyID, input.ClinicName)
+	if err != nil {
+		h.handleErr(c, "updateDefaultClinic", err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"default_clinic_name": updated})
 }

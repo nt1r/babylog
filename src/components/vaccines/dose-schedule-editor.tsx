@@ -4,54 +4,12 @@ import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { InfoPopover } from '@/components/ui/info-popover';
 import { Input } from '@/components/ui/input';
-import type { DosePlanInput } from '@/lib/vaccines';
-
-export interface EditableDoseRow {
-  readonly key: string;
-  readonly ageMonths: string;
-  readonly plannedDate: string;
-  readonly tip?: string;
-}
-
-const MAX_DOSES = 10;
-
-let rowSeq = 0;
-
-/** 生成稳定的行 key，确保删减中间剂次时受控输入框状态不错位。 */
-export function nextDoseRowKey(): string {
-  rowSeq += 1;
-  return `dose-row-${rowSeq}`;
-}
-
-/** 校验并解析排期行数组为后端 DosePlanInput 列表；失败时返回中文错误提示。 */
-export function parseEditableDoseRows(
-  rows: readonly EditableDoseRow[],
-): { plans: DosePlanInput[]; error: null } | { plans: null; error: string } {
-  if (rows.length === 0) {
-    return { plans: null, error: '请至少保留 1 剂接种排期' };
-  }
-  if (rows.length > MAX_DOSES) {
-    return { plans: null, error: `单种疫苗最多支持 ${MAX_DOSES} 剂` };
-  }
-
-  const plans: DosePlanInput[] = [];
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const trimmedAge = row.ageMonths.trim();
-    if (!/^\d+$/.test(trimmedAge)) {
-      return { plans: null, error: `第 ${i + 1} 剂的适龄月龄请填写 0 至 144 之间的整数` };
-    }
-    const age = Number.parseInt(trimmedAge, 10);
-    if (age < 0 || age > 144) {
-      return { plans: null, error: `第 ${i + 1} 剂的适龄月龄应在 0 至 144 个月之间` };
-    }
-    plans.push({
-      age_months: age,
-      planned_date: row.plannedDate.trim() || null,
-    });
-  }
-  return { plans, error: null };
-}
+import {
+  type EditableDoseRow,
+  MAX_AGE_MONTHS,
+  MAX_EDITABLE_DOSES,
+  nextDoseRowKey,
+} from '@/components/vaccines/vaccine-codec';
 
 interface DoseScheduleEditorProps {
   readonly rows: readonly EditableDoseRow[];
@@ -66,9 +24,9 @@ interface DoseScheduleEditorProps {
  */
 export function DoseScheduleEditor({ rows, disabled, onChange, onResetDefaults }: DoseScheduleEditorProps) {
   function handleAddRow() {
-    if (rows.length >= MAX_DOSES || disabled) return;
+    if (rows.length >= MAX_EDITABLE_DOSES || disabled) return;
     const lastAge = Number.parseInt(rows[rows.length - 1]?.ageMonths ?? '2', 10);
-    const nextAge = Number.isFinite(lastAge) ? Math.min(144, lastAge + 1) : 2;
+    const nextAge = Number.isFinite(lastAge) ? Math.min(MAX_AGE_MONTHS, lastAge + 1) : 2;
     onChange([
       ...rows,
       {
@@ -117,7 +75,7 @@ export function DoseScheduleEditor({ rows, disabled, onChange, onResetDefaults }
             type="button"
             variant="outline"
             size="sm"
-            disabled={disabled || rows.length >= MAX_DOSES}
+            disabled={disabled || rows.length >= MAX_EDITABLE_DOSES}
             className="h-7 px-2.5 text-xs"
             onClick={handleAddRow}
           >
@@ -139,8 +97,8 @@ export function DoseScheduleEditor({ rows, disabled, onChange, onResetDefaults }
                 <Input
                   type="number"
                   inputMode="numeric"
-                  min="0"
-                  max="144"
+                  min={0}
+                  max={MAX_AGE_MONTHS}
                   aria-label={`第 ${index + 1} 剂适龄月龄`}
                   disabled={disabled}
                   value={row.ageMonths}
