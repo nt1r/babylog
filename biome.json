@@ -53,5 +53,27 @@
         "noImportCycles": "error"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["src/lib/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/components/**", "@/routes/**", "@/hooks/**"],
+                    "message": "src/lib/ 属于底层领域与基础设施层，禁止反向导入 components、routes 或 hooks。"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

@@ -213,6 +213,12 @@ export function toEditableRecord<C extends RecordCategory>(category: C, record: 
   return { category, record } as EditableRecord;
 }
 
+/** 喂养冷启动默认值（奶量 ml / 亲喂分钟）：供快记表单边界与首页一键直记共用，避免跨层反向依赖。 */
+export const FEEDING_DEFAULTS = {
+  milkML: 90,
+  breastMin: 15,
+} as const;
+
 export const BREAST_SIDE_LABELS: Record<BreastSide, string> = {
   left: '左侧',
   right: '右侧',

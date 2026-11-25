@@ -145,8 +145,8 @@ func validateCreateInput(in CreateCustomInput) (CreateCustomInput, error) {
 	}, nil
 }
 
-// validateUpdateInput 按目标状态校验并标准化单剂疫苗更新输入。
-// 同时清空跨状态转换后的废弃字段，确保落库状态一致干净。
+// validateUpdateInput 按目标状态校验并标准化单剂疫苗更新输入（仅校验当前目标状态激活字段，
+// 跨状态落库时的废弃字段清空规则统一由 [DoseRecord.applySingleUpdate] 执行）。
 func validateUpdateInput(in UpdateDoseInput, birthDate, todayKey string) (UpdateDoseInput, error) {
 	status := strings.TrimSpace(in.Status)
 	if status != StatusPending && status != StatusScheduled && status != StatusCompleted {
@@ -184,7 +184,7 @@ func validateUpdateInput(in UpdateDoseInput, birthDate, todayKey string) (Update
 
 	switch status {
 	case StatusPending:
-		// 恢复待接种时仅保留预计日期与备注，清空预约与实际接种记录字段。
+		// 恢复待接种时仅需校验预计日期与备注，其余状态专属字段不参与校验。
 		return out, nil
 
 	case StatusScheduled:

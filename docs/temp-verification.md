@@ -8,6 +8,7 @@
 
 ```bash
 set -euo pipefail
+[ -d node_modules ] || pnpm install --frozen-lockfile
 TMP_TEST="${TMPDIR:-/tmp}/verify-frontend-$$.mjs"
 trap 'rm -f "$TMP_TEST"' EXIT
 

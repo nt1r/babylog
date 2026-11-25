@@ -1,17 +1,15 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { Pill, Zap } from 'lucide-react';
-import { useRef, useState } from 'react';
 import { RecordListPage, type RecordRowDescriptor } from '@/components/record-list-page';
 import { Spinner } from '@/components/ui/spinner';
-import { toast } from '@/components/ui/toast';
+import { useOneTapRecord } from '@/hooks/use-one-tap-record';
 import { CLINICAL_HEALTH_SUBTYPE_OPTIONS, HEALTH_SUBTYPE_LABELS, RECORD_CATEGORY_META } from '@/lib/categories';
+import type { OneTapRecordAction } from '@/lib/one-tap-record';
 import {
   getTemperatureSeverity,
   type HealthDailySummary,
   type HealthRecord,
   type MedicinePreset,
-  useDeleteRecordMutation,
-  useSaveRecordMutation,
   useSmartDefaultsQuery,
 } from '@/lib/records';
 import { formatLocalDateTimeShort, formatLocalTimeFromISO, getLocalDateKeyFromISO } from '@/lib/time';
@@ -52,58 +50,30 @@ function describeHealth(rec: HealthRecord): RecordRowDescriptor {
   };
 }
 
+function buildMedicineOneTapAction(med: MedicinePreset): OneTapRecordAction<string> {
+  return {
+    key: med.name,
+    toastTitle: `已记录 · ${med.name}${med.dosage ? `（${med.dosage}）` : ''}`,
+    undoToastTitle: '已撤销刚才的用药记录',
+    undoErrorFallback: '请在下方列表中手动删除。',
+    buildRequest: (recordedAt) => ({
+      category: 'health',
+      payload: {
+        subtype: 'medicine',
+        medicine_name: med.name,
+        medicine_dosage: med.dosage || null,
+        recorded_at: recordedAt,
+        note: '',
+      },
+    }),
+  };
+}
+
 function HealthPage() {
   const defaultsQuery = useSmartDefaultsQuery();
-  const saveMutation = useSaveRecordMutation();
-  const deleteMutation = useDeleteRecordMutation();
-  const [busyMedName, setBusyMedName] = useState<string | null>(null);
-  // 同步防重入锁：防止高频连点常用补剂胶囊发出重复用药写入请求。
-  const quickMedLockRef = useRef(false);
+  const { busyKey: busyMedName, trigger: triggerOneTap } = useOneTapRecord();
 
   const quickMedicines = (defaultsQuery.data?.health.recent_medicines ?? []).slice(0, 3);
-
-  async function handleQuickMedicine(med: MedicinePreset) {
-    if (quickMedLockRef.current || busyMedName) return;
-    quickMedLockRef.current = true;
-    setBusyMedName(med.name);
-    const recordedAt = new Date().toISOString();
-    const timeText = formatLocalTimeFromISO(recordedAt);
-
-    try {
-      const created = await saveMutation.mutateAsync({
-        category: 'health',
-        payload: {
-          subtype: 'medicine',
-          medicine_name: med.name,
-          medicine_dosage: med.dosage || null,
-          recorded_at: recordedAt,
-          note: '',
-        },
-      });
-      // 单次撤销守卫：防止连点 Toast 撤销按钮触发重复 DELETE 导致误报 404。
-      let undone = false;
-      toast.success(`已记录 · ${med.name}${med.dosage ? `（${med.dosage}）` : ''}`, `记录时间 ${timeText}`, {
-        action: {
-          label: '撤销',
-          onClick: () => {
-            if (undone) return;
-            undone = true;
-            void deleteMutation
-              .mutateAsync({ category: 'health', id: created.id })
-              .then(() => toast.info('已撤销刚才的用药记录'))
-              .catch((cause) =>
-                toast.error('撤销失败', cause instanceof Error ? cause.message : '请在下方列表中手动删除。'),
-              );
-          },
-        },
-      });
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : '快捷记录失败，请稍后重试');
-    } finally {
-      quickMedLockRef.current = false;
-      setBusyMedName(null);
-    }
-  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -124,7 +94,7 @@ function HealthPage() {
                   key={med.name}
                   type="button"
                   disabled={busyMedName !== null}
-                  onClick={() => void handleQuickMedicine(med)}
+                  onClick={() => void triggerOneTap(buildMedicineOneTapAction(med))}
                   className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-health/40 bg-health-soft/55 px-3 text-xs font-medium text-health-soft-foreground transition-colors outline-none hover:border-health/75 hover:bg-health-soft focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60 sm:h-7"
                 >
                   {busy ? (

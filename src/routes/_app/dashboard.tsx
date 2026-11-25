@@ -1,19 +1,8 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
-import {
-  AlertCircle,
-  ArrowUpRight,
-  Baby,
-  Bath,
-  Droplets,
-  type LucideIcon,
-  Milk,
-  PlusIcon,
-  RotateCw,
-  Zap,
-} from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { AlertCircle, ArrowUpRight, PlusIcon, RotateCw, Zap } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import { DashboardHero } from '@/components/dashboard/dashboard-hero';
 import {
@@ -22,19 +11,18 @@ import {
   DashboardVaccineCard,
   PostVaccineTempCueBar,
 } from '@/components/dashboard/growth-immunity-section';
-import { FEEDING_BOUNDS } from '@/components/quick-record/codecs/feeding';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { type ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { toast } from '@/components/ui/toast';
+import { useOneTapRecord } from '@/hooks/use-one-tap-record';
 import { useBabyProfileQuery } from '@/lib/baby';
-import { RECORD_CATEGORY_META, type RecordCategory } from '@/lib/categories';
+import { RECORD_CATEGORY_META } from '@/lib/categories';
 import {
-  buildAdaptiveFeedingOneTap,
   buildDashboardKpiCards,
+  buildDashboardOneTapPresets,
   type DashboardTrends,
   type DashboardTrendTab,
   findRecentCompletedVaccineForTempCue,
@@ -43,13 +31,8 @@ import {
   useDashboardSummaryQuery,
   useDashboardTrendsQuery,
 } from '@/lib/dashboard';
-import {
-  type SaveRecordRequest,
-  useDeleteRecordMutation,
-  useSaveRecordMutation,
-  useSmartDefaultsQuery,
-} from '@/lib/records';
-import { formatDurationMin, formatLocalTimeFromISO } from '@/lib/time';
+import { useSmartDefaultsQuery } from '@/lib/records';
+import { formatDurationMin } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import { useVaccinesOverviewQuery, VACCINE_OVERVIEW_STALE_MS } from '@/lib/vaccines';
 import { useGrowthRecordStore } from '@/stores/growth-record';
@@ -60,21 +43,6 @@ export const Route = createFileRoute('/_app/dashboard')({
 });
 
 type DailyTrendPoint = DashboardTrends['daily'][number];
-type OneTapKind = 'formula' | 'pee' | 'poop' | 'bath';
-
-interface OneTapPreset {
-  readonly kind: OneTapKind;
-  readonly category: RecordCategory;
-  readonly title: string;
-  readonly hint: string;
-  readonly icon: LucideIcon;
-  readonly tileClass: string;
-  readonly iconClass: string;
-  readonly disabled?: boolean;
-  readonly toastTitle: string;
-  readonly undoToastTitle: string;
-  readonly buildRequest: (recordedAt: string) => SaveRecordRequest;
-}
 
 const trendChartConfig: ChartConfig = {
   feeding_ml: {
@@ -166,12 +134,8 @@ function DashboardTrendTooltip({ active, label, payload, tab, isDirectBreastMode
 function DashboardPage() {
   const openCreate = useQuickRecordStore((state) => state.openCreate);
   const openGrowthCreate = useGrowthRecordStore((state) => state.openCreate);
-  const saveMutation = useSaveRecordMutation();
-  const deleteMutation = useDeleteRecordMutation();
+  const { busyKey: quickBusyKey, trigger: triggerOneTap } = useOneTapRecord();
   const [trendTab, setTrendTab] = useState<DashboardTrendTab>('feeding');
-  const [quickBusyKey, setQuickBusyKey] = useState<OneTapKind | null>(null);
-  // 同步防重入锁：在 React 状态更新触发按钮禁用前的同一帧内拦截高频连点，防止发出重复写入请求。
-  const oneTapLockRef = useRef(false);
   // 每分钟刷新一次本地时钟，确保「距上次喂奶/换尿布 X 分钟前」与昼夜插画在数据无变更时也能实时更新。
   const [now, setNow] = useState(() => new Date());
 
@@ -192,124 +156,13 @@ function DashboardPage() {
   const trends = trendsQuery.data;
   const vaccines = vaccinesQuery.data;
   const defaultsReady = !defaultsQuery.isLoading;
-  const adaptiveFeedingOneTap = buildAdaptiveFeedingOneTap(
-    defaultsQuery.data,
-    defaultsReady,
-    FEEDING_BOUNDS.milkDefault,
-    FEEDING_BOUNDS.breastDefault,
-  );
 
   const todayLabel = format(now, 'M月d日 · EEEE', { locale: zhCN });
   const trendView = selectTrendView(trends, trendTab);
   const kpiCards = buildDashboardKpiCards(summary, now);
   const vaccineAlert = selectDashboardVaccineAlert(vaccines);
   const postVaccineCue = findRecentCompletedVaccineForTempCue(vaccines);
-
-  const oneTapPresets: readonly OneTapPreset[] = [
-    {
-      kind: 'formula',
-      category: 'feeding',
-      title: adaptiveFeedingOneTap.title,
-      hint: adaptiveFeedingOneTap.hint,
-      icon: Milk,
-      tileClass: 'border-feeding/35 bg-card hover:border-feeding/70 hover:bg-feeding-soft/25',
-      iconClass: 'bg-feeding-soft text-feeding-soft-foreground',
-      disabled: !defaultsReady,
-      toastTitle: adaptiveFeedingOneTap.toastTitle,
-      undoToastTitle: '已撤销刚才的喂养记录',
-      buildRequest: adaptiveFeedingOneTap.buildRequest,
-    },
-    {
-      kind: 'pee',
-      category: 'care',
-      title: '嘘嘘',
-      hint: '尿布记录',
-      icon: Droplets,
-      tileClass: 'border-care/35 bg-card hover:border-care/70 hover:bg-care-soft/25',
-      iconClass: 'bg-care-soft text-care-soft-foreground',
-      toastTitle: '已记录 · 嘘嘘',
-      undoToastTitle: '已撤销刚才的护理记录',
-      buildRequest: (recordedAt) => ({
-        category: 'care',
-        payload: { subtype: 'diaper', diaper_kind: 'pee', recorded_at: recordedAt, note: '' },
-      }),
-    },
-    {
-      kind: 'poop',
-      category: 'care',
-      title: '便便正常',
-      hint: '软便 · 黄色',
-      icon: Baby,
-      tileClass: 'border-care/35 bg-card hover:border-care/70 hover:bg-care-soft/25',
-      iconClass: 'bg-care-soft text-care-soft-foreground',
-      toastTitle: '已记录 · 便便正常',
-      undoToastTitle: '已撤销刚才的护理记录',
-      buildRequest: (recordedAt) => ({
-        category: 'care',
-        payload: {
-          subtype: 'diaper',
-          diaper_kind: 'poop',
-          stool_consistency: 'soft',
-          stool_color: 'yellow',
-          recorded_at: recordedAt,
-          note: '',
-        },
-      }),
-    },
-    {
-      kind: 'bath',
-      category: 'care',
-      title: '洗澡',
-      hint: '日常护理',
-      icon: Bath,
-      tileClass: 'border-border/80 bg-card hover:border-primary/45 hover:bg-accent/35',
-      iconClass: 'bg-secondary text-secondary-foreground',
-      toastTitle: '已记录 · 洗澡',
-      undoToastTitle: '已撤销刚才的洗澡记录',
-      buildRequest: (recordedAt) => ({
-        category: 'care',
-        payload: { subtype: 'bath', recorded_at: recordedAt, note: '' },
-      }),
-    },
-  ];
-
-  async function undoRecord(category: RecordCategory, id: number, successTitle: string) {
-    try {
-      await deleteMutation.mutateAsync({ category, id });
-      toast.info(successTitle);
-    } catch (cause) {
-      toast.error('撤销失败', cause instanceof Error ? cause.message : '请前往记录页手动删除。');
-    }
-  }
-
-  async function handleOneTap(preset: OneTapPreset) {
-    if (oneTapLockRef.current || quickBusyKey || preset.disabled) return;
-    oneTapLockRef.current = true;
-    setQuickBusyKey(preset.kind);
-    const recordedAt = new Date().toISOString();
-    const timeText = formatLocalTimeFromISO(recordedAt);
-
-    try {
-      const created = await saveMutation.mutateAsync(preset.buildRequest(recordedAt));
-      // 单次撤销守卫：防止用户在 Toast 消失前连续点击“撤销”，对已删除记录重复发 DELETE 误报 404。
-      let undone = false;
-      toast.success(preset.toastTitle, `记录时间 ${timeText}`, {
-        action: {
-          label: '撤销',
-          onClick: () => {
-            if (undone) return;
-            undone = true;
-            void undoRecord(preset.category, created.id, preset.undoToastTitle);
-          },
-        },
-      });
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : '快捷记录失败，请重试');
-    } finally {
-      oneTapLockRef.current = false;
-      setQuickBusyKey(null);
-    }
-  }
+  const oneTapPresets = buildDashboardOneTapPresets(defaultsQuery.data, defaultsReady);
 
   return (
     <div className="flex flex-col gap-5 md:gap-6">
@@ -332,13 +185,13 @@ function DashboardPage() {
         <div className="grid grid-cols-2 gap-2.5 @3xl/main:grid-cols-4 @3xl/main:gap-3">
           {oneTapPresets.map((preset) => {
             const Icon = preset.icon;
-            const busy = quickBusyKey === preset.kind;
+            const busy = quickBusyKey === preset.key;
             return (
               <button
-                key={preset.kind}
+                key={preset.key}
                 type="button"
                 disabled={quickBusyKey !== null || Boolean(preset.disabled)}
-                onClick={() => void handleOneTap(preset)}
+                onClick={() => void triggerOneTap(preset)}
                 className={cn(
                   'group flex min-h-14 cursor-pointer items-center gap-2.5 rounded-2xl border px-3 py-2.5 text-left shadow-2xs transition-all outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60 sm:gap-3 sm:px-3.5',
                   preset.tileClass,

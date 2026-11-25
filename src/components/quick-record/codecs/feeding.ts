@@ -1,14 +1,15 @@
 import type { CategoryBuildResult } from '@/components/quick-record/codecs/types';
 import { parseStrictInt } from '@/lib/number';
-import type {
-  BreastSide,
-  FeedingInput,
-  FeedingMode,
-  FeedingRecord,
-  FeedingSubtype,
-  SmartDefaults,
-  SolidAcceptance,
-  SolidFoodPreset,
+import {
+  type BreastSide,
+  FEEDING_DEFAULTS,
+  type FeedingInput,
+  type FeedingMode,
+  type FeedingRecord,
+  type FeedingSubtype,
+  type SmartDefaults,
+  type SolidAcceptance,
+  type SolidFoodPreset,
 } from '@/lib/records';
 import { combineLocalDateTimeToISO } from '@/lib/time';
 
@@ -18,11 +19,11 @@ export const FEEDING_BOUNDS = {
   milkStepMin: 10,
   milkMax: 1000,
   milkStep: 10,
-  milkDefault: 90,
+  milkDefault: FEEDING_DEFAULTS.milkML,
   breastMin: 1,
   breastMax: 180,
   breastStep: 5,
-  breastDefault: 15,
+  breastDefault: FEEDING_DEFAULTS.breastMin,
 } as const;
 
 const MILK_FREQUENT_FALLBACKS = [60, 90, 120] as const;
