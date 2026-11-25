@@ -1,0 +1,40 @@
+#!/bin/sh
+# BabyLog 本地 Git pre-commit 门禁（通过 `pnpm hooks:install` 启用）：
+# 按暂存区改动范围执行必要检查；若本机安装 nvs 且 Node 版本与 .node-version 不一致则自动切换。
+
+set -eu
+
+# 若本机通过 nvs 管理 Node 且 .node-version 对应版本已安装，自动切换避免 engines 告警
+if [ -f .node-version ]; then
+  target_node="$(tr -d '[:space:]' < .node-version)"
+  current_node="$(node -v 2>/dev/null || true)"
+  if [ "$current_node" != "v${target_node}" ]; then
+    nvs_sh="${NVS_HOME:-$HOME/.nvs}/nvs.sh"
+    if [ -f "$nvs_sh" ]; then
+      set +u
+      # shellcheck disable=SC1090
+      . "$nvs_sh"
+      nvs use "$target_node" >/dev/null 2>&1 || true
+      set -u
+    fi
+  fi
+fi
+
+staged="$(git diff --cached --name-only --diff-filter=ACMR)"
+if [ -z "$staged" ]; then
+  exit 0
+fi
+
+# 始终执行轻量静态工程门禁（含防误提交与 OpenSpec 校验）
+pnpm lint:guardrails
+
+# 仅在前端/配置改动时跑 Biome 与 TypeScript 类型检查
+if printf '%s\n' "$staged" | grep -qE '^(src/|package\.json|tsconfig\.json|biome\.json|vite\.config\.)'; then
+  pnpm lint:web
+  pnpm check
+fi
+
+# 仅在后端 Go 文件改动时跑 Go 静态检查
+if printf '%s\n' "$staged" | grep -qE '^backend/.*\.go$'; then
+  pnpm lint:go
+fi

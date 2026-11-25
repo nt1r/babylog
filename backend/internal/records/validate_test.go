@@ -1,6 +1,8 @@
 package records
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -8,11 +10,18 @@ import (
 func intPtr(v int) *int           { return &v }
 func floatPtr(v float64) *float64 { return &v }
 
+func assertValidationErr(t *testing.T, label string, err error) {
+	t.Helper()
+	var valErr *ValidationError
+	if !errors.As(err, &valErr) || strings.TrimSpace(valErr.Message) == "" {
+		t.Errorf("%s: expected non-empty *ValidationError, got %T: %v", label, err, err)
+	}
+}
+
 func TestValidateFeeding(t *testing.T) {
 	now := time.Date(2026, 11, 23, 10, 0, 0, 0, time.UTC)
 	validTS := "2026-11-23T09:50:00Z"
 
-	// 合法组合
 	validInputs := []FeedingInput{
 		{Subtype: FeedingSubtypeBreast, FeedingMode: strPtr("direct"), BreastSide: strPtr("left"), DurationMin: intPtr(15), RecordedAt: validTS},
 		{Subtype: FeedingSubtypeBreast, FeedingMode: strPtr("bottle"), AmountML: intPtr(110), RecordedAt: validTS},
@@ -26,7 +35,6 @@ func TestValidateFeeding(t *testing.T) {
 		}
 	}
 
-	// 非法组合
 	invalidInputs := []struct {
 		name string
 		in   FeedingInput
@@ -43,9 +51,8 @@ func TestValidateFeeding(t *testing.T) {
 	}
 	for _, tc := range invalidInputs {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := ValidateFeeding(tc.in, now); err == nil {
-				t.Errorf("expected error for %s, got nil", tc.name)
-			}
+			_, err := ValidateFeeding(tc.in, now)
+			assertValidationErr(t, tc.name, err)
 		})
 	}
 }
@@ -65,17 +72,21 @@ func TestValidateSleep(t *testing.T) {
 		t.Fatalf("expected 45 min, got %d", dur)
 	}
 
-	invalid := []SleepInput{
-		{Subtype: SleepSubtypeNap, StartedAt: "2026-11-23T08:00:00Z", EndedAt: "2026-11-23T08:00:00Z"},
-		{Subtype: SleepSubtypeNap, StartedAt: "2026-11-23T09:00:00Z", EndedAt: "2026-11-23T08:00:00Z"},
-		{Subtype: SleepSubtypeNight, StartedAt: "2026-11-21T08:00:00Z", EndedAt: "2026-11-23T09:00:00Z"}, // >24h
-		{Subtype: SleepSubtypeNap, StartedAt: "2026-11-23T09:00:00Z", EndedAt: "2026-11-23T10:10:00Z"},   // future >5m
-		{Subtype: "other", StartedAt: "2026-11-23T08:00:00Z", EndedAt: "2026-11-23T08:30:00Z"},
+	invalid := []struct {
+		name string
+		in   SleepInput
+	}{
+		{"起止时间相等", SleepInput{Subtype: SleepSubtypeNap, StartedAt: "2026-11-23T08:00:00Z", EndedAt: "2026-11-23T08:00:00Z"}},
+		{"结束早于开始", SleepInput{Subtype: SleepSubtypeNap, StartedAt: "2026-11-23T09:00:00Z", EndedAt: "2026-11-23T08:00:00Z"}},
+		{"超过24小时", SleepInput{Subtype: SleepSubtypeNight, StartedAt: "2026-11-21T08:00:00Z", EndedAt: "2026-11-23T09:00:00Z"}},
+		{"超前超过5分钟", SleepInput{Subtype: SleepSubtypeNap, StartedAt: "2026-11-23T09:00:00Z", EndedAt: "2026-11-23T10:10:00Z"}},
+		{"非法子类型", SleepInput{Subtype: "other", StartedAt: "2026-11-23T08:00:00Z", EndedAt: "2026-11-23T08:30:00Z"}},
 	}
-	for i, in := range invalid {
-		if _, _, err := ValidateSleep(in, now); err == nil {
-			t.Errorf("invalid sleep case %d expected error, got nil", i)
-		}
+	for _, tc := range invalid {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := ValidateSleep(tc.in, now)
+			assertValidationErr(t, tc.name, err)
+		})
 	}
 }
 
@@ -115,17 +126,21 @@ func TestValidateCare(t *testing.T) {
 		t.Fatalf("unexpected other error: %v", err)
 	}
 
-	invalid := []CareInput{
-		{Subtype: CareSubtypeDiaper, RecordedAt: ts},
-		{Subtype: CareSubtypeDiaper, DiaperKind: strPtr("invalid"), RecordedAt: ts},
-		{Subtype: CareSubtypeDiaper, DiaperKind: strPtr("poop"), StoolConsistency: strPtr("unknown"), RecordedAt: ts},
-		{Subtype: CareSubtypeDiaper, DiaperKind: strPtr("both"), StoolColor: strPtr("blue"), RecordedAt: ts},
-		{Subtype: CareSubtypeOther, CareTitle: strPtr("  "), RecordedAt: ts},
+	invalid := []struct {
+		name string
+		in   CareInput
+	}{
+		{"缺尿布类型", CareInput{Subtype: CareSubtypeDiaper, RecordedAt: ts}},
+		{"非法尿布类型", CareInput{Subtype: CareSubtypeDiaper, DiaperKind: strPtr("invalid"), RecordedAt: ts}},
+		{"非法便便性状", CareInput{Subtype: CareSubtypeDiaper, DiaperKind: strPtr("poop"), StoolConsistency: strPtr("unknown"), RecordedAt: ts}},
+		{"非法便便颜色", CareInput{Subtype: CareSubtypeDiaper, DiaperKind: strPtr("both"), StoolColor: strPtr("blue"), RecordedAt: ts}},
+		{"空白自定义护理标题", CareInput{Subtype: CareSubtypeOther, CareTitle: strPtr("  "), RecordedAt: ts}},
 	}
-	for i, in := range invalid {
-		if _, err := ValidateCare(in, now); err == nil {
-			t.Errorf("invalid care case %d expected error, got nil", i)
-		}
+	for _, tc := range invalid {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ValidateCare(tc.in, now)
+			assertValidationErr(t, tc.name, err)
+		})
 	}
 }
 
@@ -146,18 +161,49 @@ func TestValidateHealth(t *testing.T) {
 		}
 	}
 
-	invalid := []HealthInput{
-		{Subtype: HealthSubtypeTemperature, RecordedAt: ts},
-		{Subtype: HealthSubtypeTemperature, TemperatureC: floatPtr(33.5), RecordedAt: ts},
-		{Subtype: HealthSubtypeTemperature, TemperatureC: floatPtr(44.0), RecordedAt: ts},
-		{Subtype: HealthSubtypeMedicine, MedicineName: strPtr("   "), RecordedAt: ts},
-		{Subtype: HealthSubtypeGrowth, RecordedAt: ts},
-		{Subtype: HealthSubtypeGrowth, WeightKg: floatPtr(0), RecordedAt: ts},
-		{Subtype: HealthSubtypeTeeth, ToothNote: strPtr(""), RecordedAt: ts},
+	invalid := []struct {
+		name string
+		in   HealthInput
+	}{
+		{"缺体温值", HealthInput{Subtype: HealthSubtypeTemperature, RecordedAt: ts}},
+		{"体温过低", HealthInput{Subtype: HealthSubtypeTemperature, TemperatureC: floatPtr(33.5), RecordedAt: ts}},
+		{"体温过高", HealthInput{Subtype: HealthSubtypeTemperature, TemperatureC: floatPtr(44.0), RecordedAt: ts}},
+		{"空药名", HealthInput{Subtype: HealthSubtypeMedicine, MedicineName: strPtr("   "), RecordedAt: ts}},
+		{"空生长测量", HealthInput{Subtype: HealthSubtypeGrowth, RecordedAt: ts}},
+		{"零体重", HealthInput{Subtype: HealthSubtypeGrowth, WeightKg: floatPtr(0), RecordedAt: ts}},
+		{"空长牙备注", HealthInput{Subtype: HealthSubtypeTeeth, ToothNote: strPtr(""), RecordedAt: ts}},
 	}
-	for i, in := range invalid {
-		if _, err := ValidateHealth(in, now); err == nil {
-			t.Errorf("invalid health case %d expected error, got nil", i)
-		}
+	for _, tc := range invalid {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ValidateHealth(tc.in, now)
+			assertValidationErr(t, tc.name, err)
+		})
+	}
+}
+
+func TestAccumulateSleepAndHealthSummary(t *testing.T) {
+	var sleepSum SleepDailySummary
+	AccumulateSleepSummary(&sleepSum, SleepRecord{Subtype: SleepSubtypeNight}, 360)
+	AccumulateSleepSummary(&sleepSum, SleepRecord{Subtype: SleepSubtypeNap}, 45)
+	AccumulateSleepSummary(&sleepSum, SleepRecord{Subtype: SleepSubtypeNap}, 0) // 忽略非正分钟数
+	AccumulateSleepSummary(&sleepSum, SleepRecord{Subtype: SleepSubtypeNight}, -10)
+
+	if sleepSum.TotalMin != 405 || sleepSum.NightMin != 360 || sleepSum.NapCount != 1 {
+		t.Fatalf("unexpected sleep summary: %#v", sleepSum)
+	}
+
+	var healthSum HealthDailySummary
+	// 按降序遍历时首条体温成为 LatestTempC
+	AccumulateHealthSummary(&healthSum, HealthRecord{Subtype: HealthSubtypeTemperature, TemperatureC: floatPtr(38.2)})
+	AccumulateHealthSummary(&healthSum, HealthRecord{Subtype: HealthSubtypeTemperature, TemperatureC: floatPtr(36.7)})
+	AccumulateHealthSummary(&healthSum, HealthRecord{Subtype: HealthSubtypeMedicine})
+	AccumulateHealthSummary(&healthSum, HealthRecord{Subtype: HealthSubtypeGrowth})
+	AccumulateHealthSummary(&healthSum, HealthRecord{Subtype: HealthSubtypeTeeth})
+
+	if healthSum.TotalCount != 5 || healthSum.MedicineCount != 1 || healthSum.GrowthCount != 1 || healthSum.TeethCount != 1 {
+		t.Fatalf("unexpected health counts: %#v", healthSum)
+	}
+	if healthSum.LatestTempC == nil || *healthSum.LatestTempC != 38.2 {
+		t.Fatalf("expected LatestTempC=38.2, got %v", healthSum.LatestTempC)
 	}
 }

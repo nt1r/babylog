@@ -164,6 +164,28 @@ func TestAdminInitCLI(t *testing.T) {
 			t.Errorf("expected extra positional arg rejected with Chinese usage, got code=%d stderr=%q", extraArgCode, extraArgStderr)
 		}
 	})
+
+	t.Run("rejects invalid usernames without creating administrator", func(t *testing.T) {
+		workDir := t.TempDir()
+		dataDir := filepath.Join(workDir, "data")
+		validPassFile := filepath.Join(workDir, "valid-pass.txt")
+		if err := os.WriteFile(validPassFile, []byte("valid-cli-password-123\n"), 0o600); err != nil {
+			t.Fatalf("write valid password file: %v", err)
+		}
+
+		for _, badUser := range []string{"", " admin", "admin ", strings.Repeat("a", auth.MaxUsernameLength+1)} {
+			code, _, stderr := runCLI(binPath, dataDir, "admin", "init", "--password-file", validPassFile, "--username", badUser)
+			if code == 0 || !strings.Contains(stderr, "用户名") {
+				t.Errorf("username %q: expected non-zero exit with Chinese username error, got code=%d stderr=%q", badUser, code, stderr)
+			}
+		}
+
+		// 校验非法用户名均未落库创建管理员（后续使用合法默认用户名初始化应成功）。
+		okCode, _, okStderr := runCLI(binPath, dataDir, "admin", "init", "--password-file", validPassFile)
+		if okCode != 0 {
+			t.Fatalf("expected clean db after invalid username rejections, got code=%d stderr=%q", okCode, okStderr)
+		}
+	})
 }
 
 func TestServeProcessLifecycle(t *testing.T) {
