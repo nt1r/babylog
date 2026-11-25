@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { differenceInCalendarDays, parseISO } from 'date-fns';
 import { RECORD_CATEGORY_META, type RecordCategoryMeta } from '@/lib/categories';
+import type { GrowthSummary } from '@/lib/growth';
 import { apiRequest } from '@/lib/http';
-import { DASHBOARD_QUERY_KEY } from '@/lib/query-client';
+import { DASHBOARD_QUERY_KEY, DASHBOARD_SUMMARY_QUERY_KEY } from '@/lib/query-client';
 import {
   BREAST_SIDE_LABELS,
   type CareDailySummary,
@@ -14,36 +15,20 @@ import {
 } from '@/lib/records';
 import {
   formatDurationMin,
+  formatShortCnDate,
   formatTimeSince,
   getBrowserTimeZone,
-  getLocalDateKeyFromISO,
   parseLocalDateKey,
 } from '@/lib/time';
 import {
   formatDaysUntilLabel,
   formatDoseShortTitle,
-  formatShortCnDate,
   getAlertBadgeMeta,
   type VaccineOverviewResponse,
 } from '@/lib/vaccines';
 
-export interface DashboardGrowthSummary {
-  latest_weight_kg: number | null;
-  weight_recorded_at: string | null;
-  weight_is_birth: boolean;
-  latest_height_cm: number | null;
-  height_recorded_at: string | null;
-  height_is_birth: boolean;
-  latest_head_cm: number | null;
-  head_recorded_at: string | null;
-  teeth_count: number;
-  latest_tooth_note: string | null;
-  latest_tooth_at: string | null;
-}
-
 interface DashboardSummary {
   date: string;
-  timezone: string;
   feeding: FeedingDailySummary & {
     last_feeding_at: string | null;
   };
@@ -55,14 +40,13 @@ interface DashboardSummary {
     latest_medicine_name: string | null;
     latest_medicine_at: string | null;
   };
-  growth: DashboardGrowthSummary;
+  growth: GrowthSummary;
   care: CareDailySummary & {
     last_diaper_at: string | null;
   };
 }
 
 export interface DashboardTrends {
-  days: number;
   daily: Array<{
     date: string;
     label: string;
@@ -118,16 +102,6 @@ interface DashboardVaccineCardFocus {
   readonly birthPendingDoses: readonly VaccineOverviewResponse['doses'][number][];
   readonly focusDoses: readonly VaccineOverviewResponse['doses'][number][];
   readonly nipPercent: number;
-}
-
-interface GrowthMetricTile {
-  readonly key: 'weight' | 'height' | 'head';
-  readonly shortLabel: string;
-  readonly fullLabel: string;
-  readonly value: string;
-  readonly isBirth: boolean;
-  readonly compactDate: string;
-  readonly detailDate: string;
 }
 
 const HEALTH_RECENT_TEMP_WINDOW_MS = 48 * 60 * 60 * 1000;
@@ -394,77 +368,6 @@ export function findRecentCompletedVaccineForTempCue(
   };
 }
 
-/** 格式化生长概览指标的日期标注（兼容出生日期 YYYY-MM-DD 与记录 ISO 时间戳，复用统一短日期格式）。 */
-export function formatGrowthMetricDate(raw: string | null, referenceDateStr?: string): string {
-  if (!raw) return '';
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-    return formatShortCnDate(raw, referenceDateStr);
-  }
-  const dateKey = getLocalDateKeyFromISO(raw);
-  return dateKey ? formatShortCnDate(dateKey, referenceDateStr) : '';
-}
-
-/** 统一构造体重/身高/头围三项展示模型，供首页「最新生长发育」卡与 `/growth` 概览卡共享。 */
-export function buildGrowthMetricTiles(
-  growth: DashboardGrowthSummary | undefined,
-  referenceDateStr?: string,
-): readonly GrowthMetricTile[] {
-  const weightDate = growth?.weight_recorded_at
-    ? formatGrowthMetricDate(growth.weight_recorded_at, referenceDateStr)
-    : '';
-  const heightDate = growth?.height_recorded_at
-    ? formatGrowthMetricDate(growth.height_recorded_at, referenceDateStr)
-    : '';
-  const headDate = growth?.head_recorded_at ? formatGrowthMetricDate(growth.head_recorded_at, referenceDateStr) : '';
-
-  return [
-    {
-      key: 'weight',
-      shortLabel: '体重',
-      fullLabel: '最新体重',
-      value: growth?.latest_weight_kg != null ? `${growth.latest_weight_kg} kg` : '—',
-      isBirth: Boolean(growth?.weight_is_birth),
-      compactDate: weightDate || '未记录',
-      detailDate: weightDate ? `${growth?.weight_is_birth ? '出生记录 · ' : ''}${weightDate}` : '暂未记录',
-    },
-    {
-      key: 'height',
-      shortLabel: '身高',
-      fullLabel: '最新身高',
-      value: growth?.latest_height_cm != null ? `${growth.latest_height_cm} cm` : '—',
-      isBirth: Boolean(growth?.height_is_birth),
-      compactDate: heightDate || '未记录',
-      detailDate: heightDate ? `${growth?.height_is_birth ? '出生记录 · ' : ''}${heightDate}` : '暂未记录',
-    },
-    {
-      key: 'head',
-      shortLabel: '头围',
-      fullLabel: '最新头围',
-      value: growth?.latest_head_cm != null ? `${growth.latest_head_cm} cm` : '—',
-      isBirth: false,
-      compactDate: headDate || '未记录',
-      detailDate: headDate || '暂未记录',
-    },
-  ];
-}
-
-/**
- * 统一格式化乳牙萌出副文案，供看板「最新生长发育」卡与 `/growth` 概览卡共享。
- * 后端对 `teeth` 记录强制校验 `tooth_note` 非空，因此存在出牙记录时 `latest_tooth_note` 必有值。
- */
-export function formatTeethSummaryText(
-  growth: DashboardGrowthSummary | undefined,
-  referenceDateStr: string | undefined,
-  emptyFallback: string,
-  prefix = '',
-): string {
-  if (!growth?.latest_tooth_note) return emptyFallback;
-  const datePart = growth.latest_tooth_at
-    ? ` · ${formatGrowthMetricDate(growth.latest_tooth_at, referenceDateStr)}`
-    : '';
-  return `${prefix}${growth.latest_tooth_note}${datePart}`;
-}
-
 async function fetchDashboardSummary(signal?: AbortSignal): Promise<DashboardSummary> {
   const tz = encodeURIComponent(getBrowserTimeZone());
   return apiRequest<DashboardSummary>(`/api/dashboard/summary?tz=${tz}`, { signal });
@@ -559,18 +462,12 @@ export function buildAdaptiveFeedingOneTap(
   };
 }
 
-interface DashboardSummaryQueryOptions {
-  readonly enabled?: boolean;
-  readonly refetchInterval?: number | false;
-}
-
-/** 首页今日汇总查询：默认每 60 秒轮询刷新，非首页或低频场景应显式传 refetchInterval: false。 */
-export function useDashboardSummaryQuery(options?: DashboardSummaryQueryOptions) {
+/** 首页今日汇总查询：每 60 秒轮询刷新，供首页看板实时展示照护概览。 */
+export function useDashboardSummaryQuery() {
   return useQuery({
-    queryKey: [...DASHBOARD_QUERY_KEY, 'summary'],
+    queryKey: DASHBOARD_SUMMARY_QUERY_KEY,
     queryFn: ({ signal }) => fetchDashboardSummary(signal),
-    enabled: options?.enabled ?? true,
-    refetchInterval: options?.refetchInterval ?? 60_000,
+    refetchInterval: 60_000,
   });
 }
 

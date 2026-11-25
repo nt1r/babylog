@@ -290,12 +290,7 @@ type SmartDefaults struct {
 	Care    CareDefaults    `json:"care"`
 }
 
-// WindowOptions 控制 [Store.ReadWindow] 是否一并加载健康与生长记录（看板今日用药与多日节律均开启，按需查询可关闭）。
-type WindowOptions struct {
-	IncludeHealth bool
-}
-
-// WindowSnapshot 封装时间窗口 [start, end) 内的日常记录，
+// WindowSnapshot 封装时间窗口 [start, end) 内的全部四类日常记录，
 // 其中喂养/护理/健康按 recorded_at 落入窗口筛选，睡眠按与窗口存在交集筛选。
 type WindowSnapshot struct {
 	Feedings []FeedingRecord
@@ -304,17 +299,25 @@ type WindowSnapshot struct {
 	Healths  []HealthRecord
 }
 
-// GrowthHighlights 汇总跨时间窗口独立解析的最新体格测量值与累计出牙记录数。
+// MedicineSummary 汇总时间窗口内的用药次数，以及按 RecordedAt 与 ID 确定性解析的最近一次用药信息。
+type MedicineSummary struct {
+	Count      int
+	LatestName *string
+	LatestAt   *string
+}
+
+// GrowthHighlights 汇总跨时间窗口独立解析的最新体格测量值与累计出牙记录数，
+// 附带 JSON 标签供看板概览结构直接匿名嵌入，避免跨包逐字段拷贝。
 type GrowthHighlights struct {
-	LatestWeightKg   *float64
-	WeightRecordedAt *string
-	LatestHeightCm   *float64
-	HeightRecordedAt *string
-	LatestHeadCm     *float64
-	HeadRecordedAt   *string
-	TeethCount       int
-	LatestToothNote  *string
-	LatestToothAt    *string
+	LatestWeightKg   *float64 `json:"latest_weight_kg"`
+	WeightRecordedAt *string  `json:"weight_recorded_at"`
+	LatestHeightCm   *float64 `json:"latest_height_cm"`
+	HeightRecordedAt *string  `json:"height_recorded_at"`
+	LatestHeadCm     *float64 `json:"latest_head_cm"`
+	HeadRecordedAt   *string  `json:"head_recorded_at"`
+	TeethCount       int      `json:"teeth_count"`
+	LatestToothNote  *string  `json:"latest_tooth_note"`
+	LatestToothAt    *string  `json:"latest_tooth_at"`
 }
 
 // LatestHighlights 汇总跨时间窗口的最近照护标记（上次喂养、上次换尿布、最近一次体温及生长发育最新值）。

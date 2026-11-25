@@ -46,8 +46,8 @@ func TestDashboardSummaryTimezoneSplitAndMedicine(t *testing.T) {
 	shResp.RequireStatus(t, http.StatusOK)
 	sum := DecodeOK[dashboard.SummaryResponse](t, shResp)
 
-	if sum.Date != "2026-11-23" || sum.Timezone != "Asia/Shanghai" {
-		t.Fatalf("摘要日期或时区异常：%+v", sum)
+	if sum.Date != "2026-11-23" {
+		t.Fatalf("摘要日期异常：%+v", sum)
 	}
 	if sum.Feeding.TotalML != 120 || sum.Feeding.DirectBreastCount != 2 || sum.Feeding.DirectBreastMin != 30 ||
 		sum.Feeding.LastFeedingAt == nil || *sum.Feeding.LastFeedingAt != "2026-11-23T01:30:00Z" {
@@ -70,8 +70,8 @@ func TestDashboardSummaryTimezoneSplitAndMedicine(t *testing.T) {
 	laResp := app.Client().Get(t, "/api/dashboard/summary?tz=America/Los_Angeles")
 	laResp.RequireStatus(t, http.StatusOK)
 	laSum := DecodeOK[dashboard.SummaryResponse](t, laResp)
-	if laSum.Date != "2026-11-23" || laSum.Timezone != "America/Los_Angeles" {
-		t.Fatalf("西八区日期或时区异常：%+v", laSum)
+	if laSum.Date != "2026-11-23" {
+		t.Fatalf("西八区日期异常：%+v", laSum)
 	}
 	if laSum.Feeding.TotalML != 0 || laSum.Sleep.TotalMin != 0 || laSum.Health.TodayMedicineCount != 0 {
 		t.Errorf("西八区刚过零点时当日累计应归零，实际 feeding=%+v sleep=%+v health=%+v", laSum.Feeding, laSum.Sleep, laSum.Health)
@@ -119,8 +119,8 @@ func TestDashboardSevenDayTrendsAndCareRhythm(t *testing.T) {
 	resp.RequireStatus(t, http.StatusOK)
 	tr := DecodeOK[dashboard.TrendsResponse](t, resp)
 
-	if tr.Days != 7 || len(tr.Daily) != 7 {
-		t.Fatalf("预期返回 7 个趋势日桶，实际 days=%d len=%d", tr.Days, len(tr.Daily))
+	if len(tr.Daily) != 7 {
+		t.Fatalf("预期返回 7 个趋势日桶，实际 len=%d", len(tr.Daily))
 	}
 	for i := 0; i < 5; i++ {
 		d := tr.Daily[i]
@@ -161,8 +161,8 @@ func TestDashboardSevenDayTrendsAndCareRhythm(t *testing.T) {
 	tDefaultResp := app.Client().Get(t, "/api/dashboard/trends?tz=Asia/Shanghai")
 	tDefaultResp.RequireStatus(t, http.StatusOK)
 	tDefault := DecodeOK[dashboard.TrendsResponse](t, tDefaultResp)
-	if tDefault.Days != 7 || len(tDefault.Daily) != 7 || tDefault.Daily[0].Date != "2026-11-17" || tDefault.Daily[0].SleepHours != 6.0 {
-		t.Fatalf("跨窗口起点睡眠预期在 2026-11-17 计入 6.0h，实际 days=%d len=%d daily=%+v", tDefault.Days, len(tDefault.Daily), tDefault.Daily)
+	if len(tDefault.Daily) != 7 || tDefault.Daily[0].Date != "2026-11-17" || tDefault.Daily[0].SleepHours != 6.0 {
+		t.Fatalf("跨窗口起点睡眠预期在 2026-11-17 计入 6.0h，实际 len=%d daily=%+v", len(tDefault.Daily), tDefault.Daily)
 	}
 	var nightCount int
 	for _, slot := range tDefault.Slots {
@@ -177,8 +177,8 @@ func TestDashboardSevenDayTrendsAndCareRhythm(t *testing.T) {
 	t14Resp := app.Client().Get(t, "/api/dashboard/trends?days=14&tz=Asia/Shanghai")
 	t14Resp.RequireStatus(t, http.StatusOK)
 	t14 := DecodeOK[dashboard.TrendsResponse](t, t14Resp)
-	if t14.Days != 14 || len(t14.Daily) != 14 {
-		t.Fatalf("14 天趋势预期返回 14 个日桶，实际 days=%d len=%d", t14.Days, len(t14.Daily))
+	if len(t14.Daily) != 14 {
+		t.Fatalf("14 天趋势预期返回 14 个日桶，实际 len=%d", len(t14.Daily))
 	}
 	if t14.Daily[13].Label != "11/23" {
 		t.Errorf("14 天趋势预期末日标签 11/23，实际 %+v", t14.Daily[13])

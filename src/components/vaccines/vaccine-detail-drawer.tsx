@@ -24,9 +24,9 @@ import {
   validateAndBuildDoseUpdate,
 } from '@/components/vaccines/vaccine-codec';
 import { VaccineKnowledgeSection } from '@/components/vaccines/vaccine-knowledge-section';
+import { formatShortCnDate } from '@/lib/time';
 import {
   formatDoseOrderLabel,
-  formatShortCnDate,
   getAlertBadgeMeta,
   getSameDaySiteSuggestion,
   getSuggestedManufacturers,

@@ -368,15 +368,6 @@ export function formatDoseShortTitle(dose: Pick<VaccineDose, 'short_name' | 'dos
   return dose.total_doses > 1 ? `${dose.short_name} 第${dose.dose_number}剂` : dose.short_name;
 }
 
-/** 格式化 YYYY-MM-DD 为易读中文短日期（跨年带年份，当年省去年份）。 */
-export function formatShortCnDate(dateStr: string, referenceDateStr?: string): string {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  if (!y || !m || !d) return dateStr;
-  const refYear = referenceDateStr ? Number(referenceDateStr.slice(0, 4)) : new Date().getFullYear();
-  if (y === refYear) return `${m}月${d}日`;
-  return `${y}年${m}月${d}日`;
-}
-
 /** 按状态与分类筛选疫苗剂次（其中 attention 聚合四类紧急/临期提醒态）。 */
 export function filterVaccineDoses(
   doses: readonly VaccineDose[],

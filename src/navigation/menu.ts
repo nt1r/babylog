@@ -1,6 +1,8 @@
 import type { LucideIcon } from 'lucide-react';
 import { BellRing, LayoutDashboard, Ruler, Settings2, Syringe } from 'lucide-react';
 import { RECORD_CATEGORY_META, type RecordCategory } from '@/lib/categories';
+import { useGrowthRecordStore } from '@/stores/growth-record';
+import { useQuickRecordStore } from '@/stores/quick-record';
 
 interface NavItem {
   readonly id: string;
@@ -127,11 +129,7 @@ type ContextualCreateTarget =
       readonly ariaLabel: string;
     };
 
-/**
- * 统一解析当前路由对应的「快速记一笔」目标抽屉与子类型，
- * 供桌面头部按钮、移动端底部 + 按钮与全局快捷键 N 共享，避免三处派发口径漂移。
- */
-export function resolveContextualCreateTarget(pathname: string): ContextualCreateTarget {
+function resolveContextualCreateTarget(pathname: string): ContextualCreateTarget {
   const current = findNavItemByPath(pathname);
   if (current?.id === 'growth') {
     return { target: 'growth', ariaLabel: '记录生长发育' };
@@ -140,4 +138,22 @@ export function resolveContextualCreateTarget(pathname: string): ContextualCreat
     return { target: 'quick', category: 'health', subtype: 'temperature', ariaLabel: '记录接种后体温' };
   }
   return { target: 'quick', category: current?.category ?? 'feeding', ariaLabel: '快速记一笔' };
+}
+
+/** 返回当前路由上下文对应的「快速记一笔」无障碍标签。 */
+export function getContextualCreateAriaLabel(pathname: string): string {
+  return resolveContextualCreateTarget(pathname).ariaLabel;
+}
+
+/**
+ * 按当前路由上下文直接打开对应录入抽屉（生长发育抽屉或日常快捷录入抽屉），
+ * 向应用外壳隐藏双 Store 派发分支，避免头部、底部栏与快捷键三处重复判断。
+ */
+export function openContextualCreate(pathname: string): void {
+  const action = resolveContextualCreateTarget(pathname);
+  if (action.target === 'growth') {
+    useGrowthRecordStore.getState().openCreate('growth');
+    return;
+  }
+  useQuickRecordStore.getState().openCreate(action.category, action.subtype);
 }

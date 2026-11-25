@@ -12,11 +12,11 @@ import {
 import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { formatShortCnDate } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import {
   formatDaysUntilLabel,
   formatDoseOrderLabel,
-  formatShortCnDate,
   getAlertBadgeMeta,
   groupDosesByAgeStage,
   type VaccineDose,

@@ -47,18 +47,11 @@ type HealthSummary struct {
 }
 
 // GrowthSummary 汇总独立解析的最新体格测量值（含宝宝档案出生体格兜底标记）与累计出牙统计。
+// 通过匿名嵌入 [records.GrowthHighlights] 复用统一字段与 JSON 标签，仅叠加看板专属的出生兜底标记。
 type GrowthSummary struct {
-	LatestWeightKg   *float64 `json:"latest_weight_kg"`
-	WeightRecordedAt *string  `json:"weight_recorded_at"`
-	WeightIsBirth    bool     `json:"weight_is_birth"`
-	LatestHeightCm   *float64 `json:"latest_height_cm"`
-	HeightRecordedAt *string  `json:"height_recorded_at"`
-	HeightIsBirth    bool     `json:"height_is_birth"`
-	LatestHeadCm     *float64 `json:"latest_head_cm"`
-	HeadRecordedAt   *string  `json:"head_recorded_at"`
-	TeethCount       int      `json:"teeth_count"`
-	LatestToothNote  *string  `json:"latest_tooth_note"`
-	LatestToothAt    *string  `json:"latest_tooth_at"`
+	records.GrowthHighlights
+	WeightIsBirth bool `json:"weight_is_birth"`
+	HeightIsBirth bool `json:"height_is_birth"`
 }
 
 // BirthBaseline 承载来自宝宝档案的出生日期与可选出生体格值，供生长概览在尚无手动测量时兜底。
@@ -77,13 +70,12 @@ type CareSummary struct {
 
 // SummaryResponse 表示 GET /api/dashboard/summary 的完整响应体。
 type SummaryResponse struct {
-	Date     string         `json:"date"`
-	Timezone string         `json:"timezone"`
-	Feeding  FeedingSummary `json:"feeding"`
-	Sleep    SleepSummary   `json:"sleep"`
-	Health   HealthSummary  `json:"health"`
-	Growth   GrowthSummary  `json:"growth"`
-	Care     CareSummary    `json:"care"`
+	Date    string         `json:"date"`
+	Feeding FeedingSummary `json:"feeding"`
+	Sleep   SleepSummary   `json:"sleep"`
+	Health  HealthSummary  `json:"health"`
+	Growth  GrowthSummary  `json:"growth"`
+	Care    CareSummary    `json:"care"`
 }
 
 // DailyTrendPoint 表示趋势图中的单日数据点。
@@ -104,7 +96,6 @@ type SlotDistributionPoint struct {
 
 // TrendsResponse 表示 GET /api/dashboard/trends 的完整响应体。
 type TrendsResponse struct {
-	Days  int                     `json:"days"`
 	Daily []DailyTrendPoint       `json:"daily"`
 	Slots []SlotDistributionPoint `json:"slots"`
 }
@@ -159,8 +150,7 @@ func (s *Service) GetSummary(ctx context.Context, babyID int64, loc *time.Locati
 	dayStart, dayEnd := timeutil.LocalDayBounds(now, loc)
 	todayKey := dayStart.Format(timeutil.DateLayout)
 
-	// 读取今日窗口时纳入健康记录，用于一次查询完成今日用药次数与最近用药提取。
-	snap, err := s.store.ReadWindow(ctx, babyID, dayStart, dayEnd, records.WindowOptions{IncludeHealth: true})
+	snap, err := s.store.ReadWindow(ctx, babyID, dayStart, dayEnd)
 	if err != nil {
 		return nil, err
 	}
@@ -170,15 +160,7 @@ func (s *Service) GetSummary(ctx context.Context, babyID int64, loc *time.Locati
 	}
 
 	growth := GrowthSummary{
-		LatestWeightKg:   highlights.Growth.LatestWeightKg,
-		WeightRecordedAt: highlights.Growth.WeightRecordedAt,
-		LatestHeightCm:   highlights.Growth.LatestHeightCm,
-		HeightRecordedAt: highlights.Growth.HeightRecordedAt,
-		LatestHeadCm:     highlights.Growth.LatestHeadCm,
-		HeadRecordedAt:   highlights.Growth.HeadRecordedAt,
-		TeethCount:       highlights.Growth.TeethCount,
-		LatestToothNote:  highlights.Growth.LatestToothNote,
-		LatestToothAt:    highlights.Growth.LatestToothAt,
+		GrowthHighlights: highlights.Growth,
 	}
 	// 体重与身高各自独立回退出生基准（头围无出生基准）；
 	// 兜底写入的 RecordedAt 为宝宝档案日期 YYYY-MM-DD（区别于手动测量的 UTC RFC3339），前端凭 WeightIsBirth/HeightIsBirth 区分渲染，
@@ -204,15 +186,19 @@ func (s *Service) GetSummary(ctx context.Context, babyID int64, loc *time.Locati
 		}
 	}
 
+	med := records.SummarizeMedicine(snap.Healths)
 	resp := &SummaryResponse{
-		Date:     todayKey,
-		Timezone: loc.String(),
+		Date: todayKey,
 		Feeding: FeedingSummary{
 			LastFeedingAt: highlights.LastFeedingAt,
 		},
+		Sleep: records.SummarizeSleepByLocalDay(snap.Sleeps, loc)[todayKey],
 		Health: HealthSummary{
-			LatestTempC:  highlights.LatestTempC,
-			LatestTempAt: highlights.LatestTempAt,
+			LatestTempC:        highlights.LatestTempC,
+			LatestTempAt:       highlights.LatestTempAt,
+			TodayMedicineCount: med.Count,
+			LatestMedicineName: med.LatestName,
+			LatestMedicineAt:   med.LatestAt,
 		},
 		Growth: growth,
 		Care: CareSummary{
@@ -220,48 +206,12 @@ func (s *Service) GetSummary(ctx context.Context, babyID int64, loc *time.Locati
 		},
 	}
 
-	// 1. 今日喂养汇总（复用 records 共享累加器）
+	// 今日喂养与护理汇总复用 records 共享累加器。
 	for _, r := range snap.Feedings {
 		records.AccumulateFeedingSummary(&resp.Feeding.FeedingDailySummary, r)
 	}
-
-	// 2. 今日睡眠汇总（与列表页及趋势图共用自然日切分与 records.AccumulateSleepSummary）
-	for _, r := range snap.Sleeps {
-		st, err1 := timeutil.ParseTimestamp(r.StartedAt)
-		et, err2 := timeutil.ParseTimestamp(r.EndedAt)
-		if err1 != nil || err2 != nil {
-			continue
-		}
-		parts := timeutil.SplitIntervalMinutesByLocalDay(st, et, loc)
-		records.AccumulateSleepSummary(&resp.Sleep, r, parts[todayKey])
-	}
-
-	// 3. 今日护理汇总（复用 records 共享累加器）
 	for _, r := range snap.Cares {
 		records.AccumulateCareSummary(&resp.Care.CareDailySummary, r)
-	}
-
-	// 4. 今日用药汇总：利用 UTC RFC3339 字典序与时刻顺序等价的特性，按 RecordedAt 与 ID 确定性选取当日最新用药。
-	var latestMedID int64
-	var latestMedAt string
-	for _, r := range snap.Healths {
-		if r.Subtype != records.HealthSubtypeMedicine {
-			continue
-		}
-		resp.Health.TodayMedicineCount++
-		if latestMedID == 0 || r.RecordedAt > latestMedAt || (r.RecordedAt == latestMedAt && r.ID > latestMedID) {
-			latestMedID = r.ID
-			latestMedAt = r.RecordedAt
-			ts := r.RecordedAt
-			resp.Health.LatestMedicineAt = &ts
-			if r.MedicineName != nil {
-				name := *r.MedicineName
-				resp.Health.LatestMedicineName = &name
-			} else {
-				// 显式清空，避免最新一条用药名称为空时残留先前较早记录的药名。
-				resp.Health.LatestMedicineName = nil
-			}
-		}
 	}
 
 	return resp, nil
@@ -283,14 +233,14 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 	todayStart, todayEnd := timeutil.LocalDayBounds(now, loc)
 	windowStart := todayStart.AddDate(0, 0, -(days - 1))
 
-	snap, err := s.store.ReadWindow(ctx, babyID, windowStart, todayEnd, records.WindowOptions{IncludeHealth: true})
+	snap, err := s.store.ReadWindow(ctx, babyID, windowStart, todayEnd)
 	if err != nil {
 		return nil, err
 	}
 
 	keys := timeutil.RecentLocalDateKeys(now, days, loc)
 	feedingByDay := make(map[string]*records.FeedingDailySummary, days)
-	sleepMinByDay := make(map[string]int, days)
+	sleepByDay := records.SummarizeSleepByLocalDay(snap.Sleeps, loc)
 	slotCounts := make(map[string]int, len(daySlots))
 
 	// 1. 喂养趋势（复用共享累加器确保奶量与亲喂口径一致）与时段计数
@@ -309,16 +259,11 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 		slotCounts[daySlotLabel(ts, loc)]++
 	}
 
-	// 2. 睡眠趋势（跨夜按自然日切分）与入睡时段计数
+	// 2. 睡眠入睡时段计数（跨夜睡眠时长切分已由 records.SummarizeSleepByLocalDay 统一完成）
 	for _, r := range snap.Sleeps {
-		st, err1 := timeutil.ParseTimestamp(r.StartedAt)
-		et, err2 := timeutil.ParseTimestamp(r.EndedAt)
-		if err1 != nil || err2 != nil {
+		st, parseErr := timeutil.ParseTimestamp(r.StartedAt)
+		if parseErr != nil {
 			continue
-		}
-		parts := timeutil.SplitIntervalMinutesByLocalDay(st, et, loc)
-		for k, mins := range parts {
-			sleepMinByDay[k] += mins
 		}
 		// 仅当入睡时刻本身落在当前统计窗口 [windowStart, todayEnd) 内时才计入照护节律，
 		// 避免从窗口前一天跨夜延续进来的睡眠被重复归入本窗口的入睡频次。
@@ -348,7 +293,7 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 		if days <= 7 {
 			label = weekdayLabels[dayTime.Weekday()]
 		}
-		hours := math.Round(float64(sleepMinByDay[key])/60.0*10) / 10
+		hours := math.Round(float64(sleepByDay[key].TotalMin)/60.0*10) / 10
 		var feedML, directBreastMin, directBreastCount int
 		if agg := feedingByDay[key]; agg != nil {
 			feedML = agg.TotalML
@@ -374,7 +319,6 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 	}
 
 	return &TrendsResponse{
-		Days:  days,
 		Daily: daily,
 		Slots: slots,
 	}, nil

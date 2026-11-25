@@ -492,7 +492,7 @@ func (s *Store) ListSleep(ctx context.Context, babyID int64, f ListFilter) (*Lis
 		}
 	}
 
-	summaries := make(map[string]SleepDailySummary, len(dateKeys))
+	var summaries map[string]SleepDailySummary
 	if ranges := mergedDateRangesUTC(dateKeys, f.Loc); len(ranges) > 0 {
 		q := s.db.WithContext(ctx).Model(&SleepRecord{}).Where("baby_id = ?", babyID)
 		q = s.applyTimeRanges(q, ranges, true)
@@ -501,23 +501,11 @@ func (s *Store) ListSleep(ctx context.Context, babyID int64, f ListFilter) (*Lis
 		if err := q.Find(&allForDays).Error; err != nil {
 			return nil, err
 		}
-		for _, r := range allForDays {
-			st, err1 := timeutil.ParseTimestamp(r.StartedAt)
-			et, err2 := timeutil.ParseTimestamp(r.EndedAt)
-			if err1 != nil || err2 != nil {
-				continue
-			}
-			// 跨夜睡眠按自然日边界切分分钟数，保持与首页看板统计口径一致。
-			parts := timeutil.SplitIntervalMinutesByLocalDay(st, et, f.Loc)
-			for key, mins := range parts {
-				if _, wanted := dateKeys[key]; !wanted {
-					continue
-				}
-				sum := summaries[key]
-				AccumulateSleepSummary(&sum, r, mins)
-				summaries[key] = sum
-			}
-		}
+		// 跨夜睡眠按自然日边界切分分钟数，与首页看板共享单一汇总口径。
+		summaries = accumulateSleepByLocalDay(allForDays, f.Loc, dateKeys)
+	} else {
+		// 空结果仍返回非 nil 空 map，保证 JSON 序列化为 `{}` 而非 `null`。
+		summaries = make(map[string]SleepDailySummary)
 	}
 
 	return &ListResult[SleepRecord, SleepDailySummary]{
@@ -670,15 +658,15 @@ func (s *Store) ListHealth(ctx context.Context, babyID int64, f ListFilter) (*Li
 		invalidMsg:      "健康子类型筛选参数无效",
 		summaryOrderBy:  "recorded_at DESC, id DESC",
 		recordedAt:      func(r HealthRecord) string { return r.RecordedAt },
-		accumulate:      AccumulateHealthSummary,
+		accumulate:      accumulateHealthSummary,
 	})
 }
 
 // --- 时间窗口快照与最近标记读取 ---
 
-// ReadWindow 读取指定宝宝在 [start, end) 时间窗口内的日常记录快照，
+// ReadWindow 读取指定宝宝在 [start, end) 时间窗口内的全部四类日常记录快照，
 // 供首页看板等聚合模块使用，避免外部模块直接耦合记录表结构与 SQL 谓词。
-func (s *Store) ReadWindow(ctx context.Context, babyID int64, start, end time.Time, opts WindowOptions) (*WindowSnapshot, error) {
+func (s *Store) ReadWindow(ctx context.Context, babyID int64, start, end time.Time) (*WindowSnapshot, error) {
 	snap := &WindowSnapshot{}
 	if !end.After(start) {
 		return snap, nil
@@ -702,12 +690,10 @@ func (s *Store) ReadWindow(ctx context.Context, babyID int64, start, end time.Ti
 		Find(&snap.Cares).Error; err != nil {
 		return nil, err
 	}
-	if opts.IncludeHealth {
-		if err := s.db.WithContext(ctx).
-			Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, startUTC, endUTC).
-			Find(&snap.Healths).Error; err != nil {
-			return nil, err
-		}
+	if err := s.db.WithContext(ctx).
+		Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, startUTC, endUTC).
+		Find(&snap.Healths).Error; err != nil {
+		return nil, err
 	}
 
 	return snap, nil

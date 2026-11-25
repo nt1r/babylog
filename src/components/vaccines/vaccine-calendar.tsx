@@ -7,12 +7,12 @@ import { InfoPopover } from '@/components/ui/info-popover';
 import { toast } from '@/components/ui/toast';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { exportVaccineVisitIcs } from '@/lib/ics';
+import { formatShortCnDate } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import {
   buildCalendarIcsOptions,
   buildVaccineCalendarMonth,
   formatDoseShortTitle,
-  formatShortCnDate,
   getAlertBadgeMeta,
   resolveCalendarExportTarget,
   type VaccineDose,
