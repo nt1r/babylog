@@ -1,4 +1,4 @@
-import { AlertCircle, PlusIcon, RotateCw, TrendingUp } from 'lucide-react';
+import { AlertCircle, Download, PlusIcon, RotateCw, TrendingUp } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Area, CartesianGrid, ComposedChart, Line, XAxis, YAxis } from 'recharts';
 import { Badge } from '@/components/ui/badge';
@@ -7,10 +7,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { type ChartConfig, ChartContainer, ChartTooltip } from '@/components/ui/chart';
 import { InfoPopover } from '@/components/ui/info-popover';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Spinner } from '@/components/ui/spinner';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useChartImageExport } from '@/hooks/use-chart-image-export';
 import type { BabyProfile } from '@/lib/baby';
 import { buildGrowthChartSeries, type GrowthChartMetric, type GrowthChartPoint } from '@/lib/growth-chart';
 import type { HealthRecord } from '@/lib/records';
+import { formatBabyAge } from '@/lib/time';
 
 interface GrowthTrendCardProps {
   readonly baby: BabyProfile | null | undefined;
@@ -90,8 +93,29 @@ export function GrowthTrendCard({
   onOpenCreate,
 }: GrowthTrendCardProps) {
   const [metric, setMetric] = useState<GrowthChartMetric>('weight');
+  const { containerRef: chartBoxRef, exporting, saveImage } = useChartImageExport();
 
   const series = useMemo(() => buildGrowthChartSeries(metric, records, baby), [metric, records, baby]);
+  const canExport = !isLoading && !isError && series.measurementCount > 0;
+
+  function handleSaveImage() {
+    if (!canExport) return;
+    const ageLabel = baby?.birth_date ? formatBabyAge(baby.birth_date).ageLabel : '';
+    const subtitleParts = [
+      baby?.nickname ? (ageLabel ? `${baby.nickname}（${ageLabel}）` : baby.nickname) : '',
+      `WHO 2006 ${series.genderLabel} P3–P97 参考区间`,
+    ].filter(Boolean);
+    void saveImage({
+      title: `生长发育曲线 · ${series.label}`,
+      subtitle: subtitleParts.join(' · '),
+      filenameBase: `${baby?.nickname ? `${baby.nickname}-` : ''}生长曲线-${series.label}`,
+      legend: [
+        { label: `宝宝${series.label} (${series.unit})`, colorVar: '--health' },
+        { label: 'WHO 中位线 P50 / 参考区间 P3–P97', colorVar: '--primary' },
+      ],
+      successMessage: '生长发育曲线已保存为图片',
+    });
+  }
 
   const statusBadge =
     !isError && !isLoading ? (
@@ -126,19 +150,39 @@ export function GrowthTrendCard({
           {statusBadge}
         </div>
 
-        <Tabs
-          value={metric}
-          onValueChange={(value) => {
-            const next = String(value);
-            setMetric(next === 'height' || next === 'head' ? next : 'weight');
-          }}
-        >
-          <TabsList>
-            <TabsTrigger value="weight">体重</TabsTrigger>
-            <TabsTrigger value="height">身高</TabsTrigger>
-            <TabsTrigger value="head">头围</TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <div className="flex flex-wrap items-center gap-2">
+          <Tabs
+            value={metric}
+            onValueChange={(value) => {
+              const next = String(value);
+              setMetric(next === 'height' || next === 'head' ? next : 'weight');
+            }}
+          >
+            <TabsList>
+              <TabsTrigger value="weight">体重</TabsTrigger>
+              <TabsTrigger value="height">身高</TabsTrigger>
+              <TabsTrigger value="head">头围</TabsTrigger>
+            </TabsList>
+          </Tabs>
+          {canExport ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={exporting}
+              onClick={() => void handleSaveImage()}
+              className="h-8 gap-1.5 px-2.5 text-xs"
+              aria-label={`将${series.label}生长发育曲线保存为图片`}
+            >
+              {exporting ? (
+                <Spinner className="size-3.5" aria-hidden="true" role="presentation" />
+              ) : (
+                <Download className="size-3.5" strokeWidth={1.8} />
+              )}
+              <span>保存图片</span>
+            </Button>
+          ) : null}
+        </div>
       </CardHeader>
 
       <CardContent className="space-y-2.5">
@@ -198,52 +242,71 @@ export function GrowthTrendCard({
               )}
             </div>
 
-            <ChartContainer config={CHART_CONFIG} className="aspect-auto h-64 w-full">
-              <ComposedChart data={[...series.points]} margin={{ top: 10, right: 12, left: -12, bottom: 0 }}>
-                <CartesianGrid vertical={false} strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="ageMonths"
-                  type="number"
-                  domain={[0, series.maxMonth]}
-                  tickLine={false}
-                  axisLine={false}
-                  tickMargin={8}
-                  tickFormatter={(v: number) => (v === 0 ? '出生' : `${v}月`)}
-                />
-                <YAxis domain={series.yDomain} tickLine={false} axisLine={false} tickMargin={8} width={42} />
-                <ChartTooltip content={<GrowthCurveTooltip unit={series.unit} metricLabel={series.label} />} />
-                {/* 关闭 Recharts 入场动画，确保切换体重/身高/头围指标时曲线与参考带即时重绘不抖动 */}
-                <Area
-                  type="monotone"
-                  dataKey="whoRange"
-                  stroke="none"
-                  fill="var(--primary)"
-                  fillOpacity={0.12}
-                  isAnimationActive={false}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="whoP50"
-                  stroke="var(--primary)"
-                  strokeOpacity={0.55}
-                  strokeWidth={1.4}
-                  strokeDasharray="4 4"
-                  dot={false}
-                  activeDot={false}
-                  isAnimationActive={false}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="value"
-                  stroke="var(--health)"
-                  strokeWidth={2.4}
-                  connectNulls
-                  isAnimationActive={false}
-                  dot={{ r: 4, fill: 'var(--health)', stroke: 'var(--card)', strokeWidth: 2 }}
-                  activeDot={{ r: 5.5, fill: 'var(--health)', stroke: 'var(--card)', strokeWidth: 2 }}
-                />
-              </ComposedChart>
-            </ChartContainer>
+            {series.deltaFromPrev || series.deltaFromBirth ? (
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                {series.deltaFromPrev ? (
+                  <Badge variant="outline" className="font-normal tabular-nums">
+                    较上次 {series.deltaFromPrev.formatted}
+                    {series.deltaFromPrev.spanLabel ? `（${series.deltaFromPrev.spanLabel}）` : ''}
+                  </Badge>
+                ) : null}
+                {series.deltaFromBirth ? (
+                  <Badge variant="outline" className="font-normal tabular-nums">
+                    较出生 {series.deltaFromBirth.formatted}
+                    {series.deltaFromBirth.spanLabel ? `（${series.deltaFromBirth.spanLabel}）` : ''}
+                  </Badge>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div ref={chartBoxRef} className="w-full">
+              <ChartContainer config={CHART_CONFIG} className="aspect-auto h-64 w-full">
+                <ComposedChart data={[...series.points]} margin={{ top: 10, right: 12, left: -12, bottom: 0 }}>
+                  <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="ageMonths"
+                    type="number"
+                    domain={[0, series.maxMonth]}
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={8}
+                    tickFormatter={(v: number) => (v === 0 ? '出生' : `${v}月`)}
+                  />
+                  <YAxis domain={series.yDomain} tickLine={false} axisLine={false} tickMargin={8} width={42} />
+                  <ChartTooltip content={<GrowthCurveTooltip unit={series.unit} metricLabel={series.label} />} />
+                  {/* 关闭 Recharts 入场动画，确保切换体重/身高/头围指标时曲线与参考带即时重绘不抖动 */}
+                  <Area
+                    type="monotone"
+                    dataKey="whoRange"
+                    stroke="none"
+                    fill="var(--primary)"
+                    fillOpacity={0.12}
+                    isAnimationActive={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="whoP50"
+                    stroke="var(--primary)"
+                    strokeOpacity={0.55}
+                    strokeWidth={1.4}
+                    strokeDasharray="4 4"
+                    dot={false}
+                    activeDot={false}
+                    isAnimationActive={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="value"
+                    stroke="var(--health)"
+                    strokeWidth={2.4}
+                    connectNulls
+                    isAnimationActive={false}
+                    dot={{ r: 4, fill: 'var(--health)', stroke: 'var(--card)', strokeWidth: 2 }}
+                    activeDot={{ r: 5.5, fill: 'var(--health)', stroke: 'var(--card)', strokeWidth: 2 }}
+                  />
+                </ComposedChart>
+              </ChartContainer>
+            </div>
 
             {series.beyondWhoCount > 0 || hasMoreHistory ? (
               <p className="text-xs text-muted-foreground">

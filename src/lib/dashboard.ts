@@ -55,14 +55,55 @@ export interface DashboardTrends {
     date: string;
     label: string;
     feeding_ml: number;
+    formula_ml: number;
+    formula_count: number;
+    bottle_breast_ml: number;
+    bottle_breast_count: number;
     direct_breast_min: number;
     direct_breast_count: number;
+    solid_count: number;
+    feeding_count: number;
     sleep_hours: number;
+    nap_hours: number;
+    night_hours: number;
+    nap_count: number;
+    pee_count: number;
+    poop_count: number;
+    bath_count: number;
+    max_temp_c: number | null;
+    medicine_count: number;
   }>;
   slots: Array<{
     slot: string;
     count: number;
   }>;
+  period_summary: {
+    active_days: {
+      feeding_days: number;
+      sleep_days: number;
+      care_days: number;
+    };
+    breast_side: {
+      left_count: number;
+      right_count: number;
+      both_count: number;
+    };
+    solid_acceptance: {
+      like_count: number;
+      neutral_count: number;
+      dislike_count: number;
+    };
+    sleep: {
+      longest_night_min: number;
+      avg_nap_min: number;
+    };
+    stool: {
+      total_poop_count: number;
+      watery_count: number;
+      hard_count: number;
+      abnormal_color_count: number;
+    };
+  };
 }
 
 export type DashboardTrendTab = 'feeding' | 'sleep';

@@ -1,5 +1,5 @@
 // Package dashboard 提供基于本地时区的首页今日汇总 KPI（含健康观察与生长发育概览）、
-// 距上次照护时长、跨夜睡眠自然日切分、近 N 日趋势以及全天照护节律聚合服务。
+// 距上次照护时长、跨夜睡眠自然日切分、多维多日趋势（喂养/睡眠/排泄/健康与周期洞察）及全天照护节律聚合服务。
 package dashboard
 
 import (
@@ -78,14 +78,72 @@ type SummaryResponse struct {
 	Care    CareSummary    `json:"care"`
 }
 
-// DailyTrendPoint 表示趋势图中的单日数据点。
+// DailyTrendPoint 表示趋势图中的单日多维数据点（兼容既有基础字段并补充喂养、睡眠、护理与健康分项）。
 type DailyTrendPoint struct {
-	Date              string  `json:"date"`
-	Label             string  `json:"label"`
-	FeedingML         int     `json:"feeding_ml"`
-	DirectBreastMin   int     `json:"direct_breast_min"`
-	DirectBreastCount int     `json:"direct_breast_count"`
-	SleepHours        float64 `json:"sleep_hours"`
+	Date              string   `json:"date"`
+	Label             string   `json:"label"`
+	FeedingML         int      `json:"feeding_ml"`
+	FormulaML         int      `json:"formula_ml"`
+	FormulaCount      int      `json:"formula_count"`
+	BottleBreastML    int      `json:"bottle_breast_ml"`
+	BottleBreastCount int      `json:"bottle_breast_count"`
+	DirectBreastMin   int      `json:"direct_breast_min"`
+	DirectBreastCount int      `json:"direct_breast_count"`
+	SolidCount        int      `json:"solid_count"`
+	FeedingCount      int      `json:"feeding_count"`
+	SleepHours        float64  `json:"sleep_hours"`
+	NapHours          float64  `json:"nap_hours"`
+	NightHours        float64  `json:"night_hours"`
+	NapCount          int      `json:"nap_count"`
+	PeeCount          int      `json:"pee_count"`
+	PoopCount         int      `json:"poop_count"`
+	BathCount         int      `json:"bath_count"`
+	MaxTempC          *float64 `json:"max_temp_c"`
+	MedicineCount     int      `json:"medicine_count"`
+}
+
+// PeriodActiveDays 统计趋势窗口内各品类存在有效记录的自然日天数，用于前端计算“有记录日均”。
+type PeriodActiveDays struct {
+	FeedingDays int `json:"feeding_days"`
+	SleepDays   int `json:"sleep_days"`
+	CareDays    int `json:"care_days"`
+}
+
+// BreastSideSummary 汇总趋势窗口内亲喂左/右/双侧的频次分布。
+type BreastSideSummary struct {
+	LeftCount  int `json:"left_count"`
+	RightCount int `json:"right_count"`
+	BothCount  int `json:"both_count"`
+}
+
+// SolidAcceptanceSummary 汇总趋势窗口内辅食接受度分布。
+type SolidAcceptanceSummary struct {
+	LikeCount    int `json:"like_count"`
+	NeutralCount int `json:"neutral_count"`
+	DislikeCount int `json:"dislike_count"`
+}
+
+// PeriodSleepSummary 汇总趋势窗口内的睡眠连续性指标（最长连续夜觉与白天小睡均长，单位分钟）。
+type PeriodSleepSummary struct {
+	LongestNightMin int `json:"longest_night_min"`
+	AvgNapMin       int `json:"avg_nap_min"`
+}
+
+// PeriodStoolSummary 汇总趋势窗口内的排便总次数与需关注的性状/颜色次数。
+type PeriodStoolSummary struct {
+	TotalPoopCount     int `json:"total_poop_count"`
+	WateryCount        int `json:"watery_count"`
+	HardCount          int `json:"hard_count"`
+	AbnormalColorCount int `json:"abnormal_color_count"`
+}
+
+// PeriodTrendSummary 汇总趋势窗口内无法仅凭单日合计反推的周期级洞察指标。
+type PeriodTrendSummary struct {
+	ActiveDays      PeriodActiveDays       `json:"active_days"`
+	BreastSide      BreastSideSummary      `json:"breast_side"`
+	SolidAcceptance SolidAcceptanceSummary `json:"solid_acceptance"`
+	Sleep           PeriodSleepSummary     `json:"sleep"`
+	Stool           PeriodStoolSummary     `json:"stool"`
 }
 
 // SlotDistributionPoint 表示全天照护节律柱状图的单个时段。
@@ -96,8 +154,9 @@ type SlotDistributionPoint struct {
 
 // TrendsResponse 表示 GET /api/babies/:babyId/dashboard/trends 的完整响应体。
 type TrendsResponse struct {
-	Daily []DailyTrendPoint       `json:"daily"`
-	Slots []SlotDistributionPoint `json:"slots"`
+	Daily         []DailyTrendPoint       `json:"daily"`
+	Slots         []SlotDistributionPoint `json:"slots"`
+	PeriodSummary PeriodTrendSummary      `json:"period_summary"`
 }
 
 // Service 负责通过 [records.Store] 读取时间窗口快照与最近标记，并聚合首页看板数据。
@@ -217,7 +276,7 @@ func (s *Service) GetSummary(ctx context.Context, babyID int64, loc *time.Locati
 	return resp, nil
 }
 
-// GetTrends 按本地时区返回连续 days 天的每日奶量/睡眠趋势（空日补 0）及 5 时段照护频次分布。
+// GetTrends 按本地时区返回连续 days 天的多维每日趋势（空日补 0）、5 时段照护频次分布及周期洞察摘要。
 func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *time.Location) (*TrendsResponse, error) {
 	if loc == nil {
 		loc, _ = timeutil.LoadLocation("")
@@ -239,43 +298,96 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 	}
 
 	keys := timeutil.RecentLocalDateKeys(now, days, loc)
-	feedingByDay := make(map[string]*records.FeedingDailySummary, days)
+	// 复用 records 共享按日聚合函数，保证多日趋势与 Excel 导出统计口径一致。
+	feedingByDay := records.SummarizeFeedingByLocalDay(snap.Feedings, loc)
 	sleepByDay := records.SummarizeSleepByLocalDay(snap.Sleeps, loc)
+	careByDay := records.SummarizeCareByLocalDay(snap.Cares, loc)
+	healthByDay := records.SummarizeClinicalHealthByLocalDay(snap.Healths, loc)
 	slotCounts := make(map[string]int, len(daySlots))
+	var periodSummary PeriodTrendSummary
+	var napDurationSum, napSessionCount int
 
-	// 1. 喂养趋势（复用共享累加器确保奶量与亲喂口径一致）与时段计数
+	// 1. 喂养周期洞察（亲喂侧别、辅食接受度）与时段计数
 	for _, r := range snap.Feedings {
 		ts, parseErr := timeutil.ParseTimestamp(r.RecordedAt)
 		if parseErr != nil {
 			continue
 		}
-		key := timeutil.LocalDateKey(ts, loc)
-		agg := feedingByDay[key]
-		if agg == nil {
-			agg = &records.FeedingDailySummary{}
-			feedingByDay[key] = agg
-		}
-		records.AccumulateFeedingSummary(agg, r)
 		slotCounts[daySlotLabel(ts, loc)]++
+
+		switch r.Subtype {
+		case records.FeedingSubtypeBreast:
+			if r.FeedingMode == nil || *r.FeedingMode != "bottle" {
+				if r.BreastSide != nil {
+					switch *r.BreastSide {
+					case "left":
+						periodSummary.BreastSide.LeftCount++
+					case "right":
+						periodSummary.BreastSide.RightCount++
+					case "both":
+						periodSummary.BreastSide.BothCount++
+					}
+				}
+			}
+		case records.FeedingSubtypeSolid:
+			if r.Acceptance != nil {
+				switch *r.Acceptance {
+				case "like":
+					periodSummary.SolidAcceptance.LikeCount++
+				case "neutral":
+					periodSummary.SolidAcceptance.NeutralCount++
+				case "dislike":
+					periodSummary.SolidAcceptance.DislikeCount++
+				}
+			}
+		}
 	}
 
-	// 2. 睡眠入睡时段计数（跨夜睡眠时长切分已由 records.SummarizeSleepByLocalDay 统一完成）
+	// 2. 睡眠入睡时段计数与连续性指标（跨夜睡眠时长切分已由 records.SummarizeSleepByLocalDay 统一完成）
 	for _, r := range snap.Sleeps {
 		st, parseErr := timeutil.ParseTimestamp(r.StartedAt)
 		if parseErr != nil {
 			continue
 		}
-		// 仅当入睡时刻本身落在当前统计窗口 [windowStart, todayEnd) 内时才计入照护节律，
-		// 避免从窗口前一天跨夜延续进来的睡眠被重复归入本窗口的入睡频次。
+		// 仅当入睡时刻本身落在当前统计窗口 [windowStart, todayEnd) 内时才计入照护节律与周期睡眠连续性，
+		// 避免从窗口前一天跨夜延续进来的睡眠被重复归入本窗口统计。
 		if !st.Before(windowStart) && st.Before(todayEnd) {
 			slotCounts[daySlotLabel(st, loc)]++
+			if r.Subtype == records.SleepSubtypeNight {
+				if r.DurationMin > periodSummary.Sleep.LongestNightMin {
+					periodSummary.Sleep.LongestNightMin = r.DurationMin
+				}
+			} else if r.DurationMin > 0 {
+				napDurationSum += r.DurationMin
+				napSessionCount++
+			}
 		}
 	}
+	if napSessionCount > 0 {
+		periodSummary.Sleep.AvgNapMin = int(math.Round(float64(napDurationSum) / float64(napSessionCount)))
+	}
 
-	// 3. 护理与健康/生长记录（snap.Healths 含体温/用药/生长/长牙全部子类型）统一计入全天照护节律时段分布
+	// 3. 便便性状/颜色观察统计与护理/健康全天照护节律时段计数
 	for _, r := range snap.Cares {
-		if ts, parseErr := timeutil.ParseTimestamp(r.RecordedAt); parseErr == nil {
-			slotCounts[daySlotLabel(ts, loc)]++
+		ts, parseErr := timeutil.ParseTimestamp(r.RecordedAt)
+		if parseErr != nil {
+			continue
+		}
+		slotCounts[daySlotLabel(ts, loc)]++
+
+		if r.Subtype == records.CareSubtypeDiaper && r.DiaperKind != nil && (*r.DiaperKind == "poop" || *r.DiaperKind == "both") {
+			periodSummary.Stool.TotalPoopCount++
+			if r.StoolConsistency != nil {
+				switch *r.StoolConsistency {
+				case "watery":
+					periodSummary.Stool.WateryCount++
+				case "hard":
+					periodSummary.Stool.HardCount++
+				}
+			}
+			if r.StoolColor != nil && *r.StoolColor == "abnormal" {
+				periodSummary.Stool.AbnormalColorCount++
+			}
 		}
 	}
 	for _, r := range snap.Healths {
@@ -293,21 +405,49 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 		if days <= 7 {
 			label = weekdayLabels[dayTime.Weekday()]
 		}
-		hours := math.Round(float64(sleepByDay[key].TotalMin)/60.0*10) / 10
-		var feedML, directBreastMin, directBreastCount int
-		if agg := feedingByDay[key]; agg != nil {
-			feedML = agg.TotalML
-			directBreastMin = agg.DirectBreastMin
-			directBreastCount = agg.DirectBreastCount
-		}
-		daily = append(daily, DailyTrendPoint{
+		feedDay := feedingByDay[key]
+		sleepDay := sleepByDay[key]
+		careDay := careByDay[key]
+		healthDay := healthByDay[key]
+		napMin := max(sleepDay.TotalMin-sleepDay.NightMin, 0)
+		totalHours := math.Round(float64(sleepDay.TotalMin)/60.0*10) / 10
+		napHours := math.Round(float64(napMin)/60.0*10) / 10
+		nightHours := math.Round(float64(sleepDay.NightMin)/60.0*10) / 10
+
+		point := DailyTrendPoint{
 			Date:              key,
 			Label:             label,
-			FeedingML:         feedML,
-			DirectBreastMin:   directBreastMin,
-			DirectBreastCount: directBreastCount,
-			SleepHours:        hours,
-		})
+			FeedingML:         feedDay.TotalML,
+			FormulaML:         feedDay.FormulaML,
+			FormulaCount:      feedDay.FormulaCount,
+			BottleBreastML:    feedDay.BottleBreastML,
+			BottleBreastCount: feedDay.BottleBreastCount,
+			DirectBreastMin:   feedDay.DirectBreastMin,
+			DirectBreastCount: feedDay.DirectBreastCount,
+			SolidCount:        feedDay.SolidCount,
+			FeedingCount:      feedDay.TotalCount,
+			SleepHours:        totalHours,
+			NapHours:          napHours,
+			NightHours:        nightHours,
+			NapCount:          sleepDay.NapCount,
+			PeeCount:          careDay.PeeCount,
+			PoopCount:         careDay.PoopCount,
+			BathCount:         careDay.BathCount,
+			MaxTempC:          healthDay.MaxTempC,
+			MedicineCount:     healthDay.MedicineCount,
+		}
+
+		if point.FeedingCount > 0 {
+			periodSummary.ActiveDays.FeedingDays++
+		}
+		if sleepDay.TotalMin > 0 {
+			periodSummary.ActiveDays.SleepDays++
+		}
+		if point.PeeCount > 0 || point.PoopCount > 0 || point.BathCount > 0 {
+			periodSummary.ActiveDays.CareDays++
+		}
+
+		daily = append(daily, point)
 	}
 
 	slots := make([]SlotDistributionPoint, 0, len(daySlots))
@@ -319,7 +459,8 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 	}
 
 	return &TrendsResponse{
-		Daily: daily,
-		Slots: slots,
+		Daily:         daily,
+		Slots:         slots,
+		PeriodSummary: periodSummary,
 	}, nil
 }

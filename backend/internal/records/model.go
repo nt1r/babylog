@@ -102,9 +102,14 @@ type FeedingInput struct {
 	Note        string  `json:"note"`
 }
 
-// FeedingDailySummary 表示某一本地自然日的喂养小计。
+// FeedingDailySummary 表示某一本地自然日的喂养小计；
+// 配方奶与瓶喂母乳分项仅用于后端多日趋势与数据导出复用单一累加器，不冗余序列化到列表与今日汇总载荷。
 type FeedingDailySummary struct {
 	TotalML           int `json:"total_ml"`
+	FormulaML         int `json:"-"`
+	FormulaCount      int `json:"-"`
+	BottleBreastML    int `json:"-"`
+	BottleBreastCount int `json:"-"`
 	DirectBreastCount int `json:"direct_breast_count"`
 	DirectBreastMin   int `json:"direct_breast_min"`
 	SolidCount        int `json:"solid_count"`
@@ -317,6 +322,12 @@ type MedicineSummary struct {
 	Count      int
 	LatestName *string
 	LatestAt   *string
+}
+
+// ClinicalHealthDayStats 汇总某一本地自然日内的最高体温与用药次数，供多日趋势与 Excel 导出共用。
+type ClinicalHealthDayStats struct {
+	MaxTempC      *float64
+	MedicineCount int
 }
 
 // GrowthHighlights 汇总跨时间窗口独立解析的最新体格测量值与累计出牙记录数，

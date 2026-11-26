@@ -23,6 +23,11 @@ export interface GrowthChartPoint {
   readonly isBirth?: boolean;
 }
 
+interface GrowthDeltaHint {
+  readonly formatted: string;
+  readonly spanLabel: string;
+}
+
 interface GrowthChartSeries {
   readonly metric: GrowthChartMetric;
   readonly unit: string;
@@ -34,8 +39,9 @@ interface GrowthChartSeries {
   readonly beyondWhoCount: number;
   readonly maxMonth: number;
   readonly yDomain: [number, number];
-  readonly latestPoint: GrowthChartPoint | null;
   readonly latestBandStatus: 'in_range' | 'above' | 'below' | null;
+  readonly deltaFromPrev: GrowthDeltaHint | null;
+  readonly deltaFromBirth: GrowthDeltaHint | null;
 }
 
 const METRIC_META: Record<GrowthChartMetric, { label: string; unit: string }> = {
@@ -349,6 +355,53 @@ export function buildGrowthChartSeries(
   const measuredPoints = points.filter((p) => p.value !== null);
   const latestPoint = measuredPoints[measuredPoints.length - 1] ?? null;
 
+  const formatDelta = (delta: number): string => {
+    const rounded = metric === 'weight' ? round2(delta) : round1(delta);
+    const sign = rounded > 0 ? '+' : '';
+    return `${sign}${rounded} ${meta.unit}`;
+  };
+
+  const formatSpan = (fromDateKey: string | null, toDateKey: string | null): string => {
+    if (!fromDateKey || !toDateKey) return '';
+    const fromMs = parseDateKeyToUtcMs(fromDateKey);
+    const toMs = parseDateKeyToUtcMs(toDateKey);
+    if (fromMs === null || toMs === null || toMs <= fromMs) return '';
+    const days = Math.round((toMs - fromMs) / 86_400_000);
+    if (days >= 45) {
+      return `历时 ${round1(days / 30.4375)} 个月`;
+    }
+    return `间隔 ${days} 天`;
+  };
+
+  let deltaFromPrev: GrowthDeltaHint | null = null;
+  let deltaFromBirth: GrowthDeltaHint | null = null;
+  if (measuredPoints.length >= 2 && latestPoint && latestPoint.value !== null) {
+    const prevPoint = measuredPoints[measuredPoints.length - 2];
+    if (prevPoint?.value !== null && prevPoint?.value !== undefined) {
+      const diff = latestPoint.value - prevPoint.value;
+      deltaFromPrev = {
+        formatted: formatDelta(diff),
+        spanLabel: formatSpan(prevPoint.dateKey, latestPoint.dateKey),
+      };
+    }
+    const birthPoint = measuredPoints[0];
+    if (birthPoint?.isBirth && !latestPoint.isBirth && birthPoint !== prevPoint && birthPoint.value !== null) {
+      const diff = latestPoint.value - birthPoint.value;
+      deltaFromBirth = {
+        formatted: formatDelta(diff),
+        spanLabel: formatSpan(birthPoint.dateKey, latestPoint.dateKey),
+      };
+    } else if (birthPoint?.isBirth && !latestPoint.isBirth && birthPoint === prevPoint && birthPoint.value !== null) {
+      // 仅含出生点与一次实测点时，两者重合为「较出生变化」，避免界面重复展示相同数值。
+      const diff = latestPoint.value - birthPoint.value;
+      deltaFromBirth = {
+        formatted: formatDelta(diff),
+        spanLabel: formatSpan(birthPoint.dateKey, latestPoint.dateKey),
+      };
+      deltaFromPrev = null;
+    }
+  }
+
   let latestBandStatus: GrowthChartSeries['latestBandStatus'] = null;
   if (latestPoint && latestPoint.value !== null) {
     if (latestPoint.value < latestPoint.whoP3) {
@@ -383,7 +436,8 @@ export function buildGrowthChartSeries(
     beyondWhoCount,
     maxMonth,
     yDomain,
-    latestPoint,
     latestBandStatus,
+    deltaFromPrev,
+    deltaFromBirth,
   };
 }

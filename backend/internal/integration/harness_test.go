@@ -24,6 +24,7 @@ import (
 	"github.com/nt1r/babylog/backend/internal/baby"
 	"github.com/nt1r/babylog/backend/internal/dashboard"
 	"github.com/nt1r/babylog/backend/internal/database"
+	"github.com/nt1r/babylog/backend/internal/export"
 	"github.com/nt1r/babylog/backend/internal/httpapi"
 	"github.com/nt1r/babylog/backend/internal/records"
 	"github.com/nt1r/babylog/backend/internal/vaccines"
@@ -176,6 +177,7 @@ func NewTestApp(t *testing.T, opts ...AppOption) *TestApp {
 	babyStore := baby.NewStore(db.Gorm()).WithClock(clock.Now)
 	recordStore := records.NewStore(db.Gorm()).WithClock(clock.Now)
 	dashSvc := dashboard.NewService(recordStore).WithClock(clock.Now)
+	exportSvc := export.NewService(recordStore).WithClock(clock.Now)
 	vaccineStore := vaccines.NewStore(db.Gorm()).WithClock(clock.Now)
 
 	router := httpapi.NewRouter(httpapi.Options{
@@ -185,6 +187,7 @@ func NewTestApp(t *testing.T, opts ...AppOption) *TestApp {
 		BabyStore:    babyStore,
 		RecordStore:  recordStore,
 		DashboardSvc: dashSvc,
+		ExportSvc:    exportSvc,
 		VaccineStore: vaccineStore,
 		DistDir:      distDir,
 	})

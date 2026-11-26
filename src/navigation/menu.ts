@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { BellRing, LayoutDashboard, Ruler, Settings2, Syringe, Users } from 'lucide-react';
+import { BarChart3, BellRing, LayoutDashboard, Ruler, Settings2, Syringe, Users } from 'lucide-react';
 import type { UserRole } from '@/lib/auth';
 import { RECORD_CATEGORY_META, type RecordCategory } from '@/lib/categories';
 import { useGrowthRecordStore } from '@/stores/growth-record';
@@ -11,6 +11,7 @@ interface NavItem {
   readonly shortTitle: string;
   readonly url:
     | '/dashboard'
+    | '/insights'
     | '/vaccines'
     | '/feeding'
     | '/sleep'
@@ -54,6 +55,13 @@ const NAV_GROUPS: readonly NavGroup[] = [
         shortTitle: '看板',
         url: '/dashboard',
         icon: LayoutDashboard,
+      },
+      {
+        id: 'insights',
+        title: '统计分析',
+        shortTitle: '统计',
+        url: '/insights',
+        icon: BarChart3,
       },
     ],
   },
