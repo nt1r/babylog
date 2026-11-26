@@ -1,0 +1,103 @@
+import { Link, useRouterState } from '@tanstack/react-router';
+import { PlusIcon, Search } from 'lucide-react';
+import { BabySwitcher } from '@/components/app-shell/baby-switcher';
+import { getShortcutModifierSymbol } from '@/components/app-shell/command-palette';
+import { ThemeSwitcher } from '@/components/app-shell/theme-switcher';
+import { UserMenu } from '@/components/app-shell/user-menu';
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from '@/components/ui/breadcrumb';
+import { Button } from '@/components/ui/button';
+import { Kbd } from '@/components/ui/kbd';
+import { Separator } from '@/components/ui/separator';
+import { SidebarTrigger } from '@/components/ui/sidebar';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useActiveBabyId } from '@/lib/baby';
+import { findNavItemByPath, isAccountLevelRoute, openContextualCreate } from '@/navigation/menu';
+import { useCommandPaletteStore } from '@/stores/command-palette';
+
+export function AdminHeader() {
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const openCommandPalette = useCommandPaletteStore((state) => state.setOpen);
+  const activeBabyId = useActiveBabyId();
+  const currentItem = findNavItemByPath(pathname);
+  const accountRoute = isAccountLevelRoute(pathname);
+  // 仅在拥有宝宝档案且位于非列表/非账号级页面时展示顶栏「记一笔」，避免列表页双主按钮或无娃态误触发。
+  const showGlobalQuickRecord =
+    activeBabyId !== null && !accountRoute && !currentItem?.category && currentItem?.id !== 'growth';
+  const modSymbol = getShortcutModifierSymbol();
+
+  return (
+    <header className="sticky top-0 z-10 shrink-0 border-b border-border/75 bg-background/85 pt-[env(safe-area-inset-top)] backdrop-blur-md md:rounded-t-2xl md:pt-0">
+      <div className="flex h-14 items-center justify-between gap-2 px-4 md:gap-3 md:px-6">
+        <div className="flex min-w-0 items-center gap-2 md:gap-2.5">
+          <SidebarTrigger />
+          <Separator orientation="vertical" className="h-4" />
+          <Breadcrumb className="min-w-0">
+            <BreadcrumbList>
+              <BreadcrumbItem className="hidden sm:inline-flex">
+                <BreadcrumbLink render={<Link to={activeBabyId !== null ? '/dashboard' : '/settings'} />}>
+                  BabyLog
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator className="hidden sm:inline-flex" />
+              <BreadcrumbItem>
+                <BreadcrumbPage className="truncate">{currentItem?.title ?? '首页看板'}</BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
+          {!accountRoute ? <BabySwitcher variant="header" /> : null}
+        </div>
+
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  aria-label="打开快捷操作面板"
+                  onClick={() => openCommandPalette(true)}
+                  className="hidden h-8 gap-2 px-2.5 text-muted-foreground hover:text-foreground md:inline-flex"
+                />
+              }
+            >
+              <Search className="size-3.5" />
+              <span className="hidden lg:inline">快捷操作</span>
+              <span className="inline-flex items-center gap-0.5">
+                <Kbd>{modSymbol}</Kbd>
+                <Kbd>K</Kbd>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>搜索页面或快速记录（{modSymbol}+K）</TooltipContent>
+          </Tooltip>
+
+          {showGlobalQuickRecord ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button size="sm" className="hidden sm:inline-flex" onClick={() => openContextualCreate(pathname)} />
+                }
+              >
+                <PlusIcon className="size-4" />
+                <span>记一笔</span>
+                <Kbd className="hidden border-primary-foreground/25 bg-primary-foreground/15 text-primary-foreground lg:inline-flex">
+                  N
+                </Kbd>
+              </TooltipTrigger>
+              <TooltipContent>快速记一笔（快捷键 N）</TooltipContent>
+            </Tooltip>
+          ) : null}
+          <ThemeSwitcher />
+          <UserMenu />
+        </div>
+      </div>
+    </header>
+  );
+}

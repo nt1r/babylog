@@ -1,0 +1,336 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CGO_ENABLED: "0"
+
+jobs:
+  validate-and-test:
+    name: Validate Tag, Changelog & Tests
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      major_minor: ${{ steps.meta.outputs.major_minor }}
+      commit: ${{ steps.meta.outputs.commit }}
+      build_date: ${{ steps.meta.outputs.build_date }}
+      is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: ".node-version"
+          cache: "pnpm"
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: "backend/go.mod"
+          cache-dependency-path: "backend/go.sum"
+
+      - name: Validate tag format, main ancestry, package.json & CHANGELOG.md
+        id: meta
+        run: |
+          ./scripts/release-check.sh \
+            --tag "${GITHUB_REF_NAME}" \
+            --require-main \
+            --fetch-main \
+            --write-notes release-notes.md \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Upload extracted release notes
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: release-notes.md
+          retention-days: 1
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install OpenSpec CLI
+        run: npm install -g @fission-ai/openspec@2.1.1
+
+      - name: Lint & format check
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm check
+
+      - name: Backend tests
+        run: pnpm test
+
+      - name: Backend race tests
+        run: pnpm test:race
+
+  build-binaries:
+    name: Build Cross-Platform Binaries
+    needs: validate-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: ".node-version"
+          cache: "pnpm"
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: "backend/go.mod"
+          cache-dependency-path: "backend/go.sum"
+
+      - name: Build frontend static assets
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build:web
+          mkdir -p backend/internal/webui/dist
+          find backend/internal/webui/dist -mindepth 1 ! -name .gitkeep -delete
+          cp -R dist/. backend/internal/webui/dist/
+
+      - name: Cross-compile binaries & package archives
+        env:
+          TAG: ${{ needs.validate-and-test.outputs.tag }}
+          COMMIT: ${{ needs.validate-and-test.outputs.commit }}
+          BUILD_DATE: ${{ needs.validate-and-test.outputs.build_date }}
+        run: |
+          set -euo pipefail
+          OUT_DIR="${RUNNER_TEMP}/release-assets"
+          mkdir -p "$OUT_DIR"
+
+          LDFLAGS="-s -w -X main.version=${TAG} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}"
+
+          for TARGET in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            GOOS="${TARGET%/*}"
+            GOARCH="${TARGET#*/}"
+            STAGE_DIR="${RUNNER_TEMP}/pkg-${GOOS}-${GOARCH}"
+            rm -rf "$STAGE_DIR"
+            mkdir -p "$STAGE_DIR"
+
+            (
+              cd backend
+              CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build \
+                -tags embedwebui \
+                -trimpath \
+                -ldflags="$LDFLAGS" \
+                -o "${STAGE_DIR}/babylog" \
+                ./cmd/babylog
+            )
+
+            cp LICENSE README.md "$STAGE_DIR/"
+            tar -czf "${OUT_DIR}/babylog_${TAG}_${GOOS}_${GOARCH}.tar.gz" -C "$STAGE_DIR" babylog LICENSE README.md
+          done
+
+          cp scripts/install.sh "${OUT_DIR}/install.sh"
+          chmod 755 "${OUT_DIR}/install.sh"
+
+          (
+            cd "$OUT_DIR"
+            sha256sum babylog_*.tar.gz install.sh > SHA256SUMS.txt
+          )
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-assets
+          path: ${{ runner.temp }}/release-assets/
+          retention-days: 1
+
+  publish-docker:
+    name: Build & Push Multi-Arch GHCR Image
+    needs: validate-and-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute Docker image tags
+        id: docker_meta
+        env:
+          TAG: ${{ needs.validate-and-test.outputs.tag }}
+          MAJOR_MINOR: ${{ needs.validate-and-test.outputs.major_minor }}
+          IS_PRERELEASE: ${{ needs.validate-and-test.outputs.is_prerelease }}
+        run: |
+          IMAGE_REPO="ghcr.io/$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          {
+            echo "tags<<EOF"
+            echo "${IMAGE_REPO}:${TAG}"
+            if [[ "${IS_PRERELEASE}" != "true" ]]; then
+              echo "${IMAGE_REPO}:${MAJOR_MINOR}"
+              echo "${IMAGE_REPO}:latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build linux/amd64 image for smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: babylog:smoke
+          build-args: |
+            VERSION=${{ needs.validate-and-test.outputs.tag }}
+            COMMIT=${{ needs.validate-and-test.outputs.commit }}
+            BUILD_DATE=${{ needs.validate-and-test.outputs.build_date }}
+          cache-from: type=gha
+
+      - name: Smoke test container image
+        env:
+          TAG: ${{ needs.validate-and-test.outputs.tag }}
+          COMMIT: ${{ needs.validate-and-test.outputs.commit }}
+          BUILD_DATE: ${{ needs.validate-and-test.outputs.build_date }}
+        run: |
+          set -euo pipefail
+          EXPECTED_VERSION="babylog ${TAG} (commit: ${COMMIT}, built: ${BUILD_DATE})"
+          ACTUAL_VERSION=$(docker run --rm babylog:smoke version)
+          if [[ "${ACTUAL_VERSION}" != "${EXPECTED_VERSION}" ]]; then
+            echo "::error::容器版本校验失败，预期 '${EXPECTED_VERSION}'，实际 '${ACTUAL_VERSION}'"
+            exit 1
+          fi
+
+          CONTAINER_NAME="babylog-smoke"
+          VOLUME_NAME="babylog_smoke_data"
+          cleanup() {
+            docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+            docker volume rm -f "${VOLUME_NAME}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker volume create "${VOLUME_NAME}" >/dev/null
+          docker run -d \
+            --name "${CONTAINER_NAME}" \
+            --read-only \
+            --tmpfs /tmp \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            -v "${VOLUME_NAME}:/data" \
+            -p 127.0.0.1:21115:21115 \
+            babylog:smoke >/dev/null
+
+          READY=0
+          for _ in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:21115/api/auth/session >/dev/null 2>&1; then
+              READY=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ "${READY}" != "1" ]]; then
+            docker logs "${CONTAINER_NAME}" || true
+            echo "::error::容器启动后健康检查超时（/api/auth/session 未返回 200）"
+            exit 1
+          fi
+
+          curl -fsS http://127.0.0.1:21115/ | grep -qi "<!doctype html"
+
+          LOGS=$(docker logs "${CONTAINER_NAME}")
+          if [[ "${LOGS}" != *"${EXPECTED_VERSION}"* ]]; then
+            echo "::error::容器启动日志未包含预期版本信息：${LOGS}"
+            exit 1
+          fi
+
+          docker stop -t 15 "${CONTAINER_NAME}" >/dev/null
+          EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' "${CONTAINER_NAME}")
+          if [[ "${EXIT_CODE}" != "0" ]]; then
+            echo "::error::容器优雅停机退出码异常：${EXIT_CODE}"
+            exit 1
+          fi
+
+      - name: Build and push multi-arch Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.docker_meta.outputs.tags }}
+          build-args: |
+            VERSION=${{ needs.validate-and-test.outputs.tag }}
+            COMMIT=${{ needs.validate-and-test.outputs.commit }}
+            BUILD_DATE=${{ needs.validate-and-test.outputs.build_date }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  github-release:
+    name: Publish GitHub Release
+    needs: [validate-and-test, build-binaries, publish-docker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release notes
+        uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+          path: ./notes
+
+      - name: Download release assets
+        uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: ./assets
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.validate-and-test.outputs.tag }}
+          IS_PRERELEASE: ${{ needs.validate-and-test.outputs.is_prerelease }}
+        run: |
+          set -euo pipefail
+          EXTRA_FLAGS=()
+          if [[ "${IS_PRERELEASE}" == "true" ]]; then
+            EXTRA_FLAGS+=(--prerelease --latest=false)
+          else
+            EXTRA_FLAGS+=(--latest)
+          fi
+
+          gh release create "${TAG}" \
+            ./assets/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "BabyLog ${TAG}" \
+            --notes-file ./notes/release-notes.md \
+            "${EXTRA_FLAGS[@]}"

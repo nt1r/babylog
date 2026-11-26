@@ -1,0 +1,288 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+@import "./tokens.css";
+
+/* 绑定 Tailwind v4 dark: 变体到 .dark 祖先类，配合主题 Store 实现手动/系统暗色切换 */
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: var(--app-font-sans);
+
+  /* shadcn 核心语义色映射 */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-destructive-soft-foreground: var(--destructive-soft-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* 语义状态色映射 */
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-success-soft: var(--success-soft);
+  --color-success-soft-foreground: var(--success-soft-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-soft-foreground: var(--warning-soft-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-soft: var(--info-soft);
+  --color-info-soft-foreground: var(--info-soft-foreground);
+
+  /* 侧边栏语义色映射 */
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* 图表系列色映射 */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  /* BabyLog 育儿业务分类色映射 */
+  --color-feeding: var(--feeding);
+  --color-feeding-soft: var(--feeding-soft);
+  --color-feeding-soft-foreground: var(--feeding-soft-foreground);
+
+  --color-sleep: var(--sleep);
+  --color-sleep-soft: var(--sleep-soft);
+  --color-sleep-soft-foreground: var(--sleep-soft-foreground);
+
+  --color-health: var(--health);
+  --color-health-soft: var(--health-soft);
+  --color-health-soft-foreground: var(--health-soft-foreground);
+
+  --color-care: var(--care);
+  --color-care-soft: var(--care-soft);
+  --color-care-soft-foreground: var(--care-soft-foreground);
+
+  /* 圆角与阴影阶梯 */
+  --radius-sm: calc(var(--radius) * 0.65);
+  --radius-md: calc(var(--radius) * 0.85);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.35);
+  --radius-2xl: calc(var(--radius) * 1.75);
+  --radius-card: var(--card-radius);
+  --shadow-card: var(--card-shadow);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    font-family: var(--app-font-sans);
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    margin: 0;
+    min-width: 320px;
+  }
+
+  /* 消除移动端点击闪烁并防止快速连点步进/翻月按钮触发双击缩放 */
+  button,
+  a,
+  [role="button"] {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* 隐藏各浏览器原生 number 微调箭头，避免挤压窄输入框并保持跨端外观一致 */
+  input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  ::selection {
+    background: var(--art-meadow);
+    color: var(--foreground);
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-track,
+  *::-webkit-scrollbar-corner {
+    background-color: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 9999px;
+    background-color: var(--border);
+    background-clip: content-box;
+  }
+
+  @supports not selector(::-webkit-scrollbar) {
+    html {
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+  }
+}
+
+/* 品牌标识与绘本插画配色（随亮/暗主题 Token 自动切换） */
+.brand-mane {
+  fill: var(--primary-foreground);
+  opacity: 0.38;
+}
+.brand-pony {
+  fill: var(--primary-foreground);
+}
+.brand-rocker {
+  stroke: var(--primary-foreground);
+}
+
+.art-meadow {
+  fill: var(--art-meadow);
+}
+.art-ground {
+  fill: var(--art-ground);
+  opacity: 0.65;
+}
+.art-line {
+  stroke: var(--art-ink);
+}
+.art-sun,
+.art-star,
+.art-basket {
+  fill: var(--art-honey);
+}
+.art-wood {
+  fill: var(--art-wood);
+}
+.basket-weave {
+  stroke: var(--art-wood);
+  stroke-width: 3.5px;
+}
+.art-blanket,
+.art-muzzle,
+.art-rim,
+.art-cream {
+  fill: var(--art-cream);
+}
+.art-swaddle,
+.art-leaf {
+  fill: var(--art-mint);
+}
+.swaddle-fold {
+  stroke: var(--primary);
+  opacity: 0.45;
+  stroke-width: 2px;
+}
+.art-pony,
+.art-peach {
+  fill: var(--art-peach);
+}
+.art-mane {
+  fill: var(--art-mane);
+}
+.art-hoof {
+  fill: var(--art-hoof);
+}
+.art-nostril,
+.art-ink-fill {
+  fill: var(--art-ink);
+}
+.art-ear-inner {
+  fill: var(--art-blush);
+  opacity: 0.46;
+}
+.art-blush {
+  fill: var(--art-blush);
+}
+.art-blush-soft {
+  fill: var(--art-blush);
+  opacity: 0.8;
+}
+.art-sparkles {
+  stroke: var(--primary);
+  color: var(--primary);
+  opacity: 0.65;
+}
+.art-sleep {
+  stroke: var(--primary);
+  opacity: 0.7;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .art-sleep {
+    animation: gentle-sleep 4.8s ease-in-out infinite;
+  }
+  .art-sparkles {
+    animation: gentle-twinkle 5.6s ease-in-out infinite;
+  }
+  .art-float {
+    animation: gentle-float 6.4s ease-in-out infinite;
+  }
+}
+
+@keyframes gentle-sleep {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 0.85;
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes gentle-twinkle {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.78;
+  }
+}
+
+@keyframes gentle-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}

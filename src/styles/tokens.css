@@ -1,0 +1,212 @@
+@layer base {
+  :root {
+    --app-font-sans:
+      "Geist Variable", "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --radius: 0.75rem;
+    --card-radius: 1.5rem;
+  }
+
+  /* 浅色主题：温暖鼠尾草绿与暖米白绘本基调（:not(.dark):not([data-theme="dark"]) 防止暗色态变量回退泄漏） */
+  :root:not(.dark):not([data-theme="dark"]),
+  .light,
+  [data-theme="light"] {
+    color-scheme: light;
+
+    /* 基础表面与文字色 */
+    --background: oklch(0.981 0.008 100);
+    --foreground: oklch(0.29 0.029 166);
+    --card: oklch(1 0 0);
+    --card-foreground: var(--foreground);
+    --popover: oklch(1 0 0);
+    --popover-foreground: var(--foreground);
+
+    /* 品牌主色与交互色（鼠尾草绿） */
+    --primary: oklch(0.505 0.078 175);
+    --primary-foreground: oklch(0.995 0.003 100);
+    --secondary: oklch(0.95 0.012 160);
+    --secondary-foreground: var(--foreground);
+    --muted: oklch(0.955 0.01 135);
+    --muted-foreground: oklch(0.49 0.018 160);
+    --accent: oklch(0.942 0.02 165);
+    --accent-foreground: oklch(0.32 0.045 172);
+
+    /* 边框与表单控件 */
+    --border: oklch(0.9 0.012 160);
+    --input: oklch(0.89 0.014 160);
+    --ring: oklch(0.505 0.078 175);
+
+    /* 与品牌色协调的语义状态色（色相均匀分散：红 22° / 琥珀黄 72° / 翠绿 145° / 清蓝 248°） */
+    --destructive: oklch(0.56 0.185 22);
+    --destructive-foreground: oklch(0.995 0.003 100);
+    --destructive-soft: color-mix(in oklab, var(--destructive) 12%, transparent);
+    --destructive-soft-foreground: oklch(0.44 0.155 22);
+
+    --success: oklch(0.55 0.135 145);
+    --success-foreground: oklch(0.995 0.003 100);
+    --success-soft: color-mix(in oklab, var(--success) 14%, transparent);
+    --success-soft-foreground: oklch(0.39 0.105 145);
+
+    --warning: oklch(0.67 0.145 72);
+    --warning-foreground: var(--foreground);
+    --warning-soft: color-mix(in oklab, var(--warning) 18%, transparent);
+    --warning-soft-foreground: oklch(0.45 0.115 68);
+
+    --info: oklch(0.55 0.14 248);
+    --info-foreground: oklch(0.995 0.003 100);
+    --info-soft: color-mix(in oklab, var(--info) 14%, transparent);
+    --info-soft-foreground: oklch(0.42 0.115 248);
+
+    /* Inset 侧边栏色板 */
+    --sidebar: oklch(0.966 0.012 130);
+    --sidebar-foreground: oklch(0.32 0.028 166);
+    --sidebar-primary: var(--primary);
+    --sidebar-primary-foreground: var(--primary-foreground);
+    --sidebar-accent: oklch(0.928 0.022 162);
+    --sidebar-accent-foreground: oklch(0.3 0.045 172);
+    --sidebar-border: oklch(0.895 0.014 155);
+    --sidebar-ring: var(--ring);
+
+    /* 悬浮主卡片阴影 */
+    --card-shadow:
+      0 16px 56px -20px color-mix(in oklch, var(--foreground) 10%, transparent),
+      0 2px 8px -4px color-mix(in oklch, var(--foreground) 6%, transparent);
+
+    /* 育儿业务分类色（喂养 92° 暖蜜黄 / 睡眠 208° 静谧青蓝 / 健康 45° 暖蜜桃橘 / 护理 295° 柔薰衣草紫） */
+    --feeding: oklch(0.66 0.135 92);
+    --feeding-soft: color-mix(in oklab, var(--feeding) 17%, transparent);
+    --feeding-soft-foreground: oklch(0.45 0.1 86);
+
+    --sleep: oklch(0.54 0.098 208);
+    --sleep-soft: color-mix(in oklab, var(--sleep) 15%, transparent);
+    --sleep-soft-foreground: oklch(0.39 0.08 208);
+
+    --health: oklch(0.62 0.135 45);
+    --health-soft: color-mix(in oklab, var(--health) 16%, transparent);
+    --health-soft-foreground: oklch(0.45 0.105 42);
+
+    --care: oklch(0.56 0.11 295);
+    --care-soft: color-mix(in oklab, var(--care) 14%, transparent);
+    --care-soft-foreground: oklch(0.42 0.09 295);
+
+    /* 图表系列色（按 喂养 -> 睡眠 -> 健康 -> 护理 -> 主色 顺序映射） */
+    --chart-1: var(--feeding);
+    --chart-2: var(--sleep);
+    --chart-3: var(--health);
+    --chart-4: var(--care);
+    --chart-5: var(--primary);
+
+    /* 绘本插画专用色板 */
+    --art-meadow: oklch(0.94 0.029 162);
+    --art-ground: oklch(0.9 0.026 162);
+    --art-ink: oklch(0.43 0.038 160);
+    --art-honey: oklch(0.89 0.075 87);
+    --art-wood: oklch(0.79 0.055 76);
+    --art-mane: oklch(0.82 0.068 72);
+    --art-hoof: oklch(0.69 0.056 64);
+    --art-cream: oklch(0.976 0.021 88);
+    --art-peach: oklch(0.91 0.041 59);
+    --art-blush: oklch(0.79 0.065 41);
+    --art-mint: oklch(0.83 0.056 160);
+  }
+
+  /* 深色主题：夜间护眼深森绿灰调 */
+  .dark,
+  [data-theme="dark"] {
+    color-scheme: dark;
+
+    /* 基础表面与文字色 */
+    --background: oklch(0.195 0.015 168);
+    --foreground: oklch(0.935 0.012 110);
+    --card: oklch(0.235 0.016 168);
+    --card-foreground: var(--foreground);
+    --popover: oklch(0.245 0.017 168);
+    --popover-foreground: var(--foreground);
+
+    /* 品牌主色与交互色（柔和亮鼠尾草绿） */
+    --primary: oklch(0.69 0.095 172);
+    --primary-foreground: oklch(0.18 0.024 172);
+    --secondary: oklch(0.285 0.018 168);
+    --secondary-foreground: var(--foreground);
+    --muted: oklch(0.27 0.016 168);
+    --muted-foreground: oklch(0.72 0.018 158);
+    --accent: oklch(0.305 0.03 170);
+    --accent-foreground: oklch(0.92 0.025 168);
+
+    /* 边框与表单控件 */
+    --border: oklch(0.34 0.018 168);
+    --input: oklch(0.36 0.02 168);
+    --ring: oklch(0.69 0.095 172);
+
+    /* 适配暗色背景对比度的语义状态色（与浅色保持一致色相区分） */
+    --destructive: oklch(0.65 0.185 22);
+    --destructive-foreground: oklch(0.98 0.005 100);
+    --destructive-soft: color-mix(in oklab, var(--destructive) 18%, transparent);
+    --destructive-soft-foreground: oklch(0.84 0.13 22);
+
+    --success: oklch(0.69 0.14 145);
+    --success-foreground: oklch(0.18 0.025 145);
+    --success-soft: color-mix(in oklab, var(--success) 18%, transparent);
+    --success-soft-foreground: oklch(0.83 0.115 145);
+
+    --warning: oklch(0.78 0.14 72);
+    --warning-foreground: oklch(0.2 0.025 72);
+    --warning-soft: color-mix(in oklab, var(--warning) 18%, transparent);
+    --warning-soft-foreground: oklch(0.88 0.105 72);
+
+    --info: oklch(0.72 0.13 248);
+    --info-foreground: oklch(0.18 0.025 248);
+    --info-soft: color-mix(in oklab, var(--info) 18%, transparent);
+    --info-soft-foreground: oklch(0.85 0.105 248);
+
+    /* Inset 侧边栏色板 */
+    --sidebar: oklch(0.175 0.014 168);
+    --sidebar-foreground: oklch(0.91 0.014 130);
+    --sidebar-primary: var(--primary);
+    --sidebar-primary-foreground: var(--primary-foreground);
+    --sidebar-accent: oklch(0.275 0.028 170);
+    --sidebar-accent-foreground: oklch(0.93 0.024 166);
+    --sidebar-border: oklch(0.3 0.016 168);
+    --sidebar-ring: var(--ring);
+
+    /* 悬浮主卡片阴影 */
+    --card-shadow: 0 20px 56px -20px oklch(0.08 0.01 168 / 65%), 0 2px 10px -4px oklch(0.08 0.01 168 / 45%);
+
+    /* 暗色育儿业务分类色（喂养 92° / 睡眠 208° / 健康 45° / 护理 295°） */
+    --feeding: oklch(0.79 0.13 92);
+    --feeding-soft: color-mix(in oklab, var(--feeding) 18%, transparent);
+    --feeding-soft-foreground: oklch(0.89 0.1 92);
+
+    --sleep: oklch(0.71 0.098 208);
+    --sleep-soft: color-mix(in oklab, var(--sleep) 18%, transparent);
+    --sleep-soft-foreground: oklch(0.86 0.08 208);
+
+    --health: oklch(0.73 0.135 45);
+    --health-soft: color-mix(in oklab, var(--health) 18%, transparent);
+    --health-soft-foreground: oklch(0.88 0.1 45);
+
+    --care: oklch(0.72 0.105 295);
+    --care-soft: color-mix(in oklab, var(--care) 18%, transparent);
+    --care-soft-foreground: oklch(0.86 0.085 295);
+
+    /* 图表系列色 */
+    --chart-1: var(--feeding);
+    --chart-2: var(--sleep);
+    --chart-3: var(--health);
+    --chart-4: var(--care);
+    --chart-5: var(--primary);
+
+    /* 夜间绘本插画专用色板 */
+    --art-meadow: oklch(0.285 0.032 168);
+    --art-ground: oklch(0.25 0.026 168);
+    --art-ink: oklch(0.78 0.04 162);
+    --art-honey: oklch(0.73 0.09 84);
+    --art-wood: oklch(0.58 0.055 72);
+    --art-mane: oklch(0.64 0.068 68);
+    --art-hoof: oklch(0.5 0.05 64);
+    --art-cream: oklch(0.85 0.024 88);
+    --art-peach: oklch(0.74 0.055 56);
+    --art-blush: oklch(0.68 0.075 38);
+    --art-mint: oklch(0.58 0.062 164);
+  }
+}

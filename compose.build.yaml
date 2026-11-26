@@ -1,0 +1,14 @@
+# 本地源码构建覆盖文件：与 compose.yaml 叠加使用，供开发者本地构建或 scripts/deploy.sh 推送构建。
+# 用法：docker compose -f compose.yaml -f compose.build.yaml up -d --build
+services:
+  babylog:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: "${BABYLOG_VERSION:-dev}"
+        COMMIT: "${BABYLOG_COMMIT:-unknown}"
+        BUILD_DATE: "${BABYLOG_BUILD_DATE:-unknown}"
+    image: babylog:local
+    # 覆盖 compose.yaml 的 pull_policy: always，避免尝试从远端仓库拉取本地构建镜像
+    pull_policy: build
