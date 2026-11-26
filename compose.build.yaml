@@ -1,4 +1,4 @@
-# 本地源码构建覆盖文件：与 compose.yaml 叠加使用，供开发者本地构建或 scripts/deploy.sh 推送构建。
+# 本地源码构建覆盖文件：与 compose.yaml 叠加使用，供开发者或无预构建镜像环境从源码构建本地镜像。
 # 用法：docker compose -f compose.yaml -f compose.build.yaml up -d --build
 services:
   babylog:

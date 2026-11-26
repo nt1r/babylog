@@ -304,8 +304,6 @@ baby.example.com {
 
 ```sh
 DEPLOY_HOST=user@your-server
-DEPLOY_DIR=/opt/babylog
-DEPLOY_DOMAIN=baby.example.com
 ```
 
 执行 [scripts/backup.sh](./scripts/backup.sh) 即可从远程运行中的容器拉取 SQLite 数据库（含 WAL 日志），在本地合并为单文件并执行 `PRAGMA integrity_check` 后保存到 `~/Desktop/babylog-backups/`：
@@ -350,20 +348,12 @@ pnpm dev
 - `pnpm build`：构建前端产物并内嵌打包为单二进制 `bin/babylog`。
 - `pnpm start`：运行 `bin/babylog serve` 提供 UI 与 API（21115 端口）。
 
-### 从源码构建 Docker 镜像与远程推送
+### 从源码构建 Docker 镜像
 
 如需本地直接从源码构建镜像，可叠加 [compose.build.yaml](./compose.build.yaml)：
 
 ```bash
 docker compose -f compose.yaml -f compose.build.yaml up -d --build
-```
-
-维护者也可配合上述 `.env.deploy` 使用 [scripts/deploy.sh](./scripts/deploy.sh) 完成本地检查、白名单源码同步、远程重建容器与健康验证：
-
-```sh
-./scripts/deploy.sh              # 默认执行 pnpm lint && pnpm check 后发布
-./scripts/deploy.sh --skip-checks
-./scripts/deploy.sh --no-cache
 ```
 
 </details>
