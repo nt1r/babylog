@@ -98,7 +98,8 @@ jobs:
       - name: Setup Go with build cache
         uses: ./.github/actions/setup-go-cached
         with:
-          cache-scope: backend
+          # build-server.sh 使用 -trimpath，其 Go build action ID 与普通 go test 不同，须独立缓存作用域。
+          cache-scope: build
 
       - name: Build single binary with embedded frontend
         run: |
