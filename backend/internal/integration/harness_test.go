@@ -26,6 +26,7 @@ import (
 	"github.com/nt1r/babylog/backend/internal/database"
 	"github.com/nt1r/babylog/backend/internal/httpapi"
 	"github.com/nt1r/babylog/backend/internal/records"
+	"github.com/nt1r/babylog/backend/internal/timeutil"
 	"github.com/nt1r/babylog/backend/internal/vaccines"
 )
 
@@ -37,6 +38,53 @@ const (
 
 // defaultFixedNow 固定在 2026-11-23 10:00:00+08:00（UTC 02:00:00），确保跨零点、多日趋势与疫苗提醒断言完全确定。
 var defaultFixedNow = time.Date(2026, 11, 23, 2, 0, 0, 0, time.UTC)
+
+type precomputedAdminTemplate struct {
+	user auth.User
+	err  error
+}
+
+var (
+	defaultAdminTemplateOnce sync.Once
+	defaultAdminTemplate     precomputedAdminTemplate
+)
+
+// cachedDefaultAdminTemplate 经真实 auth.Store.InitializeAdministrator 仅执行一次并缓存完整管理员行模板，
+// 避免数十条并发集成测试重复执行高成本 scrypt 派生，同时防止手工拼接字段与生产初始化逻辑漂移；
+// 认证相关用例仍可直接针对该凭据发起真实 POST /api/auth/login 校验。
+func cachedDefaultAdminTemplate() (auth.User, error) {
+	defaultAdminTemplateOnce.Do(func() {
+		tmpDir, mkErr := os.MkdirTemp("", "babylog-admin-seed-*")
+		if mkErr != nil {
+			defaultAdminTemplate.err = fmt.Errorf("创建默认管理员种子临时目录失败: %w", mkErr)
+			return
+		}
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		db, openErr := database.Open(filepath.Join(tmpDir, "data"))
+		if openErr != nil {
+			defaultAdminTemplate.err = fmt.Errorf("打开默认管理员种子 SQLite 失败: %w", openErr)
+			return
+		}
+		defer func() { _ = db.Close() }()
+
+		store := auth.NewStore(db.Gorm()).WithClock(func() time.Time { return defaultFixedNow })
+		if initErr := store.InitializeAdministrator(context.Background(), defaultAdminUser, defaultAdminPass); initErr != nil {
+			defaultAdminTemplate.err = fmt.Errorf("派生默认管理员凭据失败: %w", initErr)
+			return
+		}
+
+		var admin auth.User
+		if takeErr := db.Gorm().Where("role = ?", auth.RoleAdmin).Take(&admin).Error; takeErr != nil {
+			defaultAdminTemplate.err = fmt.Errorf("回读默认管理员种子记录失败: %w", takeErr)
+			return
+		}
+		// 清空自增主键，供各独立测试用例数据库写入时重新分配 ID。
+		admin.ID = 0
+		defaultAdminTemplate.user = admin
+	})
+	return defaultAdminTemplate.user, defaultAdminTemplate.err
+}
 
 // TestMain 在整个集成测试包启动前统一设置 Gin 为测试模式，避免并发用例修改全局模式引发竞态及调试日志噪音。
 func TestMain(m *testing.M) {
@@ -166,10 +214,22 @@ func NewTestApp(t *testing.T, opts ...AppOption) *TestApp {
 
 	clock := NewFakeClock(cfg.initialNow)
 	authStore := auth.NewStore(db.Gorm()).WithClock(clock.Now)
+	var adminUserID int64
 	if cfg.initAdmin {
-		if err := authStore.InitializeAdministrator(context.Background(), defaultAdminUser, defaultAdminPass); err != nil {
-			t.Fatalf("initialize test administrator: %v", err)
+		admin, tmplErr := cachedDefaultAdminTemplate()
+		if tmplErr != nil {
+			t.Fatalf("准备默认管理员凭据模板失败: %v", tmplErr)
 		}
+		ts := timeutil.FormatUTC(clock.Now())
+		admin.CreatedAt = ts
+		admin.UpdatedAt = ts
+		if err := db.Gorm().Create(&admin).Error; err != nil {
+			t.Fatalf("写入测试管理员记录失败: %v", err)
+		}
+		if admin.ID <= 0 {
+			t.Fatalf("写入测试管理员后预期自增 ID > 0，实际 %d", admin.ID)
+		}
+		adminUserID = admin.ID
 	}
 
 	loginGuard := auth.NewLoginGuard().WithClock(clock.Now)
@@ -211,13 +271,13 @@ func NewTestApp(t *testing.T, opts ...AppOption) *TestApp {
 	}
 
 	if cfg.autoLogin && cfg.initAdmin {
-		resp := app.client.Login(t, defaultAdminUser, defaultAdminPass)
-		resp.RequireStatus(t, http.StatusOK)
-		cookiePair, ok := resp.CookiePair(auth.SessionCookieName)
-		if !ok {
-			t.Fatalf("auto login did not return %s cookie: Set-Cookie=%q", auth.SessionCookieName, resp.SetCookieHeader())
+		// 直接经 authStore.CreateSession 签发真实会话令牌，跳过非认证前置阶段的重复 scrypt 计算；
+		// 登录认证、Cookie 安全标志与轮换逻辑仍由 auth_test.go 与 app.Relogin() 经真实 HTTP 登录端点覆盖。
+		token, sessErr := authStore.CreateSession(context.Background(), adminUserID, "")
+		if sessErr != nil {
+			t.Fatalf("签发测试管理员默认会话失败: %v", sessErr)
 		}
-		app.client = app.client.WithCookie(cookiePair)
+		app.client = app.client.WithCookie(auth.SessionCookieName + "=" + token)
 	}
 
 	return app

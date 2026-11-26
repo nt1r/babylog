@@ -22,7 +22,10 @@ updates:
     open-pull-requests-limit: 5
 
   - package-ecosystem: "github-actions"
-    directory: "/"
+    directories:
+      - "/"
+      - "/.github/actions/setup-go-cached"
+      - "/.github/actions/setup-web-cached"
     target-branch: "dev"
     schedule:
       interval: "weekly"

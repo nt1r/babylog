@@ -1,0 +1,98 @@
+name: Setup Go with Layered Cache
+description: 配置 Go 工具链，并将 GOMODCACHE、按作用域隔离的稳定 GOCACHE 以及可选的 staticcheck 二进制/分析缓存分层持久化。
+
+inputs:
+  cache-scope:
+    description: GOCACHE 作用域标识（如 backend、race），用于隔离不同编译模式避免互相覆盖
+    required: false
+    default: "backend"
+  cache-build:
+    description: 是否缓存 GOCACHE（低频发版交叉编译可关闭以节约缓存配额）
+    required: false
+    default: "true"
+  install-staticcheck:
+    description: 是否缓存并安装 staticcheck 到 PATH
+    required: false
+    default: "false"
+  staticcheck-version:
+    description: 可选覆盖 staticcheck 版本号；留空时自动从 scripts/lint-go.sh 单一事实来源读取
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Go
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: "backend/go.mod"
+        cache: false
+
+    - name: Resolve Go cache paths & tool version
+      id: go_env
+      shell: bash
+      run: |
+        set -euo pipefail
+        sc_ver="${{ inputs.staticcheck-version }}"
+        if [[ -z "$sc_ver" && "${{ inputs.install-staticcheck }}" == "true" ]]; then
+          sc_ver="$(sh ./scripts/lint-go.sh --print-staticcheck-version)"
+        fi
+        cache_root="${XDG_CACHE_HOME:-${HOME}/.cache}"
+        {
+          echo "version=$(go env GOVERSION)"
+          echo "gomodcache=$(go env GOMODCACHE)"
+          echo "gocache=$(go env GOCACHE)"
+          echo "staticcheck_version=${sc_ver}"
+          echo "staticcheck_dir=${HOME}/.local/staticcheck-${sc_ver}"
+          echo "staticcheck_cache=${cache_root}/staticcheck"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Cache Go modules (GOMODCACHE)
+      uses: actions/cache@v6
+      with:
+        path: ${{ steps.go_env.outputs.gomodcache }}
+        # GOMODCACHE 存放与 Go 编译器版本无关的源码包，不绑定 GOVERSION 以在补丁升级时复用。
+        key: go-mod-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/go.sum') }}
+        restore-keys: |
+          go-mod-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Cache Go build artifacts (GOCACHE)
+      if: inputs.cache-build == 'true'
+      uses: actions/cache@v6
+      with:
+        path: ${{ steps.go_env.outputs.gocache }}
+        # 采用按 go.sum + 作用域的稳定 Key（不拼 github.sha），避免每提交生成新条目膨胀挤占 10 GB 配额；
+        # 重型标准库与第三方依赖仅编译写入一次，后续业务源码增量重编仅需数秒。
+        key: go-build-v1-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.go_env.outputs.version }}-${{ hashFiles('backend/go.sum') }}
+        restore-keys: |
+          go-build-v1-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.go_env.outputs.version }}-
+
+    - name: Cache staticcheck binary
+      if: inputs.install-staticcheck == 'true'
+      id: staticcheck_bin_cache
+      uses: actions/cache@v6
+      with:
+        path: ${{ steps.go_env.outputs.staticcheck_dir }}
+        key: staticcheck-bin-${{ runner.os }}-${{ runner.arch }}-${{ steps.go_env.outputs.version }}-${{ steps.go_env.outputs.staticcheck_version }}
+
+    - name: Install staticcheck
+      if: inputs.install-staticcheck == 'true' && steps.staticcheck_bin_cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        mkdir -p "${{ steps.go_env.outputs.staticcheck_dir }}/bin"
+        GOBIN="${{ steps.go_env.outputs.staticcheck_dir }}/bin" CGO_ENABLED=0 \
+          go install "honnef.co/go/tools/cmd/staticcheck@${{ steps.go_env.outputs.staticcheck_version }}"
+
+    - name: Add staticcheck to PATH
+      if: inputs.install-staticcheck == 'true'
+      shell: bash
+      run: echo "${{ steps.go_env.outputs.staticcheck_dir }}/bin" >> "$GITHUB_PATH"
+
+    - name: Cache staticcheck analysis cache
+      if: inputs.install-staticcheck == 'true'
+      uses: actions/cache@v6
+      with:
+        path: ${{ steps.go_env.outputs.staticcheck_cache }}
+        key: staticcheck-cache-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go_env.outputs.version }}-${{ steps.go_env.outputs.staticcheck_version }}-${{ hashFiles('backend/go.sum') }}
+        restore-keys: |
+          staticcheck-cache-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go_env.outputs.version }}-${{ steps.go_env.outputs.staticcheck_version }}-
