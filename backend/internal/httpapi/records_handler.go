@@ -11,7 +11,7 @@ import (
 	"github.com/nt1r/babylog/backend/internal/records"
 )
 
-// recordsHandler 处理喂养、睡眠、护理、健康（含生长）四类日常记录的 CRUD 与智能默认值接口。
+// recordsHandler 处理喂养、睡眠、护理、健康（含生长）四类日常记录的 CRUD、批量补录与智能默认值接口。
 // 路由组已挂载 requireBabyOwnershipMiddleware（校验归属并注入完整宝宝档案），各处理器直接从上下文读取 babyID。
 type recordsHandler struct {
 	recordStore *records.Store
@@ -134,10 +134,11 @@ func registerRecordRoutes[Rec any, In any, Sum any](
 	})
 }
 
-// registerRoutes 挂载智能默认值及四类日常记录的标准 CRUD 路由。
+// registerRoutes 挂载智能默认值、批量补录及四类日常记录的标准 CRUD 路由。
 // 传入的 `h.recordStore.ListFeeding` 等属于 Go 的“方法值”（Method Value），已自动绑定接收者实例，无需再套匿名闭包。
 func (h *recordsHandler) registerRoutes(group *gin.RouterGroup) {
 	group.GET("/defaults", h.getDefaults)
+	group.POST("/batch", h.batchCreate)
 
 	registerRecordRoutes(group, "/feeding", h, recordCRUD[records.FeedingRecord, records.FeedingInput, records.FeedingDailySummary]{
 		opPrefix: "Feeding",
@@ -181,4 +182,23 @@ func (h *recordsHandler) getDefaults(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, defaults)
+}
+
+// batchCreate 处理 POST /api/babies/:babyId/records/batch，在单事务内原子创建多条喂养与护理记录（201 / 400）。
+func (h *recordsHandler) batchCreate(c *gin.Context) {
+	babyID, ok := mustBabyID(c)
+	if !ok {
+		return
+	}
+	var input records.BatchCreateInput
+	if status, msg := decodeJSONBody(c, &input); status != 0 {
+		c.JSON(status, gin.H{"error": msg})
+		return
+	}
+	res, err := h.recordStore.BatchCreate(c.Request.Context(), babyID, input)
+	if err != nil {
+		h.handleRecordErr(c, "batchCreateRecords", err)
+		return
+	}
+	c.JSON(http.StatusCreated, res)
 }

@@ -293,6 +293,7 @@ interface RecordListPageBaseProps<C extends RecordCategory> {
   readonly deleteSuccessToast: string;
   readonly describeRow: (rec: RecordOf<C>) => RecordRowDescriptor;
   readonly formatDeleteDescription: (rec: RecordOf<C>) => string;
+  readonly secondaryHeaderAction?: ReactNode;
   readonly onCreate?: (activeFilter: string) => void;
   readonly onEdit?: (rec: RecordOf<C>) => void;
 }
@@ -333,6 +334,7 @@ export function RecordListPage<C extends RecordCategory>(props: RecordListPagePr
     deleteSuccessToast,
     describeRow,
     formatDeleteDescription,
+    secondaryHeaderAction,
     onCreate,
     onEdit,
   } = props;
@@ -444,10 +446,13 @@ export function RecordListPage<C extends RecordCategory>(props: RecordListPagePr
           </span>
         }
         headerAction={
-          <Button size="sm" onClick={handleOpenCreate}>
-            <PlusIcon className="size-4" />
-            {createButtonLabel}
-          </Button>
+          <div className="flex items-center gap-2">
+            {secondaryHeaderAction}
+            <Button size="sm" onClick={handleOpenCreate}>
+              <PlusIcon className="size-4" />
+              {createButtonLabel}
+            </Button>
+          </div>
         }
         filters={
           <Tabs value={filter} onValueChange={(value) => setFilter(String(value))}>

@@ -1,5 +1,5 @@
 import { format } from 'date-fns';
-import { AlertCircle, Sparkles } from 'lucide-react';
+import { AlertCircle, ClipboardList, Sparkles } from 'lucide-react';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { EntityDrawer } from '@/components/entity-drawer';
 import { CareFields } from '@/components/quick-record/care-fields';
@@ -28,6 +28,7 @@ import { useActiveBaby } from '@/lib/baby';
 import { RECORD_CATEGORIES, RECORD_CATEGORY_META } from '@/lib/categories';
 import { useSaveRecordMutation, useSmartDefaultsQuery } from '@/lib/records';
 import { cn } from '@/lib/utils';
+import { useBatchRecordStore } from '@/stores/batch-record';
 import { useQuickRecordStore } from '@/stores/quick-record';
 
 /** 四类日常记录统一快捷录入与编辑抽屉（含智能默认值双守卫与提交中防误关保护）。 */
@@ -160,6 +161,26 @@ export function QuickRecordDrawer() {
       }
     >
       <form id="quick-record-form" onSubmit={handleSubmit} noValidate className="flex flex-col gap-5">
+        {intent.mode === 'create' ? (
+          <div className="flex items-center justify-between gap-2 rounded-xl border border-border/70 bg-muted/25 px-3 py-2">
+            <span className="text-xs text-muted-foreground">同一时间要记多笔喂奶和嘘嘘便便？</span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={saveMutation.isPending}
+              className="h-7 shrink-0 gap-1 px-2 text-xs font-medium text-primary hover:bg-accent/70 hover:text-primary"
+              onClick={() => {
+                setOpen(false);
+                useBatchRecordStore.getState().openBatch();
+              }}
+            >
+              <ClipboardList className="size-3.5" strokeWidth={1.8} />
+              <span>批量补录</span>
+            </Button>
+          </div>
+        ) : null}
+
         {!isEdit ? (
           <fieldset aria-label="记录分类" className="grid min-w-0 grid-cols-4 gap-1 border-0 p-0 sm:gap-1.5">
             {RECORD_CATEGORIES.map((categoryId) => {

@@ -84,6 +84,17 @@ if [ -n "$bad_sidebar_overlays" ]; then
   exit 1
 fi
 
+# 6.2 含内部滚动区的底部 Drawer 须标注 data-base-ui-swipe-ignore，防止移动端滚动被下滑关闭手势劫持
+bad_drawer_scroll=$(find src -type f -name '*.tsx' ! -path 'src/components/ui/sidebar.tsx' -exec grep -l '<DrawerContent' {} + | while IFS= read -r f; do
+  if grep -qE 'overflow-(y-)?(auto|scroll)' "$f" && ! grep -q 'data-base-ui-swipe-ignore' "$f"; then
+    printf '%s\n' "$f"
+  fi
+done)
+if [ -n "$bad_drawer_scroll" ]; then
+  printf 'Bottom Drawer components with internal scroll areas must mark the scroll container with data-base-ui-swipe-ignore:\n%s\n' "$bad_drawer_scroll" >&2
+  exit 1
+fi
+
 # 7. 前端业务模块未使用导出（死导出）检查
 node scripts/check-unused-exports.mjs
 

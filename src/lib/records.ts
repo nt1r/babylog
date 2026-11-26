@@ -209,6 +209,21 @@ export type SaveRecordRequest =
   | { readonly category: 'care'; readonly id?: number; readonly payload: CareInput }
   | { readonly category: 'health'; readonly id?: number; readonly payload: HealthInput };
 
+export interface BatchCreateRecordsInput {
+  readonly feedings: readonly FeedingInput[];
+  readonly cares: readonly CareInput[];
+}
+
+interface BatchCreateRecordsResult {
+  readonly feedings: FeedingRecord[];
+  readonly cares: CareRecord[];
+}
+
+export interface BatchUndoTarget {
+  readonly category: 'feeding' | 'care';
+  readonly id: number;
+}
+
 /** 将泛型分类与对应记录打包为判别联合 EditableRecord，供通用列表页安全传给编辑/复制抽屉。 */
 export function toEditableRecord<C extends RecordCategory>(category: C, record: RecordOf<C>): EditableRecord {
   return { category, record } as EditableRecord;
@@ -269,7 +284,7 @@ export function getTemperatureSeverity(temp: number): {
   return { level: 'normal', label: '体温正常' };
 }
 
-/** 单条记录的新增/编辑/删除会同时影响当前宝宝的分页列表、智能默认值与首页看板统计，统一失效三组查询缓存。 */
+/** 单条或批量记录的新增/编辑/删除/撤销会同时影响当前宝宝的分页列表、智能默认值与首页看板统计，统一失效三组查询缓存。 */
 function invalidateAllRecordQueries(queryClient: QueryClient, babyId: number) {
   void queryClient.invalidateQueries({ queryKey: babyRecordsQueryKey(babyId) });
   void queryClient.invalidateQueries({ queryKey: babyRecordDefaultsQueryKey(babyId) });
@@ -321,6 +336,13 @@ async function saveRecord(babyId: number, req: SaveRecordRequest): Promise<Recor
 
 async function deleteRecord(babyId: number, category: RecordCategory, id: number): Promise<void> {
   await apiRequest<{ deleted: boolean }>(`/api/babies/${babyId}/records/${category}/${id}`, { method: 'DELETE' });
+}
+
+async function batchCreateRecords(babyId: number, input: BatchCreateRecordsInput): Promise<BatchCreateRecordsResult> {
+  return apiRequest<BatchCreateRecordsResult>(`/api/babies/${babyId}/records/batch`, {
+    method: 'POST',
+    body: input,
+  });
 }
 
 export function useSmartDefaultsQuery(enabled = true) {
@@ -423,6 +445,58 @@ export function useDeleteRecordMutation() {
       const targetBabyId = resolveMutationBabyId(activeBabyId);
       await deleteRecord(targetBabyId, category, id);
       invalidateAllRecordQueries(queryClient, targetBabyId);
+    },
+  });
+}
+
+/** 单事务批量创建喂养与护理记录，成功后统一刷新列表、智能默认值与首页看板缓存。 */
+export function useBatchCreateRecordsMutation() {
+  const queryClient = useQueryClient();
+  const activeBabyId = useActiveBabyId();
+  return useMutation({
+    mutationFn: async (input: BatchCreateRecordsInput) => {
+      const targetBabyId = resolveMutationBabyId(activeBabyId);
+      const saved = await batchCreateRecords(targetBabyId, input);
+      invalidateAllRecordQueries(queryClient, targetBabyId);
+      return saved;
+    },
+  });
+}
+
+/**
+ * 撤销单次批量补录生成的全部记录：
+ * 逐条调用既有 DELETE 接口；对已删除（404）按幂等成功处理，若中途部分失败则保留未删项并仍刷新已生效缓存。
+ */
+export function useUndoBatchRecordsMutation() {
+  const queryClient = useQueryClient();
+  const activeBabyId = useActiveBabyId();
+  return useMutation({
+    mutationFn: async (targets: readonly BatchUndoTarget[]) => {
+      const targetBabyId = resolveMutationBabyId(activeBabyId);
+      const remaining: BatchUndoTarget[] = [];
+      let deletedAny = false;
+      let firstError = '';
+
+      for (const target of targets) {
+        try {
+          await deleteRecord(targetBabyId, target.category, target.id);
+          deletedAny = true;
+        } catch (cause) {
+          if (cause instanceof ApiError && cause.status === 404) {
+            deletedAny = true;
+            continue;
+          }
+          remaining.push(target);
+          if (!firstError) {
+            firstError = cause instanceof Error ? cause.message : '撤销失败，请稍后重试';
+          }
+        }
+      }
+
+      if (deletedAny) {
+        invalidateAllRecordQueries(queryClient, targetBabyId);
+      }
+      return { remaining, firstError };
     },
   });
 }

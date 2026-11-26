@@ -7,10 +7,11 @@ import (
 )
 
 const (
-	// 文本长度与列表分页边界（MaxListLimit 与前端列表/生长曲线查询上限对齐）。
-	MaxNoteLength    = 500
-	DefaultListLimit = 20
-	MaxListLimit     = 100
+	// 文本长度、批量上限与列表分页边界（MaxListLimit 与前端列表/生长曲线查询上限对齐）。
+	MaxNoteLength       = 500
+	MaxBatchCreateItems = 20
+	DefaultListLimit    = 20
+	MaxListLimit        = 100
 
 	// 喂养、睡眠与健康体格字段的业务合法区间边界。
 	MinMilkML       = 1
@@ -220,6 +221,18 @@ type HealthDailySummary struct {
 	TotalCount    int      `json:"total_count"`
 	MedicineCount int      `json:"medicine_count"`
 	LatestTempC   *float64 `json:"latest_temp_c"`
+}
+
+// BatchCreateInput 表示单次事务内批量创建喂养与护理记录的输入载荷。
+type BatchCreateInput struct {
+	Feedings []FeedingInput `json:"feedings"`
+	Cares    []CareInput    `json:"cares"`
+}
+
+// BatchCreateResult 表示批量创建成功后的返回结构，无数据的分类始终序列化为空数组 []。
+type BatchCreateResult struct {
+	Feedings []FeedingRecord `json:"feedings"`
+	Cares    []CareRecord    `json:"cares"`
 }
 
 // ListFilter 表示记录列表查询的筛选与分页参数。
