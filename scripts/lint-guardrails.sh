@@ -101,6 +101,9 @@ node scripts/check-spec-refs.mjs
 node scripts/check-comments.mjs --self-test
 node scripts/check-comments.mjs
 
+# 9.1 发版元数据模块自检（SemVer 2.0.0 校验、版本序比较与 CHANGELOG 切分）
+node scripts/lib/release-meta.mjs --self-test
+
 # 10. Go 后端跨表直接访问门禁（使用 .Table("...") 须同行标注 `// cross-table:` 说明事务意图，防止静默越界或重复查库）
 if grep -rnE --include='*.go' --exclude='*_test.go' '\.Table\("' backend/internal/ | grep -v '// cross-table:'; then
   echo 'Cross-table GORM .Table("...") access requires an inline // cross-table: justification comment' >&2

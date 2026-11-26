@@ -10,3 +10,5 @@ services:
         COMMIT: "${BABYLOG_COMMIT:-unknown}"
         BUILD_DATE: "${BABYLOG_BUILD_DATE:-unknown}"
     image: babylog:local
+    # 覆盖 compose.yaml 的 pull_policy: always，避免尝试从远端仓库拉取本地构建镜像
+    pull_policy: build

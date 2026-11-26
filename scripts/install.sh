@@ -149,6 +149,18 @@ validate_port() {
   fi
 }
 
+validate_cookie_secure() {
+  [ -n "$1" ] || return 0
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    true|false)
+      return 0
+      ;;
+    *)
+      die "BABYLOG_COOKIE_SECURE 必须为 true 或 false，当前值: $1"
+      ;;
+  esac
+}
+
 default_install_dir() {
   if [ -d /opt/babylog ] && [ -w /opt/babylog ]; then
     printf '/opt/babylog'
@@ -221,7 +233,7 @@ prompt_secret() {
   printf '%s' "$SECRET_VAL"
 }
 
-# 读取已存在的 .env（仅提取受支持的 4 个变量，避免执行任意内容）
+# 读取已存在的 .env（仅提取受支持的变量，避免执行任意内容）
 load_existing_env() {
   ENV_FILE="$1"
   [ -f "$ENV_FILE" ] || return 0
@@ -254,6 +266,9 @@ load_existing_env() {
       BABYLOG_PORT)
         SAVED_PORT="$VAL"
         ;;
+      BABYLOG_COOKIE_SECURE)
+        SAVED_COOKIE_SECURE="$VAL"
+        ;;
     esac
   done < "$ENV_FILE"
 }
@@ -268,6 +283,9 @@ BABYLOG_VERSION=${BABYLOG_VERSION}
 BABYLOG_BIND=${BABYLOG_BIND}
 BABYLOG_PORT=${BABYLOG_PORT}
 EOF
+  if [ -n "${BABYLOG_COOKIE_SECURE:-}" ]; then
+    printf 'BABYLOG_COOKIE_SECURE=%s\n' "$BABYLOG_COOKIE_SECURE" >> "$TMP_ENV"
+  fi
   chmod 600 "$TMP_ENV"
   mv "$TMP_ENV" "$ENV_FILE"
 }
@@ -361,7 +379,10 @@ print_proxy_hints() {
     运行版本: ${RUNNING_VERSION}
     监听地址: http://${BABYLOG_BIND}:${BABYLOG_PORT}
 
-后续升级可执行:
+后续常规更新（拉取最新镜像并重建容器）可直接执行:
+    cd "${INSTALL_DIR}" && docker compose up -d --force-recreate --wait
+
+如需同步最新官方 compose.yaml 并原地升级，可执行:
     curl -fsSL ${RAW_BASE_URL%/}/main/scripts/install.sh | sh -s -- --upgrade --dir "${INSTALL_DIR}"
 
 公网访问建议通过反向代理启用 HTTPS（以 Caddy 为例）:
@@ -470,12 +491,14 @@ SAVED_IMAGE=""
 SAVED_VERSION=""
 SAVED_BIND=""
 SAVED_PORT=""
+SAVED_COOKIE_SECURE=""
 load_existing_env "${INSTALL_DIR}/.env"
 
 BABYLOG_IMAGE="${CLI_IMAGE:-${SAVED_IMAGE:-$DEFAULT_IMAGE}}"
 BABYLOG_VERSION="${CLI_VERSION:-${SAVED_VERSION:-$DEFAULT_VERSION}}"
 BABYLOG_BIND="${CLI_BIND:-${SAVED_BIND:-$DEFAULT_BIND}}"
 BABYLOG_PORT="${CLI_PORT:-${SAVED_PORT:-$DEFAULT_PORT}}"
+BABYLOG_COOKIE_SECURE="${SAVED_COOKIE_SECURE:-}"
 
 if [ "$UPGRADE_MODE" -eq 0 ] && [ "$ASSUME_YES" -eq 0 ] && has_tty; then
   [ -z "$CLI_VERSION" ] && BABYLOG_VERSION=$(prompt_line "镜像版本（latest 或如 v0.1.0）" "$BABYLOG_VERSION")
@@ -487,6 +510,7 @@ validate_image "$BABYLOG_IMAGE"
 validate_version "$BABYLOG_VERSION"
 validate_bind "$BABYLOG_BIND"
 validate_port "$BABYLOG_PORT"
+validate_cookie_secure "$BABYLOG_COOKIE_SECURE"
 
 if [ "$UPGRADE_MODE" -eq 1 ]; then
   [ -f "${INSTALL_DIR}/compose.yaml" ] || die "未在 ${INSTALL_DIR} 找到 compose.yaml，请确认安装目录是否正确"
@@ -520,7 +544,7 @@ if [ "$UPGRADE_MODE" -eq 0 ]; then
 fi
 
 printf '==> 启动服务并等待健康检查通过...\n'
-docker compose up -d --wait
+docker compose up -d --force-recreate --wait
 
 if [ "$UPGRADE_MODE" -eq 1 ]; then
   rm -f "${INSTALL_DIR}/compose.yaml.bak" "${INSTALL_DIR}/.env.bak"

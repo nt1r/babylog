@@ -159,13 +159,24 @@ BABYLOG_IMAGE=ghcr.io/nt1r/babylog
 BABYLOG_VERSION=latest
 BABYLOG_BIND=127.0.0.1
 BABYLOG_PORT=21115
+# 运行在 HTTPS 反向代理之后时可设为 true，由应用直接下发 Secure 会话 Cookie
+BABYLOG_COOKIE_SECURE=false
 ```
 
-日常升级仅需执行：
+官方 [compose.yaml](./compose.yaml) 已配置 `pull_policy: always` 与 `stop_grace_period: 15s`。当部署 `latest`（默认）并需要更新到最新发布版本时，直接在部署目录执行单条命令即可拉取最新镜像、平滑重建容器并等待健康检查通过（数据卷内的 SQLite 数据库自动保留并按需完成迁移）：
 
 ```bash
-docker compose pull && docker compose up -d
+docker compose up -d --force-recreate --wait
+
+# 核对运行版本（启动日志与 CLI 均会输出版本号与提交哈希）
+docker compose logs --tail=20 babylog
+docker compose exec babylog babylog version
+
+# 可选：清理升级后残留的旧悬空镜像
+docker image prune -f
 ```
+
+> 若本次更新同时涉及官方 `compose.yaml` 模板调整，建议改用上方的 `install.sh --upgrade` 一键同步模板并升级。
 
 </details>
 

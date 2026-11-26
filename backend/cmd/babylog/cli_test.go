@@ -290,24 +290,29 @@ func startServeProcess(t *testing.T, binPath, dataDir, distDir string) (string, 
 		}
 	})
 
-	urlCh := make(chan string, 1)
+	lineCh := make(chan string, 1)
 	urlRegex := regexp.MustCompile(`http://127\.0\.0\.1:\d+`)
 	go func() {
 		scanner := bufio.NewScanner(stdoutPipe)
 		for scanner.Scan() {
-			if match := urlRegex.FindString(scanner.Text()); match != "" {
-				urlCh <- match
+			line := scanner.Text()
+			if urlRegex.MatchString(line) {
+				lineCh <- line
 				return
 			}
 		}
 	}()
 
-	var baseURL string
+	var startupLine string
 	select {
-	case baseURL = <-urlCh:
+	case startupLine = <-lineCh:
 	case <-time.After(5 * time.Second):
 		t.Fatalf("serve 启动监听超时，stderr=%s", stderrBuf.String())
 	}
+	if !strings.Contains(startupLine, "babylog dev (commit: unknown, built: unknown)") {
+		t.Fatalf("serve 启动日志缺少版本元信息：%q", startupLine)
+	}
+	baseURL := urlRegex.FindString(startupLine)
 
 	stop := func() {
 		t.Helper()
@@ -378,7 +383,7 @@ func doLiveJSONRequest(t *testing.T, method, baseURL, path, cookie string, paylo
  * - 管理员与会话：经 CLI 初始化默认管理员（admin）
  * - 宝宝档案：步骤 1 使用相对当前时钟 3 个月前的出生日期建档（不依赖固定宿主机年份）
  * 测试目标：
- * 1. 验证首次启动 serve 进程可完成登录、建档与写入 125ml 配方奶记录，并在收到 SIGTERM 后退出码为 0 优雅停机。
+ * 1. 验证首次启动 serve 进程时启动日志包含版本元信息，可完成登录、建档与写入 125ml 配方奶记录，并在收到 SIGTERM 后退出码为 0 优雅停机。
  * 2. 验证复用同一 BABYLOG_DATA_DIR 重启新进程后，原会话 Cookie 依然有效且宝宝档案与喂养记录完整回读。
  */
 func TestCLIServeRestartPersistenceLifecycle(t *testing.T) {

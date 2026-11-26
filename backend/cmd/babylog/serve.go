@@ -110,7 +110,7 @@ func runServe(parentCtx context.Context) error {
 		// IPv6 地址在 URL 中须用方括号包裹，例如 http://[::1]:21115。
 		displayHost = "[" + displayHost + "]"
 	}
-	fmt.Fprintf(os.Stdout, "BabyLog 服务已启动：http://%s:%d\n", displayHost, listeningPort)
+	fmt.Fprintf(os.Stdout, "BabyLog 服务已启动（%s）：http://%s:%d\n", formatVersionString(), displayHost, listeningPort)
 
 	// 5. 监听 SIGINT（Ctrl+C）与 SIGTERM（容器/系统停止信号）：
 	// 收到信号后 ctx.Done() 通道关闭，触发下方优雅停机；defer stop() 在退出时注销信号监听。
