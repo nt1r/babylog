@@ -259,6 +259,37 @@ MAIN_SHA=$(git rev-parse --short origin/main)
 PREP_BRANCH="release/${TAG}"
 REPO_SLUG=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
 
+# 读取仓库允许的 PR 合并方式：准备 PR 优先 squash，dev -> main 优先 merge commit 以保持双分支祖先关系
+MERGE_CAPS=$(gh api "repos/${REPO_SLUG}" --jq '[.allow_merge_commit, .allow_squash_merge, .allow_rebase_merge] | map(tostring) | join("|")')
+OLD_IFS="$IFS"
+IFS='|'
+# shellcheck disable=SC2086
+set -- $MERGE_CAPS
+IFS="$OLD_IFS"
+ALLOW_MERGE_COMMIT="$1"
+ALLOW_SQUASH_MERGE="$2"
+ALLOW_REBASE_MERGE="$3"
+
+if [ "$ALLOW_SQUASH_MERGE" = "true" ]; then
+  PREP_MERGE_FLAG="--squash"
+elif [ "$ALLOW_MERGE_COMMIT" = "true" ]; then
+  PREP_MERGE_FLAG="--merge"
+elif [ "$ALLOW_REBASE_MERGE" = "true" ]; then
+  PREP_MERGE_FLAG="--rebase"
+else
+  die "仓库 ${REPO_SLUG} 未开启任何可用的 PR 合并策略"
+fi
+
+if [ "$ALLOW_MERGE_COMMIT" = "true" ]; then
+  MAIN_MERGE_FLAG="--merge"
+elif [ "$ALLOW_REBASE_MERGE" = "true" ]; then
+  MAIN_MERGE_FLAG="--rebase"
+elif [ "$ALLOW_SQUASH_MERGE" = "true" ]; then
+  MAIN_MERGE_FLAG="--squash"
+else
+  die "仓库 ${REPO_SLUG} 未开启任何可用的 PR 合并策略"
+fi
+
 printf '\n================ BabyLog 发版计划 ================\n'
 printf '仓库:           %s\n' "$REPO_SLUG"
 printf '运行目录:       %s（当前引用: %s）\n' "$REPO_ROOT" "$ORIG_REF"
@@ -276,7 +307,7 @@ fi
 printf 'origin/dev:     %s（package.json: %s）\n' "$DEV_SHA" "$DEV_PKG_VER"
 printf 'origin/main:    %s\n' "$MAIN_SHA"
 if [ "$NEED_PREPARE_PR" -eq 1 ]; then
-  printf '阶段 1 (准备):  在当前目录切出 %s -> 提 PR 合入 dev 并切回 %s（' "$PREP_BRANCH" "$ORIG_REF"
+  printf '阶段 1 (准备):  在当前目录切出 %s -> 提 PR 合入 dev（策略: %s）并切回 %s（' "$PREP_BRANCH" "$PREP_MERGE_FLAG" "$ORIG_REF"
   if [ "$NEED_PKG_BUMP" -eq 1 ] && [ "$NEED_CHANGELOG_CUT" -eq 1 ]; then
     printf '更新 package.json + 切分 CHANGELOG.md [%s] - %s' "$VERSION" "$RELEASE_DATE"
   elif [ "$NEED_PKG_BUMP" -eq 1 ]; then
@@ -288,7 +319,7 @@ if [ "$NEED_PREPARE_PR" -eq 1 ]; then
 else
   printf '阶段 1 (准备):  跳过（origin/dev 已就绪目标版本与 CHANGELOG 章节）\n'
 fi
-printf '阶段 2 (合入):  创建/复用 dev -> main Release PR，等待 CI 通过后 Merge\n'
+printf '阶段 2 (合入):  创建/复用 dev -> main Release PR，等待 CI 通过后合并（策略: %s）\n' "$MAIN_MERGE_FLAG"
 printf '阶段 3 (打标):  复核最新 origin/main 并推送附注标签 %s\n' "$TAG"
 if [ "$WATCH_RELEASE" -eq 1 ]; then
   printf '阶段 4 (跟踪):  自动跟踪 release.yml 构建多架构 GHCR 镜像与 GitHub Release\n'
@@ -351,21 +382,22 @@ if [ "$NEED_PREPARE_PR" -eq 1 ]; then
   fi
 
   wait_for_pr_checks "$PREP_PR"
-  printf '==> 合并版本准备 PR #%s 至 dev...\n' "$PREP_PR"
-  gh pr merge "$PREP_PR" --squash --delete-branch
+  printf '==> 合并版本准备 PR #%s 至 dev（策略: %s）...\n' "$PREP_PR" "$PREP_MERGE_FLAG"
+  gh pr merge "$PREP_PR" "$PREP_MERGE_FLAG" --delete-branch
   git fetch origin dev
 fi
 
-# 6. 阶段 2：将 dev 通过 Release PR 合入 main（保持 merge commit 历史，不删除 dev）
-AHEAD_COUNT=$(git rev-list --count origin/main..origin/dev)
-if [ "$AHEAD_COUNT" -gt 0 ]; then
+# 6. 阶段 2：将 dev 通过 Release PR 合入 main（优先 merge commit 以保留双分支共同祖先，不删除 dev）
+# 用文件树 diff 判断是否存在未发布变更，避免历史上曾用 squash 合并 main 时提交数误判为空 PR。
+if ! git diff --quiet origin/main origin/dev; then
+  AHEAD_COUNT=$(git rev-list --count origin/main..origin/dev)
   EXISTING_MAIN_PR=$(gh pr list --base main --head dev --state open --json number --jq '.[0].number // empty')
   if [ -n "$EXISTING_MAIN_PR" ]; then
     printf '==> [2/4] 复用已存在的 dev -> main Release PR #%s，并同步最新标题与发版说明\n' "$EXISTING_MAIN_PR"
     MAIN_PR="$EXISTING_MAIN_PR"
     gh pr edit "$MAIN_PR" --title "chore(release): release ${TAG}" --body-file "$NOTES_FILE" >/dev/null
   else
-    printf '==> [2/4] 创建 dev -> main Release PR（包含 %s 个新提交）...\n' "$AHEAD_COUNT"
+    printf '==> [2/4] 创建 dev -> main Release PR（包含 %s 个提交）...\n' "$AHEAD_COUNT"
     MAIN_PR_URL=$(gh pr create \
       --base main \
       --head dev \
@@ -376,11 +408,11 @@ if [ "$AHEAD_COUNT" -gt 0 ]; then
   fi
 
   wait_for_pr_checks "$MAIN_PR"
-  printf '==> 合并 Release PR #%s 至 main（merge commit）...\n' "$MAIN_PR"
-  gh pr merge "$MAIN_PR" --merge
+  printf '==> 合并 Release PR #%s 至 main（策略: %s）...\n' "$MAIN_PR" "$MAIN_MERGE_FLAG"
+  gh pr merge "$MAIN_PR" "$MAIN_MERGE_FLAG"
   git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
 else
-  printf '==> [2/4] origin/dev 与 origin/main 已对齐，跳过合并 PR\n'
+  printf '==> [2/4] origin/dev 与 origin/main 文件内容已一致，跳过合并 PR\n'
 fi
 
 # 7. 阶段 3：直接校验最新 origin/main 的 package.json 与 CHANGELOG.md，再打附注标签并推送
