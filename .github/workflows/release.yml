@@ -50,71 +50,15 @@ jobs:
       - name: Validate tag format, main ancestry, package.json & CHANGELOG.md
         id: meta
         run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-
-          if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::Tag '${TAG}' 不符合语义化版本格式（如 v0.1.0 或 v0.1.0-rc.1）"
-            exit 1
-          fi
-
-          VERSION="${TAG#v}"
-          BASE_VERSION="${BASH_REMATCH[1]}"
-          MAJOR_MINOR="v${BASE_VERSION%.*}"
-          IS_PRERELEASE="false"
-          if [[ -n "${BASH_REMATCH[2]:-}" ]]; then
-            IS_PRERELEASE="true"
-          fi
-
-          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          if ! git merge-base --is-ancestor "${GITHUB_SHA}" refs/remotes/origin/main; then
-            echo "::error::Tag '${TAG}' (${GITHUB_SHA}) 不在 main 分支历史内，请先通过 PR 将 dev 合入 main 再打标签"
-            exit 1
-          fi
-
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          if [[ "$PKG_VERSION" != "$VERSION" ]]; then
-            echo "::error::Tag 版本 (${VERSION}) 与 package.json version (${PKG_VERSION}) 不一致"
-            exit 1
-          fi
-
-          VERSION="$VERSION" node -e '
-            const fs = require("node:fs");
-            const version = process.env.VERSION;
-            const text = fs.readFileSync("CHANGELOG.md", "utf8");
-            const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-            const startRe = new RegExp(`^## \\[${escaped}\\](?:\\s|$)`, "m");
-            const startMatch = startRe.exec(text);
-            if (!startMatch) {
-              console.error(`CHANGELOG.md 中未找到对应版本章节：## [${version}]`);
-              process.exit(1);
-            }
-            const rest = text.slice(startMatch.index + startMatch[0].length);
-            const nextHeaderIdx = rest.search(/^## \[/m);
-            const body = (nextHeaderIdx === -1 ? rest : rest.slice(0, nextHeaderIdx))
-              .replace(/^[^\n]*\n?/, "")
-              .trim();
-            if (!body) {
-              console.error(`CHANGELOG.md 中 ## [${version}] 章节内容为空`);
-              process.exit(1);
-            }
-            fs.writeFileSync("release-notes.md", `${body}\n`, "utf8");
-          '
-
-          COMMIT=$(git rev-parse --short HEAD)
-          BUILD_DATE=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-
-          {
-            echo "tag=${TAG}"
-            echo "version=${VERSION}"
-            echo "major_minor=${MAJOR_MINOR}"
-            echo "commit=${COMMIT}"
-            echo "build_date=${BUILD_DATE}"
-            echo "is_prerelease=${IS_PRERELEASE}"
-          } >> "$GITHUB_OUTPUT"
+          ./scripts/release-check.sh \
+            --tag "${GITHUB_REF_NAME}" \
+            --require-main \
+            --fetch-main \
+            --write-notes release-notes.md \
+            --github-output "${GITHUB_OUTPUT}"
 
       - name: Upload extracted release notes
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-notes
           path: release-notes.md
@@ -122,6 +66,9 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install OpenSpec CLI
+        run: npm install -g @fission-ai/openspec@2.1.1
 
       - name: Lint & format check
         run: pnpm lint
@@ -131,6 +78,9 @@ jobs:
 
       - name: Backend tests
         run: pnpm test
+
+      - name: Backend race tests
+        run: pnpm test:race
 
   build-binaries:
     name: Build Cross-Platform Binaries
@@ -205,7 +155,7 @@ jobs:
           )
 
       - name: Upload release assets
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-assets
           path: ${{ runner.temp }}/release-assets/
@@ -252,6 +202,83 @@ jobs:
             fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Build linux/amd64 image for smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: babylog:smoke
+          build-args: |
+            VERSION=${{ needs.validate-and-test.outputs.tag }}
+            COMMIT=${{ needs.validate-and-test.outputs.commit }}
+            BUILD_DATE=${{ needs.validate-and-test.outputs.build_date }}
+          cache-from: type=gha
+
+      - name: Smoke test container image
+        env:
+          TAG: ${{ needs.validate-and-test.outputs.tag }}
+          COMMIT: ${{ needs.validate-and-test.outputs.commit }}
+          BUILD_DATE: ${{ needs.validate-and-test.outputs.build_date }}
+        run: |
+          set -euo pipefail
+          EXPECTED_VERSION="babylog ${TAG} (commit: ${COMMIT}, built: ${BUILD_DATE})"
+          ACTUAL_VERSION=$(docker run --rm babylog:smoke version)
+          if [[ "${ACTUAL_VERSION}" != "${EXPECTED_VERSION}" ]]; then
+            echo "::error::容器版本校验失败，预期 '${EXPECTED_VERSION}'，实际 '${ACTUAL_VERSION}'"
+            exit 1
+          fi
+
+          CONTAINER_NAME="babylog-smoke"
+          VOLUME_NAME="babylog_smoke_data"
+          cleanup() {
+            docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+            docker volume rm -f "${VOLUME_NAME}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker volume create "${VOLUME_NAME}" >/dev/null
+          docker run -d \
+            --name "${CONTAINER_NAME}" \
+            --read-only \
+            --tmpfs /tmp \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            -v "${VOLUME_NAME}:/data" \
+            -p 127.0.0.1:21115:21115 \
+            babylog:smoke >/dev/null
+
+          READY=0
+          for _ in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:21115/api/auth/session >/dev/null 2>&1; then
+              READY=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ "${READY}" != "1" ]]; then
+            docker logs "${CONTAINER_NAME}" || true
+            echo "::error::容器启动后健康检查超时（/api/auth/session 未返回 200）"
+            exit 1
+          fi
+
+          curl -fsS http://127.0.0.1:21115/ | grep -qi "<!doctype html"
+
+          LOGS=$(docker logs "${CONTAINER_NAME}")
+          if [[ "${LOGS}" != *"${EXPECTED_VERSION}"* ]]; then
+            echo "::error::容器启动日志未包含预期版本信息：${LOGS}"
+            exit 1
+          fi
+
+          docker stop -t 15 "${CONTAINER_NAME}" >/dev/null
+          EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' "${CONTAINER_NAME}")
+          if [[ "${EXIT_CODE}" != "0" ]]; then
+            echo "::error::容器优雅停机退出码异常：${EXIT_CODE}"
+            exit 1
+          fi
 
       - name: Build and push multi-arch Docker image
         uses: docker/build-push-action@v6
