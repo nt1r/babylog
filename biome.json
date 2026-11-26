@@ -42,12 +42,21 @@
   },
   "linter": {
     "enabled": true,
+    "domains": {
+      "react": "recommended"
+    },
     "rules": {
       "complexity": {
         "useMathMinMax": "off"
       },
       "correctness": {
-        "noNestedComponentDefinitions": "error"
+        "noNestedComponentDefinitions": "error",
+        "useExhaustiveDependencies": {
+          "level": "error",
+          "options": {
+            "reportUnnecessaryDependencies": false
+          }
+        }
       },
       "suspicious": {
         "noImportCycles": "error"

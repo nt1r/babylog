@@ -30,6 +30,25 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
+function throwHttpError(response: Response, url: string, data: unknown, fallbackMessage: string): never {
+  const errorCode =
+    data && typeof data === 'object' && 'code' in data && typeof data.code === 'string' ? data.code : undefined;
+  // 登录接口 401 与改密接口当前密码错误（INVALID_CREDENTIALS）由表单本地展示；
+  // 其余业务接口或改密接口会话失效的 401 统一触发全局退登清态。
+  const isLocalCredentialError =
+    url.startsWith('/api/auth/') && (url !== '/api/auth/change-password' || errorCode === 'INVALID_CREDENTIALS');
+  if (response.status === 401 && !isLocalCredentialError) {
+    unauthorizedHandler?.();
+  } else if (response.status === 403 && errorCode === 'PASSWORD_CHANGE_REQUIRED') {
+    passwordChangeRequiredHandler?.();
+  }
+  const errorMessage =
+    data && typeof data === 'object' && 'error' in data && typeof data.error === 'string'
+      ? data.error
+      : fallbackMessage;
+  throw new ApiError(response.status, errorMessage, errorCode);
+}
+
 /** 统一封装后端 JSON 接口请求，处理取消透传、非认证接口 401 全局清态以及中文错误提取。 */
 export async function apiRequest<T>(url: string, options: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, signal } = options;
@@ -57,23 +76,54 @@ export async function apiRequest<T>(url: string, options: RequestOptions = {}): 
   }
 
   if (!response.ok) {
-    const errorCode =
-      data && typeof data === 'object' && 'code' in data && typeof data.code === 'string' ? data.code : undefined;
-    // 登录接口 401 与改密接口当前密码错误（INVALID_CREDENTIALS）由表单本地展示；
-    // 其余业务接口或改密接口会话失效的 401 统一触发全局退登清态。
-    const isLocalCredentialError =
-      url.startsWith('/api/auth/') && (url !== '/api/auth/change-password' || errorCode === 'INVALID_CREDENTIALS');
-    if (response.status === 401 && !isLocalCredentialError) {
-      unauthorizedHandler?.();
-    } else if (response.status === 403 && errorCode === 'PASSWORD_CHANGE_REQUIRED') {
-      passwordChangeRequiredHandler?.();
-    }
-    const errorMessage =
-      data && typeof data === 'object' && 'error' in data && typeof data.error === 'string'
-        ? data.error
-        : '操作未完成，请稍后重试。';
-    throw new ApiError(response.status, errorMessage, errorCode);
+    throwHttpError(response, url, data, '操作未完成，请稍后重试。');
   }
 
   return data as T;
+}
+
+/** 发起受鉴权二进制文件下载请求，复用全局 401 / 403 会话回调与统一中文错误提取。 */
+export async function apiFetchBlob(
+  url: string,
+  signal?: AbortSignal,
+): Promise<{ blob: Blob; contentDisposition: string | null }> {
+  let response: Response;
+  try {
+    response = await fetch(url, { method: 'GET', credentials: 'include', signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw error;
+    }
+    throw new ApiError(0, '暂时无法连接服务，请稍后重试。');
+  }
+
+  if (!response.ok) {
+    let data: unknown = null;
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+    throwHttpError(response, url, data, '导出失败，请稍后重试。');
+  }
+
+  return {
+    blob: await response.blob(),
+    contentDisposition: response.headers.get('Content-Disposition'),
+  };
+}
+
+/** 通过临时 ObjectURL 触发浏览器下载二进制文件并立即释放内存引用。 */
+export function triggerBlobDownload(blob: Blob, filename: string): void {
+  const blobUrl = URL.createObjectURL(blob);
+  try {
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
 }

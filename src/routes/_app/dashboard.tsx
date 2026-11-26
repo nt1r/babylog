@@ -138,6 +138,7 @@ function DashboardPage() {
   const openGrowthCreate = useGrowthRecordStore((state) => state.openCreate);
   const { busyKey: quickBusyKey, trigger: triggerOneTap } = useOneTapRecord();
   const [trendTab, setTrendTab] = useState<DashboardTrendTab>('feeding');
+  const [trendDays, setTrendDays] = useState<7 | 30>(7);
   // 每分钟刷新一次本地时钟，确保「距上次喂奶/换尿布 X 分钟前」与昼夜插画在数据无变更时也能实时更新。
   const [now, setNow] = useState(() => new Date());
 
@@ -148,7 +149,7 @@ function DashboardPage() {
 
   const { activeBaby } = useActiveBaby();
   const summaryQuery = useDashboardSummaryQuery();
-  const trendsQuery = useDashboardTrendsQuery(7);
+  const trendsQuery = useDashboardTrendsQuery(trendDays);
   const defaultsQuery = useSmartDefaultsQuery();
   // 与 60 秒轮询解耦：设置 5 分钟缓存，首次访问自动触发国家免疫规划懒初始化，疫苗变更后由 mutation 精确失效。
   const vaccinesQuery = useVaccinesOverviewQuery(true, VACCINE_OVERVIEW_STALE_MS);
@@ -310,17 +311,34 @@ function DashboardPage() {
       {/* 2:1 喂养/睡眠趋势与时段分布图 */}
       <div className="grid grid-cols-1 items-stretch gap-4 @4xl/main:grid-cols-3">
         <Card className="@4xl/main:col-span-2">
-          <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="space-y-1">
-              <CardTitle>近 7 日照护趋势</CardTitle>
+              <div className="flex flex-wrap items-center gap-2">
+                <CardTitle>近 {trendDays} 日照护趋势</CardTitle>
+                <Link
+                  to="/insights"
+                  className="inline-flex items-center gap-0.5 text-xs font-medium text-primary hover:underline"
+                >
+                  详细分析
+                  <ArrowUpRight className="size-3.5" />
+                </Link>
+              </div>
               <CardDescription>{trendView.description}</CardDescription>
             </div>
-            <Tabs value={trendTab} onValueChange={(value) => setTrendTab(value === 'sleep' ? 'sleep' : 'feeding')}>
-              <TabsList>
-                <TabsTrigger value="feeding">喂养</TabsTrigger>
-                <TabsTrigger value="sleep">睡眠</TabsTrigger>
-              </TabsList>
-            </Tabs>
+            <div className="flex flex-wrap items-center gap-2">
+              <Tabs value={`${trendDays}`} onValueChange={(value) => setTrendDays(value === '30' ? 30 : 7)}>
+                <TabsList>
+                  <TabsTrigger value="7">近 7 天</TabsTrigger>
+                  <TabsTrigger value="30">近 30 天</TabsTrigger>
+                </TabsList>
+              </Tabs>
+              <Tabs value={trendTab} onValueChange={(value) => setTrendTab(value === 'sleep' ? 'sleep' : 'feeding')}>
+                <TabsList>
+                  <TabsTrigger value="feeding">喂养</TabsTrigger>
+                  <TabsTrigger value="sleep">睡眠</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
           </CardHeader>
           <CardContent>
             {trendsQuery.isLoading ? (
@@ -338,7 +356,7 @@ function DashboardPage() {
             ) : !trendView.hasCurrentTrendData ? (
               <div className="flex h-60 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border/80 bg-muted/20 p-6 text-center">
                 <p className="text-sm font-medium text-foreground">
-                  {trendTab === 'sleep' ? '近 7 日还没有睡眠记录' : '近 7 日还没有喂养记录'}
+                  {trendTab === 'sleep' ? `近 ${trendDays} 日还没有睡眠记录` : `近 ${trendDays} 日还没有喂养记录`}
                 </p>
                 <Button size="sm" variant="outline" onClick={() => openCreate(trendTab)}>
                   <PlusIcon className="size-3.5" />
@@ -363,7 +381,13 @@ function DashboardPage() {
                     </linearGradient>
                   </defs>
                   <CartesianGrid vertical={false} strokeDasharray="3 3" />
-                  <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
+                  <XAxis
+                    dataKey="label"
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={8}
+                    minTickGap={trendDays > 7 ? 24 : 8}
+                  />
                   <YAxis tickLine={false} axisLine={false} tickMargin={8} />
                   <ChartTooltip
                     content={<DashboardTrendTooltip tab={trendTab} isDirectBreastMode={trendView.isDirectBreastMode} />}
@@ -374,6 +398,7 @@ function DashboardPage() {
                     stroke={trendTab === 'feeding' ? 'var(--feeding)' : 'var(--sleep)'}
                     strokeWidth={2.2}
                     fill="url(#trendMetricFill)"
+                    isAnimationActive={false}
                   />
                 </AreaChart>
               </ChartContainer>
@@ -384,7 +409,7 @@ function DashboardPage() {
         <Card>
           <CardHeader>
             <CardTitle>每日照护节律</CardTitle>
-            <CardDescription>近 7 日各时段照护次数</CardDescription>
+            <CardDescription>近 {trendDays} 日各时段照护次数</CardDescription>
           </CardHeader>
           <CardContent>
             {trendsQuery.isLoading ? (
@@ -409,7 +434,13 @@ function DashboardPage() {
                   <XAxis dataKey="slot" tickLine={false} axisLine={false} tickMargin={8} />
                   <YAxis tickLine={false} axisLine={false} allowDecimals={false} />
                   <ChartTooltip content={<ChartTooltipContent unit="次" />} />
-                  <Bar dataKey="count" fill="var(--sleep)" radius={[8, 8, 2, 2]} maxBarSize={32} />
+                  <Bar
+                    dataKey="count"
+                    fill="var(--sleep)"
+                    radius={[8, 8, 2, 2]}
+                    maxBarSize={32}
+                    isAnimationActive={false}
+                  />
                 </BarChart>
               </ChartContainer>
             )}

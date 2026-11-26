@@ -11,6 +11,7 @@ import (
 	"github.com/nt1r/babylog/backend/internal/auth"
 	"github.com/nt1r/babylog/backend/internal/baby"
 	"github.com/nt1r/babylog/backend/internal/dashboard"
+	"github.com/nt1r/babylog/backend/internal/export"
 	"github.com/nt1r/babylog/backend/internal/records"
 	"github.com/nt1r/babylog/backend/internal/vaccines"
 )
@@ -23,13 +24,14 @@ type Options struct {
 	BabyStore       *baby.Store
 	RecordStore     *records.Store
 	DashboardSvc    *dashboard.Service
+	ExportSvc       *export.Service
 	VaccineStore    *vaccines.Store
 	DistDir         string
 	FallbackDistDir string
 	Logger          *slog.Logger
 }
 
-// NewRouter 装配 Gin 引擎、安全中间件、认证、管理员用户管理、多宝宝档案、日常记录、首页看板、疫苗管理与静态前端回退处理。
+// NewRouter 装配 Gin 引擎、安全中间件、认证、管理员用户管理、多宝宝档案、日常记录、首页看板、数据导出、疫苗管理与静态前端回退处理。
 // 调用方应在进程启动入口（而非路由构造函数内）设置 gin.SetMode，避免全局状态并发竞争。
 func NewRouter(opts Options) *gin.Engine {
 	logger := opts.Logger
@@ -96,6 +98,11 @@ func NewRouter(opts Options) *gin.Engine {
 							dashGroup := babyGroup.Group("/dashboard")
 							dashGroup.GET("/summary", dashH.getSummary)
 							dashGroup.GET("/trends", dashH.getTrends)
+						}
+
+						if opts.ExportSvc != nil {
+							expH := newExportHandler(opts.ExportSvc, logger)
+							babyGroup.GET("/export/xlsx", expH.exportXLSX)
 						}
 
 						if opts.VaccineStore != nil {

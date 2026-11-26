@@ -22,6 +22,7 @@ import (
 	"github.com/nt1r/babylog/backend/internal/config"
 	"github.com/nt1r/babylog/backend/internal/dashboard"
 	"github.com/nt1r/babylog/backend/internal/database"
+	"github.com/nt1r/babylog/backend/internal/export"
 	"github.com/nt1r/babylog/backend/internal/httpapi"
 	"github.com/nt1r/babylog/backend/internal/records"
 	"github.com/nt1r/babylog/backend/internal/vaccines"
@@ -62,12 +63,13 @@ func runServe(parentCtx context.Context) error {
 	}
 	defer func() { _ = db.Close() }()
 
-	// 3. 显式注入认证、宝宝档案、日常记录、首页看板、疫苗存储与静态资源配置，组装 HTTP 路由。
+	// 3. 显式注入认证、宝宝档案、日常记录、首页看板、数据导出、疫苗存储与静态资源配置，组装 HTTP 路由。
 	store := auth.NewStore(db.Gorm())
 	loginGuard := auth.NewLoginGuard()
 	babyStore := baby.NewStore(db.Gorm())
 	recordStore := records.NewStore(db.Gorm())
 	dashboardSvc := dashboard.NewService(recordStore)
+	exportSvc := export.NewService(recordStore)
 	vaccineStore := vaccines.NewStore(db.Gorm())
 	router := httpapi.NewRouter(httpapi.Options{
 		Store:           store,
@@ -76,6 +78,7 @@ func runServe(parentCtx context.Context) error {
 		BabyStore:       babyStore,
 		RecordStore:     recordStore,
 		DashboardSvc:    dashboardSvc,
+		ExportSvc:       exportSvc,
 		VaccineStore:    vaccineStore,
 		DistDir:         cfg.DistDir,
 		FallbackDistDir: config.DefaultDistDir(),

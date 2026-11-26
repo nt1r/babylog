@@ -74,8 +74,11 @@
 | 日常记录 | `daily_records_test.go` / `TestRecordsBatchCreateValidationRollbackAndAuthGuards` | 失败/拒绝 | 批量补录鉴权/强制改密/跨宝宝隔离、空批与超限拒绝及混合非法项整事务回滚零脏写 |
 | 首页看板 | `dashboard_insights_test.go` / `TestDashboardSummaryTimezoneSplitAndMedicine` | 正常主流程 | 跨 UTC 日界线喂养、跨夜睡眠切分、多条今日用药聚合与跨时区查询对比 |
 | 首页看板 | `dashboard_insights_test.go` / `TestDashboardSevenDayTrendsAndCareRhythm` | 正常主流程 | 7 日连续趋势空日零填充、跨夜双日切分、瓶喂与亲喂分列、5 时段全覆盖、窗口起点边界与 `days` 参数校验 |
+| 首页看板 | `dashboard_insights_test.go` / `TestDashboardMultiDimensionTrendsAndPeriodSummary` | 正常主流程 | 30 日多维趋势拆解（喂养/睡眠昼夜/排泄/体温用药）与周期洞察摘要（侧别均衡、辅食接受度、睡眠连续性、便便关注与空窗冷启动） |
 | 首页看板 | `dashboard_insights_test.go` / `TestDashboardGrowthPartialResolutionAndColdStart` | 边界/变体 | 无记录冷启动全零校验、出生体格兜底与体重/身高/头围跨记录独立解析及出牙统计 |
 | 首页看板 | `dashboard_insights_test.go` / `TestDashboardAuthOnboardingAndTimezoneGuards` | 失败/拒绝 | `summary`/`trends` 未认证 401、未知/跨账号 `:babyId` 404 与非法时区 400 |
+| 数据导出 | `data_export_test.go` / `TestDataExportMultiSheetXLSXAndSanitization` | 正常主流程 | 自定义区间全五类与子集多 Sheet `.xlsx` 导出、跨夜睡眠汇总、多宝宝严格隔离与公式前缀注入中和 |
+| 数据导出 | `data_export_test.go` / `TestDataExportAuthScopeAndQueryParamGuards` | 失败/拒绝 | 导出接口未认证 401、待强制改密 403、未知/跨用户 `:babyId` 404 与非法时区/日期/跨度/分类参数 400 |
 | 疫苗管理 | `vaccine_management_test.go` / `TestVaccinesSeedClampingAndSevenAlertStates` | 正常主流程 | 幂等初始化 22 剂 NIP、月末 1/31→2/28 钳位、推进时钟演进 7 态提醒及 `next_focus` 优先级与同日合并 |
 | 疫苗管理 | `vaccine_management_test.go` / `TestVaccinesOptionalTemplatesCustomAndDeletion` | 正常主流程 | 默认/定制模板导入、重复 409、`flu` 阶段文案、单剂改月龄契约（自费重算 vs NIP 保护）、删中间剂重排、整套移出及非法/404 拒绝 |
 | 疫苗管理 | `vaccine_management_test.go` / `TestVaccinesSingleDoseTransitionsAndValidation` | 正常主流程 | 单剂 `pending → scheduled → completed → pending` 清空废弃列、`recent_clinics` 更新与越界接种日期 400 |

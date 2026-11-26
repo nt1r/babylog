@@ -7,17 +7,21 @@ import (
 )
 
 // AccumulateFeedingSummary 将单条喂养记录累加到汇总结构中，
-// 供列表页按日小计与首页看板今日 KPI 共同复用，确保两处统计口径单一事实来源。
+// 供列表页按日小计、首页看板今日 KPI、多日趋势与数据导出共同复用，确保统计口径单一事实来源。
 func AccumulateFeedingSummary(sum *FeedingDailySummary, r FeedingRecord) {
 	sum.TotalCount++
 	switch r.Subtype {
 	case FeedingSubtypeFormula:
+		sum.FormulaCount++
 		if r.AmountML != nil {
+			sum.FormulaML += *r.AmountML
 			sum.TotalML += *r.AmountML
 		}
 	case FeedingSubtypeBreast:
 		if r.FeedingMode != nil && *r.FeedingMode == "bottle" {
+			sum.BottleBreastCount++
 			if r.AmountML != nil {
+				sum.BottleBreastML += *r.AmountML
 				sum.TotalML += *r.AmountML
 			}
 		} else {
@@ -32,7 +36,7 @@ func AccumulateFeedingSummary(sum *FeedingDailySummary, r FeedingRecord) {
 }
 
 // AccumulateCareSummary 将单条护理记录累加到汇总结构中，
-// 供列表页按日小计与首页看板今日 KPI 共同复用。
+// 供列表页按日小计、首页看板今日 KPI、多日趋势与数据导出共同复用。
 func AccumulateCareSummary(sum *CareDailySummary, r CareRecord) {
 	sum.TotalCount++
 	switch r.Subtype {
@@ -97,9 +101,80 @@ func accumulateSleepByLocalDay(sleeps []SleepRecord, loc *time.Location, allowed
 }
 
 // SummarizeSleepByLocalDay 按指定本地时区将一组睡眠记录跨夜切分并汇总为每日小计，
-// 供首页看板今日 KPI 与多日趋势复用，并与列表页共享同一跨夜切分及累加口径。
+// 供首页看板今日 KPI、多日趋势与数据导出复用，并与列表页共享同一跨夜切分及累加口径。
 func SummarizeSleepByLocalDay(sleeps []SleepRecord, loc *time.Location) map[string]SleepDailySummary {
 	return accumulateSleepByLocalDay(sleeps, loc, nil)
+}
+
+// SummarizeFeedingByLocalDay 按指定本地时区将一组喂养记录汇总为每日小计（含配方奶与瓶喂母乳分项），
+// 供多日趋势与 Excel 数据导出共享单一聚合口径。
+func SummarizeFeedingByLocalDay(feedings []FeedingRecord, loc *time.Location) map[string]FeedingDailySummary {
+	if loc == nil {
+		loc, _ = timeutil.LoadLocation("")
+	}
+	result := make(map[string]FeedingDailySummary)
+	for _, r := range feedings {
+		ts, err := timeutil.ParseTimestamp(r.RecordedAt)
+		if err != nil {
+			continue
+		}
+		key := timeutil.LocalDateKey(ts, loc)
+		sum := result[key]
+		AccumulateFeedingSummary(&sum, r)
+		result[key] = sum
+	}
+	return result
+}
+
+// SummarizeCareByLocalDay 按指定本地时区将一组护理记录汇总为每日小计，
+// 供多日趋势与 Excel 数据导出共享单一聚合口径。
+func SummarizeCareByLocalDay(cares []CareRecord, loc *time.Location) map[string]CareDailySummary {
+	if loc == nil {
+		loc, _ = timeutil.LoadLocation("")
+	}
+	result := make(map[string]CareDailySummary)
+	for _, r := range cares {
+		ts, err := timeutil.ParseTimestamp(r.RecordedAt)
+		if err != nil {
+			continue
+		}
+		key := timeutil.LocalDateKey(ts, loc)
+		sum := result[key]
+		AccumulateCareSummary(&sum, r)
+		result[key] = sum
+	}
+	return result
+}
+
+// SummarizeClinicalHealthByLocalDay 按指定本地时区汇总每日最高体温与用药次数（仅统计 temperature 与 medicine），
+// 供多日趋势与 Excel 数据导出共享单一聚合口径。
+func SummarizeClinicalHealthByLocalDay(healths []HealthRecord, loc *time.Location) map[string]ClinicalHealthDayStats {
+	if loc == nil {
+		loc, _ = timeutil.LoadLocation("")
+	}
+	result := make(map[string]ClinicalHealthDayStats)
+	for _, r := range healths {
+		if r.Subtype != HealthSubtypeTemperature && r.Subtype != HealthSubtypeMedicine {
+			continue
+		}
+		ts, err := timeutil.ParseTimestamp(r.RecordedAt)
+		if err != nil {
+			continue
+		}
+		key := timeutil.LocalDateKey(ts, loc)
+		stats := result[key]
+		switch r.Subtype {
+		case HealthSubtypeTemperature:
+			if r.TemperatureC != nil && (stats.MaxTempC == nil || *r.TemperatureC > *stats.MaxTempC) {
+				v := *r.TemperatureC
+				stats.MaxTempC = &v
+			}
+		case HealthSubtypeMedicine:
+			stats.MedicineCount++
+		}
+		result[key] = stats
+	}
+	return result
 }
 
 // accumulateHealthSummary 将单条健康与生长记录累加到列表每日小计中；

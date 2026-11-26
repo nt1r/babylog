@@ -95,6 +95,12 @@ if [ -n "$bad_drawer_scroll" ]; then
   exit 1
 fi
 
+# 6.3 业务区 CardContent 负责水平内边距 px-(--card-spacing)，禁止写 p-0/px-0 清空左右留白导致贴边（仅清顶部请用 pt-0）
+if grep -rnE '<CardContent[^>]*\b(p-0|px-0)\b' src/routes/_app/ src/components/; then
+  echo 'Do not strip horizontal padding on CardContent with p-0/px-0 inside app routes/components (Card only provides py, CardContent owns px; use pt-0 if needed)' >&2
+  exit 1
+fi
+
 # 7. 前端业务模块未使用导出（死导出）检查
 node scripts/check-unused-exports.mjs
 

@@ -4,6 +4,7 @@ import {
   Bath,
   ClipboardList,
   CornerDownLeft,
+  FileSpreadsheet,
   HeartPulse,
   type LucideIcon,
   Milk,
@@ -28,6 +29,7 @@ import { getVisibleNavGroups, openContextualCreate } from '@/navigation/menu';
 import { useAuthStore } from '@/stores/auth';
 import { useBatchRecordStore } from '@/stores/batch-record';
 import { useCommandPaletteStore } from '@/stores/command-palette';
+import { useExportDrawerStore } from '@/stores/export-drawer';
 import { useGrowthRecordStore } from '@/stores/growth-record';
 import { usePreferencesStore } from '@/stores/preferences';
 import { useQuickRecordStore } from '@/stores/quick-record';
@@ -83,6 +85,7 @@ export function CommandPalette() {
   const openQuickCreate = useQuickRecordStore((state) => state.openCreate);
   const openBatchRecord = useBatchRecordStore((state) => state.openBatch);
   const openGrowthCreate = useGrowthRecordStore((state) => state.openCreate);
+  const openExportDrawer = useExportDrawerStore((state) => state.openExport);
   const setThemeMode = usePreferencesStore((state) => state.setThemeMode);
 
   const [query, setQuery] = useState('');
@@ -224,6 +227,15 @@ export function CommandPalette() {
         icon: Sparkles,
         run: () => openGrowthCreate('teeth'),
       },
+      {
+        id: 'quick-export-xlsx',
+        group: '快速记录',
+        label: '导出照护数据表格',
+        hint: 'Excel 多表汇总与明细',
+        keywords: '导出 表格 excel xlsx 统计 报告 export',
+        icon: FileSpreadsheet,
+        run: () => openExportDrawer('30'),
+      },
     ];
 
     const navItems: CommandActionItem[] = getVisibleNavGroups(user?.role).flatMap((group) =>
@@ -280,7 +292,16 @@ export function CommandPalette() {
     ];
 
     return [...(activeBabyId !== null ? quickItems : []), ...navItems, ...themeItems];
-  }, [activeBabyId, user?.role, navigate, openQuickCreate, openBatchRecord, openGrowthCreate, setThemeMode]);
+  }, [
+    activeBabyId,
+    user?.role,
+    navigate,
+    openQuickCreate,
+    openBatchRecord,
+    openGrowthCreate,
+    openExportDrawer,
+    setThemeMode,
+  ]);
 
   const filteredItems = useMemo(() => {
     const q = query.trim().toLowerCase();
