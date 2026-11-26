@@ -1,9 +1,10 @@
 import type { CareFormState } from '@/components/quick-record/codecs/care';
+import { StoolObservationPanel } from '@/components/quick-record/stool-observation-panel';
 import { ChoiceCardButton, QuickChip, SegmentedControl } from '@/components/ui/choice-controls';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { CARE_SUBTYPE_OPTIONS } from '@/lib/categories';
-import { DIAPER_KIND_LABELS, STOOL_COLOR_LABELS, STOOL_CONSISTENCY_LABELS } from '@/lib/records';
+import { DIAPER_KIND_LABELS } from '@/lib/records';
 
 interface CareFieldsProps {
   readonly state: CareFormState;
@@ -43,57 +44,11 @@ export function CareFields({ state, otherPresets, onChange }: CareFieldsProps) {
           </div>
 
           {state.diaperKind === 'poop' || state.diaperKind === 'both' ? (
-            <div className="space-y-3 rounded-xl border border-border/70 bg-muted/20 p-3.5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs font-medium text-muted-foreground">便便观察（可选）</p>
-                <QuickChip
-                  tone="care"
-                  variant="outline"
-                  active={state.stoolConsistency === 'soft' && state.stoolColor === 'yellow'}
-                  onClick={() => {
-                    const isNormal = state.stoolConsistency === 'soft' && state.stoolColor === 'yellow';
-                    onChange({
-                      stoolConsistency: isNormal ? '' : 'soft',
-                      stoolColor: isNormal ? '' : 'yellow',
-                    });
-                  }}
-                >
-                  正常（软便 · 黄色）
-                </QuickChip>
-              </div>
-
-              <div className="space-y-1.5">
-                <p className="text-xs font-medium text-muted-foreground">便便性状（可选）</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {(['watery', 'soft', 'formed', 'hard'] as const).map((c) => (
-                    <QuickChip
-                      key={c}
-                      tone="care"
-                      active={state.stoolConsistency === c}
-                      onClick={() => onChange({ stoolConsistency: state.stoolConsistency === c ? '' : c })}
-                    >
-                      {STOOL_CONSISTENCY_LABELS[c]}
-                    </QuickChip>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <p className="text-xs font-medium text-muted-foreground">便便颜色（可选）</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {(['yellow', 'green', 'brown', 'abnormal'] as const).map((color) => (
-                    <QuickChip
-                      key={color}
-                      tone={color === 'abnormal' ? 'destructive' : 'care'}
-                      active={state.stoolColor === color}
-                      onClick={() => onChange({ stoolColor: state.stoolColor === color ? '' : color })}
-                    >
-                      {STOOL_COLOR_LABELS[color]}
-                    </QuickChip>
-                  ))}
-                </div>
-              </div>
-            </div>
+            <StoolObservationPanel
+              stoolConsistency={state.stoolConsistency}
+              stoolColor={state.stoolColor}
+              onChange={(patch) => onChange(patch)}
+            />
           ) : null}
         </div>
       ) : null}

@@ -4,6 +4,7 @@ import { AppSidebar } from '@/components/app-shell/app-sidebar';
 import { CommandPalette } from '@/components/app-shell/command-palette';
 import { MobileTabBar } from '@/components/app-shell/mobile-tabbar';
 import { AddBabyDialog } from '@/components/baby/add-baby-dialog';
+import { BatchRecordDrawer } from '@/components/batch-record/batch-record-drawer';
 import { GrowthRecordDrawer } from '@/components/growth/growth-record-drawer';
 import { QuickRecordDrawer } from '@/components/quick-record-drawer';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
@@ -34,6 +35,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <CommandPalette />
       <AddBabyDialog />
       <QuickRecordDrawer />
+      <BatchRecordDrawer />
       <GrowthRecordDrawer />
     </SidebarProvider>
   );

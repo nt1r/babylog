@@ -2,6 +2,7 @@ import { useNavigate, useRouterState } from '@tanstack/react-router';
 import {
   Baby,
   Bath,
+  ClipboardList,
   CornerDownLeft,
   HeartPulse,
   type LucideIcon,
@@ -25,6 +26,7 @@ import { useActiveBabyId } from '@/lib/baby';
 import { cn } from '@/lib/utils';
 import { getVisibleNavGroups, openContextualCreate } from '@/navigation/menu';
 import { useAuthStore } from '@/stores/auth';
+import { useBatchRecordStore } from '@/stores/batch-record';
 import { useCommandPaletteStore } from '@/stores/command-palette';
 import { useGrowthRecordStore } from '@/stores/growth-record';
 import { usePreferencesStore } from '@/stores/preferences';
@@ -79,6 +81,7 @@ export function CommandPalette() {
   const user = useAuthStore((state) => state.user);
   const activeBabyId = useActiveBabyId();
   const openQuickCreate = useQuickRecordStore((state) => state.openCreate);
+  const openBatchRecord = useBatchRecordStore((state) => state.openBatch);
   const openGrowthCreate = useGrowthRecordStore((state) => state.openCreate);
   const setThemeMode = usePreferencesStore((state) => state.setThemeMode);
 
@@ -122,6 +125,15 @@ export function CommandPalette() {
 
   const allItems = useMemo<CommandActionItem[]>(() => {
     const quickItems: CommandActionItem[] = [
+      {
+        id: 'quick-batch',
+        group: '快速记录',
+        label: '批量补录',
+        hint: '喂奶 · 嘘嘘便便',
+        keywords: '批量 补录 月嫂 纸质 记录本 喂奶 喂养 嘘嘘 便便 排尿 排便 换尿布 护理 batch backfill',
+        icon: ClipboardList,
+        run: () => openBatchRecord(),
+      },
       {
         id: 'quick-formula',
         group: '快速记录',
@@ -268,7 +280,7 @@ export function CommandPalette() {
     ];
 
     return [...(activeBabyId !== null ? quickItems : []), ...navItems, ...themeItems];
-  }, [activeBabyId, user?.role, navigate, openQuickCreate, openGrowthCreate, setThemeMode]);
+  }, [activeBabyId, user?.role, navigate, openQuickCreate, openBatchRecord, openGrowthCreate, setThemeMode]);
 
   const filteredItems = useMemo(() => {
     const q = query.trim().toLowerCase();

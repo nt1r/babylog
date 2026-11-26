@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
-import { AlertCircle, ArrowUpRight, PlusIcon, RotateCw, Zap } from 'lucide-react';
+import { AlertCircle, ArrowUpRight, ClipboardList, PlusIcon, RotateCw, Zap } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import { DashboardHero } from '@/components/dashboard/dashboard-hero';
@@ -35,6 +35,7 @@ import { useSmartDefaultsQuery } from '@/lib/records';
 import { formatDurationMin } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import { useVaccinesOverviewQuery, VACCINE_OVERVIEW_STALE_MS } from '@/lib/vaccines';
+import { useBatchRecordStore } from '@/stores/batch-record';
 import { useGrowthRecordStore } from '@/stores/growth-record';
 import { useQuickRecordStore } from '@/stores/quick-record';
 
@@ -133,6 +134,7 @@ function DashboardTrendTooltip({ active, label, payload, tab, isDirectBreastMode
 
 function DashboardPage() {
   const openCreate = useQuickRecordStore((state) => state.openCreate);
+  const openBatch = useBatchRecordStore((state) => state.openBatch);
   const openGrowthCreate = useGrowthRecordStore((state) => state.openCreate);
   const { busyKey: quickBusyKey, trigger: triggerOneTap } = useOneTapRecord();
   const [trendTab, setTrendTab] = useState<DashboardTrendTab>('feeding');
@@ -175,11 +177,23 @@ function DashboardPage() {
       {/* 高频一键直记：移动端 2×2 触控宫格 / 桌面端 4 列等宽卡片 */}
       <section aria-label="一键直记" className="space-y-2.5">
         <div className="flex items-center justify-between gap-2 px-0.5">
-          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
-            <Zap className="size-3.5 text-primary" />
-            一键直记
-          </span>
-          <span className="text-xs text-muted-foreground">轻点即记 · 支持撤销</span>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+              <Zap className="size-3.5 text-primary" />
+              一键直记
+            </span>
+            <span className="hidden text-xs text-muted-foreground sm:inline">轻点即记 · 支持撤销</span>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={openBatch}
+            className="h-7 gap-1.5 rounded-full px-2.5 text-xs"
+          >
+            <ClipboardList className="size-3.5 text-primary" strokeWidth={1.8} />
+            <span>批量补录</span>
+          </Button>
         </div>
 
         <div className="grid grid-cols-2 gap-2.5 @3xl/main:grid-cols-4 @3xl/main:gap-3">

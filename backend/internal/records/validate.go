@@ -1,6 +1,7 @@
 package records
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -339,4 +340,40 @@ func ValidateHealth(in HealthInput, now time.Time) (HealthInput, error) {
 	}
 
 	return out, nil
+}
+
+// ValidateBatchCreate 校验并标准化批量写入的喂养与护理记录切片；
+// 强制总条数位于 [1, MaxBatchCreateItems]，并使用同一次时钟快照复用 [ValidateFeeding] 与 [ValidateCare]，
+// 任一条校验失败立即返回带条目序号的 [*ValidationError]，确保调用方在开启事务前即可快速拦截异常批次。
+func ValidateBatchCreate(in BatchCreateInput, now time.Time) (BatchCreateInput, error) {
+	total := len(in.Feedings) + len(in.Cares)
+	if total == 0 {
+		return BatchCreateInput{}, &ValidationError{Message: "请至少填写一项记录"}
+	}
+	if total > MaxBatchCreateItems {
+		return BatchCreateInput{}, &ValidationError{Message: fmt.Sprintf("单次最多批量提交 %d 条记录", MaxBatchCreateItems)}
+	}
+
+	cleanFeedings := make([]FeedingInput, 0, len(in.Feedings))
+	for i, item := range in.Feedings {
+		clean, err := ValidateFeeding(item, now)
+		if err != nil {
+			return BatchCreateInput{}, &ValidationError{Message: fmt.Sprintf("第 %d 条喂养记录：%s", i+1, err.Error())}
+		}
+		cleanFeedings = append(cleanFeedings, clean)
+	}
+
+	cleanCares := make([]CareInput, 0, len(in.Cares))
+	for i, item := range in.Cares {
+		clean, err := ValidateCare(item, now)
+		if err != nil {
+			return BatchCreateInput{}, &ValidationError{Message: fmt.Sprintf("第 %d 条护理记录：%s", i+1, err.Error())}
+		}
+		cleanCares = append(cleanCares, clean)
+	}
+
+	return BatchCreateInput{
+		Feedings: cleanFeedings,
+		Cares:    cleanCares,
+	}, nil
 }

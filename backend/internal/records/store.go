@@ -343,15 +343,9 @@ var feedingUpdateCols = []string{
 	"solid_food", "solid_amount", "acceptance", "recorded_at", "note", "updated_at",
 }
 
-// CreateFeeding 校验并持久化一条喂养记录，校验不通过返回 [*ValidationError]。
-func (s *Store) CreateFeeding(ctx context.Context, babyID int64, in FeedingInput) (*FeedingRecord, error) {
-	now := s.now()
-	clean, err := ValidateFeeding(in, now)
-	if err != nil {
-		return nil, err
-	}
-	ts := timeutil.FormatUTC(now)
-	rec := FeedingRecord{
+// buildFeedingRecord 根据已通过校验的喂养输入构造待插入模型，供单条创建与批量写入共享。
+func buildFeedingRecord(babyID int64, clean FeedingInput, ts string) FeedingRecord {
+	return FeedingRecord{
 		BabyID:      babyID,
 		Subtype:     clean.Subtype,
 		FeedingMode: clean.FeedingMode,
@@ -366,6 +360,16 @@ func (s *Store) CreateFeeding(ctx context.Context, babyID int64, in FeedingInput
 		CreatedAt:   ts,
 		UpdatedAt:   ts,
 	}
+}
+
+// CreateFeeding 校验并持久化一条喂养记录，校验不通过返回 [*ValidationError]。
+func (s *Store) CreateFeeding(ctx context.Context, babyID int64, in FeedingInput) (*FeedingRecord, error) {
+	now := s.now()
+	clean, err := ValidateFeeding(in, now)
+	if err != nil {
+		return nil, err
+	}
+	rec := buildFeedingRecord(babyID, clean, timeutil.FormatUTC(now))
 	if err := s.db.WithContext(ctx).Create(&rec).Error; err != nil {
 		return nil, err
 	}
@@ -523,15 +527,9 @@ var careUpdateCols = []string{
 	"recorded_at", "note", "updated_at",
 }
 
-// CreateCare 校验并持久化一条日常护理记录，校验不通过返回 [*ValidationError]。
-func (s *Store) CreateCare(ctx context.Context, babyID int64, in CareInput) (*CareRecord, error) {
-	now := s.now()
-	clean, err := ValidateCare(in, now)
-	if err != nil {
-		return nil, err
-	}
-	ts := timeutil.FormatUTC(now)
-	rec := CareRecord{
+// buildCareRecord 根据已通过校验的护理输入构造待插入模型，供单条创建与批量写入共享。
+func buildCareRecord(babyID int64, clean CareInput, ts string) CareRecord {
+	return CareRecord{
 		BabyID:           babyID,
 		Subtype:          clean.Subtype,
 		DiaperKind:       clean.DiaperKind,
@@ -543,10 +541,62 @@ func (s *Store) CreateCare(ctx context.Context, babyID int64, in CareInput) (*Ca
 		CreatedAt:        ts,
 		UpdatedAt:        ts,
 	}
+}
+
+// CreateCare 校验并持久化一条日常护理记录，校验不通过返回 [*ValidationError]。
+func (s *Store) CreateCare(ctx context.Context, babyID int64, in CareInput) (*CareRecord, error) {
+	now := s.now()
+	clean, err := ValidateCare(in, now)
+	if err != nil {
+		return nil, err
+	}
+	rec := buildCareRecord(babyID, clean, timeutil.FormatUTC(now))
 	if err := s.db.WithContext(ctx).Create(&rec).Error; err != nil {
 		return nil, err
 	}
 	return &rec, nil
+}
+
+// BatchCreate 校验并在单个 SQLite 事务内原子持久化多条喂养与护理记录；
+// 任一条记录校验失败或写入异常均完整回滚，确保不残留半截脏数据。
+func (s *Store) BatchCreate(ctx context.Context, babyID int64, in BatchCreateInput) (*BatchCreateResult, error) {
+	if babyID <= 0 {
+		return nil, &ValidationError{Message: "无效的宝宝编号"}
+	}
+	now := s.now()
+	clean, err := ValidateBatchCreate(in, now)
+	if err != nil {
+		return nil, err
+	}
+
+	ts := timeutil.FormatUTC(now)
+	feedings := make([]FeedingRecord, 0, len(clean.Feedings))
+	cares := make([]CareRecord, 0, len(clean.Cares))
+
+	if txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, item := range clean.Feedings {
+			rec := buildFeedingRecord(babyID, item, ts)
+			if err := tx.Create(&rec).Error; err != nil {
+				return err
+			}
+			feedings = append(feedings, rec)
+		}
+		for _, item := range clean.Cares {
+			rec := buildCareRecord(babyID, item, ts)
+			if err := tx.Create(&rec).Error; err != nil {
+				return err
+			}
+			cares = append(cares, rec)
+		}
+		return nil
+	}); txErr != nil {
+		return nil, txErr
+	}
+
+	return &BatchCreateResult{
+		Feedings: feedings,
+		Cares:    cares,
+	}, nil
 }
 
 // UpdateCare 校验并在事务内更新指定护理记录（跨子类型切换时清空废弃可空列），

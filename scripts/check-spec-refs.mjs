@@ -290,34 +290,64 @@ function inspectIntegrationFile(relPath, content, specs, checkTemplates, covered
   return { refs, testNames };
 }
 
-/** 解析 docs/testing-guide.md 场景索引表中的（规范化文件名 → 函数名列表），校验与实际声明 1:1 双向一致且同文件顺序一致。 */
+/**
+ * 解析 docs/testing-guide.md 场景索引表中的（规范化文件名 → 函数与类别列表），校验：
+ * 1. 按文件与函数名与实际测试声明保持 1:1 双向一致及同文件顺序一致；
+ * 2. 索引表数据行格式合法（避免畸形行被静默忽略）；
+ * 3. 单能力 API 集成测试文件内「失败/拒绝」用例始终位于「正常主流程」「边界/变体」之后。
+ */
 function checkTestingGuideIndex(guideContent, actualByFile, errors) {
-  /** @type {Map<string, string[]>} */
+  /** @type {Map<string, Array<{ fnName: string, category: string }>>} */
   const indexedByFile = new Map();
   let inIndexSection = false;
-  for (const line of guideContent.split(/\r?\n/)) {
-    if (/^###\s+4\.3\s+集成测试场景索引表/.test(line)) {
+  for (const rawLine of guideContent.split(/\r?\n/)) {
+    if (/^###\s+4\.3\s+集成测试场景索引表/.test(rawLine)) {
       inIndexSection = true;
       continue;
     }
-    if (inIndexSection && /^##\s+/.test(line)) {
+    if (inIndexSection && /^#{2,3}\s+/.test(rawLine)) {
       break;
     }
     if (!inIndexSection) continue;
-    const rowMatch = line.match(/^\|\s*I\d+\s*\|[^|]+\|\s*`([^`]+)`\s*\/\s*`(Test\w+)`\s*\|/);
-    if (!rowMatch) continue;
+
+    const line = rawLine.trim();
+    if (!line.startsWith('|')) continue;
+    // 跳过表头行与 Markdown 分隔线行（兼容左右/居中对齐冒号写法）
+    if (/^\|\s*分组\s*\|/.test(line) || /^\|\s*:?-{3,}:?\s*\|/.test(line)) continue;
+
+    const rowMatch = line.match(/^\|\s*[^|]+\|\s*`([^`]+)`\s*\/\s*`(Test\w+)`\s*\|\s*([^|]+?)\s*\|/);
+    if (!rowMatch) {
+      errors.push(`docs/testing-guide.md 场景索引表存在无法解析的数据行：${line}`);
+      continue;
+    }
     const fileKey = rowMatch[1];
     const fnName = rowMatch[2];
+    const category = rowMatch[3];
     if (!indexedByFile.has(fileKey)) indexedByFile.set(fileKey, []);
-    indexedByFile.get(fileKey)?.push(fnName);
+    indexedByFile.get(fileKey)?.push({ fnName, category });
   }
 
   for (const [fileKey, actualFns] of actualByFile.entries()) {
-    const docFns = indexedByFile.get(fileKey) ?? [];
+    const entries = indexedByFile.get(fileKey) ?? [];
+    const docFns = entries.map((item) => item.fnName);
     if (actualFns.join(',') !== docFns.join(',')) {
       errors.push(
         `docs/testing-guide.md 索引表与 ${fileKey} 实际声明不一致或顺序漂移（代码=[${actualFns.join(', ')}]，文档=[${docFns.join(', ')}]）`,
       );
+    }
+
+    // 单能力 API 集成测试文件（不含 CLI 子命令分组文件）内，失败/拒绝场景统一排在正常主流程与边界/变体之后。
+    if (!fileKey.startsWith('cmd/')) {
+      let seenFailure = false;
+      for (const item of entries) {
+        if (item.category === '失败/拒绝') {
+          seenFailure = true;
+        } else if (seenFailure && (item.category === '正常主流程' || item.category === '边界/变体')) {
+          errors.push(
+            `docs/testing-guide.md 索引表 ${fileKey} 中的 ${item.fnName}（${item.category}）不应排在「失败/拒绝」用例之后`,
+          );
+        }
+      }
     }
   }
   for (const fileKey of indexedByFile.keys()) {
@@ -387,7 +417,7 @@ function runSelfTest() {
   );
   checkBackendSpecCoverage(mockSpecs, passCovered, passErrors);
   checkTestingGuideIndex(
-    '### 4.3 集成测试场景索引表\n| I01 | 演示 | `demo_ok_test.go` / `TestSingle` | 正常 | 说明 |\n',
+    '### 4.3 集成测试场景索引表\n| 分组 | 文件与测试函数 | 类别 | 中文场景说明 |\n| --- | --- | --- | --- |\n| 演示 | `demo_ok_test.go` / `TestSingle` | 正常主流程 | 说明 |\n',
     new Map([['demo_ok_test.go', okRes.testNames]]),
     passErrors,
   );
@@ -487,8 +517,19 @@ function runSelfTest() {
   );
   checkBackendSpecCoverage(mockSpecs, new Set(), extraFailErrors);
   checkTestingGuideIndex(
-    '### 4.3 集成测试场景索引表\n| I01 | 演示 | `demo_ok_test.go` / `TestWrongOrder` | 正常 | 说明 |\n',
-    new Map([['demo_ok_test.go', ['TestSingle']]]),
+    [
+      '### 4.3 集成测试场景索引表',
+      '| 分组 | 文件与测试函数 | 类别 | 中文场景说明 |',
+      '| --- | --- | --- | --- |',
+      '| 演示 | `demo_ok_test.go` / `TestWrongOrder` | 正常主流程 | 说明 |',
+      '| 演示 | `demo_cat_test.go` / `TestFailFirst` | 失败/拒绝 | 先失败 |',
+      '| 演示 | `demo_cat_test.go` / `TestNormalAfterFail` | 正常主流程 | 后正常 |',
+      '| 畸形行缺少反引号 |',
+    ].join('\n'),
+    new Map([
+      ['demo_ok_test.go', ['TestSingle']],
+      ['demo_cat_test.go', ['TestFailFirst', 'TestNormalAfterFail']],
+    ]),
     extraFailErrors,
   );
   const extraJoined = extraFailErrors.join('\n');
@@ -498,7 +539,9 @@ function runSelfTest() {
     !extraJoined.includes('须使用中文说明业务意图') ||
     !extraJoined.includes('不使用 t.Run') ||
     !extraJoined.includes('缺少集成测试 Spec: 引用') ||
-    !extraJoined.includes('实际声明不一致或顺序漂移')
+    !extraJoined.includes('实际声明不一致或顺序漂移') ||
+    !extraJoined.includes('不应排在「失败/拒绝」用例之后') ||
+    !extraJoined.includes('存在无法解析的数据行')
   ) {
     console.error('check-spec-refs --self-test 扩展规则漏检：', extraFailErrors);
     process.exit(1);

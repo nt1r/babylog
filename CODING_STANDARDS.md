@@ -7,7 +7,7 @@
 ### 设计系统与无障碍
 - 配色、圆角与业务分类色以 `docs/design-system.md`、`src/styles/tokens.css` 与 `src/styles/globals.css` 为准；业务界面统一复用语义 Token（含 `feeding` / `sleep` / `health` / `care` 分类色）与 `src/components/ui/` 原语（机械色阶、字号与裸控件禁令由 `scripts/lint-guardrails.sh` 自动兜底）。
 - 移动端原生 `<input>` / `<select>`（含透明覆盖层）保持 `text-base md:text-sm`（`>= 16px`）避免 iOS 放大，桌面紧凑覆写须带 `md:` 前缀；同层级表单标签与 `FieldLabel`（`13px`）对齐、卡片单选块与 `ChoiceCardButton`（`h-10 text-sm`）对齐。
-- 响应式宽度与布局断点与 `useIsMobile`（`768px` = `md:`）保持一致；含内部滚动区的底部 `Drawer` 在滚动容器标注 `data-base-ui-swipe-ignore`，浮层与抽屉（`Popover`/`Drawer`）在 `disabled` 时仅拦截打开、始终放行关闭并在转为 `disabled` 时自动收起。
+- 响应式宽度与布局断点与 `useIsMobile`（`768px` = `md:`）保持一致；浮层与抽屉（`Popover`/`Drawer`）在 `disabled` 时仅拦截打开、始终放行关闭并在转为 `disabled` 时自动收起（底部 `Drawer` 滚动区 `data-base-ui-swipe-ignore` 由 `scripts/lint-guardrails.sh` 自动校验）。
 - 亮/暗双色语义变量在 `src/styles/tokens.css` 中成对维护：亮色覆写限定在 `:root:not(.dark):not([data-theme="dark"]), .light, [data-theme="light"]`，暗色覆写限定在 `.dark, [data-theme="dark"]`。
 - 所有无障碍文案（`Spinner`、抽屉/弹窗关闭按钮、面包屑、步进按钮的 `aria-label`）使用中文；按钮内的 `Spinner` 标注 `aria-hidden="true" role="presentation"`，避免嵌套 live region 或中英文混播。
 - 界面可见文案面向非技术家长，用日常中文表达操作与可感知的结果；工程与实现概念（如实例、元数据、CLI、明文、文件扩展名 `.ics`、HTTP/Cookie/接口字段）保留在代码注释与运维文档中。
@@ -20,10 +20,10 @@
 - 列表翻页使用 `useInfiniteQuery` 按 `offset` 递增拉取并与后端 `MaxListLimit` 对齐。翻页请求失败（`isFetchNextPageError`）时保留已加载列表并在底部提供内联重试按钮（重试中禁用并展示加载态），仅在首屏无数据且报错时渲染整页错误态。
 - 图表与全量趋势聚合使用专用查询（显式指定对齐 `MaxListLimit` 的 `limit`，并透传错误重试态与上限提示），不直接复用 `PAGE_SIZE = 20` 的列表分页 Hook，避免静默截断早期历史。按日统计或绘图的时序数据以本地自然日 `YYYY-MM-DD` 去重，不用四舍五入后的近似月龄/天数作为去重键。
 - 提交或删除进行中（`isPending`）时，抽屉与弹窗须锁定关闭操作（遮罩点击 / `Esc` / 返回键 / 下滑手势 / 顶部关闭按钮）：表单弹窗统一使用 `<Dialog pending={isPending}>`、危险确认复用 `<DeleteConfirmDialog pending={isPending}>`、实体抽屉复用 `<EntityDrawer pending={isPending}>`，同步禁用影响草稿的表单控件，防止异步失败错误丢失反馈。
-- 高频直记按钮除禁用态外须配备 `useRef` 同步防重入锁；一次性撤销回调（如 Toast 撤销按钮）须配备单次执行守卫，防止连点重复请求导致误报 404。
+- 非幂等创建/批量写入提交、高频直记按钮与一次性撤销回调除禁用态外须配备同步 `useRef` 防重入锁（在 `finally` 中释放），防止 React 重渲染前连点或快捷键连按触发重复请求。
 - 抽屉关闭动画期间保持当前意图稳定，由下次打开动作写入新意图，避免标题与表单区在滑出瞬间闪烁；表单初始化 `useEffect` 仅依赖 `[open, entityId]`（其余默认值通过 `useRef` 读取），避免后台 Query 刷新冲掉未保存编辑，且校验与提交仅覆盖当前激活状态下可见的字段。
 - 由可关闭浮层/抽屉（特别是移动端渲染为 `<Drawer>` 的 `Sidebar`，以及 `DropdownMenu` / `Popover`）触发的弹窗或抽屉，须提升挂载到 `AppShell` 等常驻根节点并由 Zustand 驱动显隐，避免触发容器退场卸载子树时连带销毁刚打开的浮层（`Sidebar` 内直接挂载已由 `scripts/lint-guardrails.sh` 自动拦截）。
-- React 19 Ref 写入时机：最新回调或快照 Ref 统一在 `useLayoutEffect` 中同步，避免在渲染体直接改写 `ref.current`；跨渲染稳定的惰性单例用 `useState(() => ...)` 初始化。
+- React 19 Ref 与状态派生：最新回调或快照 Ref 统一在 `useLayoutEffect` 中同步，跨渲染稳定的惰性单例用 `useState(() => ...)` 初始化；可由主列表或会话数组推导的次级状态（如最近提交项、交替建议）直接派生，保持 `setState` updater 纯净、不在 updater 内触发其他 `setState`。
 
 ### 表单受控、步进单调性与智能默认值
 - 数字与小数输入框一律以 `string` 受控，仅在点击步进或提交时解析与校验，保证退格删空重输流畅。
