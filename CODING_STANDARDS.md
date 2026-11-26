@@ -6,6 +6,7 @@
 
 ### 设计系统与无障碍
 - 配色、圆角与业务分类色以 `docs/design-system.md`、`src/styles/tokens.css` 与 `src/styles/globals.css` 为准；业务界面统一复用语义 Token（含 `feeding` / `sleep` / `health` / `care` 分类色）与 `src/components/ui/` 原语（机械色阶、字号与裸控件禁令由 `scripts/lint-guardrails.sh` 自动兜底）。
+- 本仓 `Card` 仅提供垂直留白（`py-(--card-spacing)`），`CardHeader` / `CardContent` 负责水平留白（`px-(--card-spacing)`）；业务页卡片（含 KPI 摘要卡）统一采用 `Card` + `CardHeader` + `CardContent` 结构并与首页看板保持一致的图标尺寸与字号层级，不在 `CardContent` 上用 `p-0` / `px-0` 清空左右留白（仅需收紧上间距时用 `pt-0`）。
 - 移动端原生 `<input>` / `<select>`（含透明覆盖层）保持 `text-base md:text-sm`（`>= 16px`）避免 iOS 放大，桌面紧凑覆写须带 `md:` 前缀；同层级表单标签与 `FieldLabel`（`13px`）对齐、卡片单选块与 `ChoiceCardButton`（`h-10 text-sm`）对齐。
 - 响应式宽度与布局断点与 `useIsMobile`（`768px` = `md:`）保持一致；浮层与抽屉（`Popover`/`Drawer`）在 `disabled` 时仅拦截打开、始终放行关闭并在转为 `disabled` 时自动收起（底部 `Drawer` 滚动区 `data-base-ui-swipe-ignore` 由 `scripts/lint-guardrails.sh` 自动校验）。
 - 亮/暗双色语义变量在 `src/styles/tokens.css` 中成对维护：亮色覆写限定在 `:root:not(.dark):not([data-theme="dark"]), .light, [data-theme="light"]`，暗色覆写限定在 `.dark, [data-theme="dark"]`。
@@ -40,6 +41,7 @@
 - 环境变量在入口阶段显式校验；跨目录脚本调用的相对路径基于调用方工作目录解析；SQLite 连接参数、WAL 配置与 `goose` 迁移保持单一事实来源。
 - 凡依赖 `time.Now()` 做校验、会话过期或聚合的 Store/Service 均支持 `WithClock` 注入，测试统一使用固定时钟消除宿主机日期依赖。
 - 跨多接口的公共前置检查（如已建档校验）下沉为 Gin 中间件；跨模块同口径统计（如列表小计与首页看板）收敛为单一共享累加函数。
+- 需区分“省略参数回退默认”与“显式传空拒绝 400”的查询参数统一使用 `c.GetQuery` 显式判断存在性。
 - 跨包导出的 Store 与事务原语须自守输入不变量（如关键指针判空与字段标准化校验），不隐式假设上层 HTTP 中间件已完成前置拦截。
 - GORM 错误判断统一使用 `errors.Is`；读后写更新包入 `db.Transaction` 并显式 `Select` 更新列清单，确保跨子类型切换时废弃可空列落库为 `NULL`；跨 `scrypt` 等慢操作的读后写须在事务内以条件 `WHERE`（如原状态/原哈希未变更）配合 `RowsAffected` 防 TOCTOU。
 - 内存限流或缓存表须具备硬容量上限与淘汰策略（优先淘汰最冷条目），防止恶意唯一键洪泛造成 OOM 或挤出受限账号。
@@ -57,7 +59,8 @@
 - **随代码同步演进**：修改行为或叠加新功能时同步更新包/文件总览注释与意图注释，保持静态事实描述（去掉“重构后的”“第 1 期”等过程时态词），清理废弃注释代码。机械格式基线与集成测试模板一致性由 `scripts/check-comments.mjs`、`scripts/check-spec-refs.mjs` 与 `// cross-table:` 门禁自动兜底（不以覆盖率或字数为指标）。
 
 ## 前后端契约与审查核对
-- 修改或精简请求/响应字段前，同步核对三处事实来源：Go `json` tag、前端 `src/lib/*.ts` 类型定义与 `openspec/specs/*.md`。
+- 修改或精简请求/响应字段前，同步核对三处事实来源：Go `json` tag、前端 `src/lib/*.ts` 类型定义与 `openspec/specs/*.md`；跨接口复用的 Go 汇总结构体若仅为内部累加保留分项，用 `json:"-"` 隔离，避免向未消费接口暴露冗余字段。
+- 业务枚举中文文案以 `src/lib/records.ts` 与 `src/lib/categories.ts` 为单一事实来源；前端直接引用字典常量，后端导出文案与其保持一致。
 - Go 后端以 `*string` 表达三态语义（`nil` 保留原值、`""` 显式清空）时，前端留空输入默认序列化为 `undefined`，仅在明确需要清空旧值时发送空字符串。
 - 确认任何未消费字段或接口前，先检索全仓页面、导航、抽屉与 OpenSpec 规格，确保不破坏既有契约或引发回归。
 - 迁移路由前缀、删改接口或重命名中间件后，用 `rg` 全仓检索旧路径与旧符号名，同步清理 handler 注释、测试描述与 `openspec/specs/` 文案。

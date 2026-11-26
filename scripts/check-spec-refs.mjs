@@ -7,7 +7,8 @@
  * 3. 校验全部顶层 `func Test*` 具备完整五段中文场景注释块（`Spec:`/`范围：基础设施`、`测试场景：`、`业务背景：`、
  *    `前置数据：` 清单、`测试目标：`），为单场景独立函数（无 `t.Run`）且 `测试目标` 与 `// N.` 中文步骤 1:1 对齐；
  * 4. 校验 docs/testing-guide.md 场景索引表与实际测试函数声明名称及同文件顺序 1:1 双向一致（防索引表漂移）。
- * 支持 `--self-test` 运行纯内存解析器边界自检（零磁盘 IO、防回归）。
+ * 支持 `--self-test` 运行纯内存解析器边界自检（零磁盘 IO、防回归）；
+ * 支持 `--include-changes` 在开发期归档前将 `openspec/changes/<id>/specs/`（排除 `archive/`）中的活动增量规格纳入本地校验。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,6 +16,7 @@ import { classifyLines } from './lib/go-lexer.mjs';
 
 const repoRoot = process.cwd();
 const specsRoot = path.resolve(repoRoot, 'openspec', 'specs');
+const changesRoot = path.resolve(repoRoot, 'openspec', 'changes');
 const integrationRoot = path.resolve(repoRoot, 'backend', 'internal', 'integration');
 const cliTestFile = path.resolve(repoRoot, 'backend', 'cmd', 'babylog', 'cli_test.go');
 const testingGuideFile = path.resolve(repoRoot, 'docs', 'testing-guide.md');
@@ -22,41 +24,67 @@ const SUPPORT_TEST_FILES = new Set(['harness_test.go', 'scenario_test.go']);
 const CJK_RE = /[\u4e00-\u9fff]/;
 
 /**
- * 加载全部 OpenSpec 主规格，区分后端自动化测试必覆盖的 Scenario 与仅人工验收的纯 Web UI Requirement。
+ * 将单个 spec.md 文件中的 Requirement 与 Scenario 合并到指定能力目录中。
+ * @param {string} content
+ * @param {Map<string, { scenarios: Set<string>, webOnly: boolean }>} reqMap
+ */
+function mergeSpecContent(content, reqMap) {
+  let currentReq = null;
+  for (const rawLine of content.split(/\r?\n/)) {
+    const reqMatch = rawLine.match(/^###\s+Requirement:\s+(.+?)\s*$/);
+    if (reqMatch) {
+      currentReq = reqMatch[1];
+      if (!reqMap.has(currentReq)) reqMap.set(currentReq, { scenarios: new Set(), webOnly: false });
+      continue;
+    }
+    const scenMatch = rawLine.match(/^####\s+Scenario:\s+(.+?)\s*$/);
+    if (scenMatch && currentReq) {
+      reqMap.get(currentReq)?.scenarios.add(scenMatch[1]);
+      continue;
+    }
+    // 仅针对前端 Web 界面交互与布局的 Requirement（正文声明 The web application/dashboard SHALL）归维护者手动视觉验收，不纳入后端 Go 自动化必覆盖集。
+    if (currentReq && /^The web (?:application|dashboard) SHALL\b/.test(rawLine.trim())) {
+      const meta = reqMap.get(currentReq);
+      if (meta) meta.webOnly = true;
+    }
+  }
+}
+
+/**
+ * 扫描 `<dir>/<capability>/spec.md` 并合并到规格索引表。
+ * @param {string} baseDir
+ * @param {Map<string, Map<string, { scenarios: Set<string>, webOnly: boolean }>>} catalog
+ */
+function loadSpecsFromDir(baseDir, catalog) {
+  if (!fs.existsSync(baseDir)) return;
+  for (const entry of fs.readdirSync(baseDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const specFile = path.join(baseDir, entry.name, 'spec.md');
+    if (!fs.existsSync(specFile)) continue;
+    let reqMap = catalog.get(entry.name);
+    if (!reqMap) {
+      reqMap = new Map();
+      catalog.set(entry.name, reqMap);
+    }
+    mergeSpecContent(fs.readFileSync(specFile, 'utf8'), reqMap);
+  }
+}
+
+/**
+ * 加载全部 OpenSpec 主规格（传 includeChanges=true 时同时合并活动变更中的增量规格），
+ * 区分后端自动化测试必覆盖的 Scenario 与仅人工验收的纯 Web UI Requirement。
+ * @param {boolean} includeChanges
  * @returns {Map<string, Map<string, { scenarios: Set<string>, webOnly: boolean }>>}
  */
-function loadSpecs() {
+function loadSpecs(includeChanges = false) {
   /** @type {Map<string, Map<string, { scenarios: Set<string>, webOnly: boolean }>>} */
   const catalog = new Map();
-  if (!fs.existsSync(specsRoot)) return catalog;
-
-  for (const entry of fs.readdirSync(specsRoot, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const specFile = path.join(specsRoot, entry.name, 'spec.md');
-    if (!fs.existsSync(specFile)) continue;
-
-    /** @type {Map<string, { scenarios: Set<string>, webOnly: boolean }>} */
-    const reqMap = new Map();
-    let currentReq = null;
-    for (const rawLine of fs.readFileSync(specFile, 'utf8').split(/\r?\n/)) {
-      const reqMatch = rawLine.match(/^###\s+Requirement:\s+(.+?)\s*$/);
-      if (reqMatch) {
-        currentReq = reqMatch[1];
-        if (!reqMap.has(currentReq)) reqMap.set(currentReq, { scenarios: new Set(), webOnly: false });
-        continue;
-      }
-      const scenMatch = rawLine.match(/^####\s+Scenario:\s+(.+?)\s*$/);
-      if (scenMatch && currentReq) {
-        reqMap.get(currentReq)?.scenarios.add(scenMatch[1]);
-        continue;
-      }
-      // 仅针对前端 Web 界面交互与布局的 Requirement（正文声明 The web application/dashboard SHALL）归维护者手动视觉验收，不纳入后端 Go 自动化必覆盖集。
-      if (currentReq && /^The web (?:application|dashboard) SHALL\b/.test(rawLine.trim())) {
-        const meta = reqMap.get(currentReq);
-        if (meta) meta.webOnly = true;
-      }
+  loadSpecsFromDir(specsRoot, catalog);
+  if (includeChanges && fs.existsSync(changesRoot)) {
+    for (const changeEntry of fs.readdirSync(changesRoot, { withFileTypes: true })) {
+      if (!changeEntry.isDirectory() || changeEntry.name === 'archive') continue;
+      loadSpecsFromDir(path.join(changesRoot, changeEntry.name, 'specs'), catalog);
     }
-    catalog.set(entry.name, reqMap);
   }
   return catalog;
 }
@@ -546,6 +574,20 @@ function runSelfTest() {
     console.error('check-spec-refs --self-test 扩展规则漏检：', extraFailErrors);
     process.exit(1);
   }
+  const mergedReqMap = new Map();
+  mergeSpecContent('### Requirement: Export\nThe system SHALL export.\n#### Scenario: Main\n', mergedReqMap);
+  mergeSpecContent(
+    '### Requirement: Export\nThe system SHALL export.\n#### Scenario: Delta\n### Requirement: Web\nThe web application SHALL render.\n#### Scenario: View\n',
+    mergedReqMap,
+  );
+  if (
+    !mergedReqMap.get('Export')?.scenarios.has('Main') ||
+    !mergedReqMap.get('Export')?.scenarios.has('Delta') ||
+    !mergedReqMap.get('Web')?.webOnly
+  ) {
+    console.error('check-spec-refs --self-test 增量规格合并自检失败');
+    process.exit(1);
+  }
 }
 
 if (process.argv.includes('--self-test')) {
@@ -553,7 +595,8 @@ if (process.argv.includes('--self-test')) {
   process.exit(0);
 }
 
-const specs = loadSpecs();
+const includeChanges = process.argv.includes('--include-changes');
+const specs = loadSpecs(includeChanges);
 /** @type {string[]} */
 const errors = [];
 const coveredScenarios = new Set();
