@@ -236,7 +236,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build linux/amd64 image for smoke test
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
@@ -313,7 +313,7 @@ jobs:
           fi
 
       - name: Build and push multi-arch Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
