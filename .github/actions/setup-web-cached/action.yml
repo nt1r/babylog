@@ -1,0 +1,55 @@
+name: Setup Web Toolchain with Cache
+description: 配置 pnpm、Node.js 与前端依赖，并按需缓存并安装 OpenSpec CLI。
+
+inputs:
+  install-openspec:
+    description: 是否缓存并安装 OpenSpec CLI 到 PATH
+    required: false
+    default: "false"
+  openspec-version:
+    description: "@fission-ai/openspec 版本号"
+    required: false
+    default: "2.1.1"
+
+runs:
+  using: composite
+  steps:
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v6
+
+    - name: Setup Node.js
+      id: node
+      uses: actions/setup-node@v7
+      with:
+        node-version-file: ".node-version"
+        cache: "pnpm"
+
+    - name: Install frontend dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile
+
+    - name: Resolve OpenSpec install path
+      if: inputs.install-openspec == 'true'
+      id: openspec_env
+      shell: bash
+      run: echo "dir=${HOME}/.local/openspec-${{ inputs.openspec-version }}" >> "$GITHUB_OUTPUT"
+
+    - name: Cache OpenSpec CLI
+      if: inputs.install-openspec == 'true'
+      id: openspec_cache
+      uses: actions/cache@v6
+      with:
+        path: ${{ steps.openspec_env.outputs.dir }}
+        key: openspec-cli-${{ runner.os }}-${{ runner.arch }}-node-${{ steps.node.outputs.node-version }}-${{ inputs.openspec-version }}
+
+    - name: Install OpenSpec CLI
+      if: inputs.install-openspec == 'true' && steps.openspec_cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        mkdir -p "${{ steps.openspec_env.outputs.dir }}"
+        npm install --prefix "${{ steps.openspec_env.outputs.dir }}" "@fission-ai/openspec@${{ inputs.openspec-version }}"
+
+    - name: Add OpenSpec CLI to PATH
+      if: inputs.install-openspec == 'true'
+      shell: bash
+      run: echo "${{ steps.openspec_env.outputs.dir }}/node_modules/.bin" >> "$GITHUB_PATH"
