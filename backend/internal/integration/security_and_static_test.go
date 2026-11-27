@@ -1,14 +1,17 @@
 package integration_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/nt1r/babylog/backend/internal/auth"
 	"github.com/nt1r/babylog/backend/internal/records"
 )
 
@@ -19,12 +22,12 @@ import (
  * 业务背景：所有状态变更接口面临跨站 CSRF、超大载荷、非 JSON 伪造及前后端字段漂移风险，必须在路由中间件与解码层统一拦死并保证零脏写。
  * 前置数据：
  * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
- * - 管理员与会话：已初始化并登录管理员
+ * - 管理员与会话：已初始化并登录管理员，另建普通用户 SecUser 用于验证跨源 PATCH 防护
  * - 宝宝档案：默认档案小汤圆（2026-07-15，female）
  * - 前置业务记录：无（步骤 1 内为测试 PUT/DELETE 跨源先写入 1 条配方奶记录）
  * 测试目标：
- * 1. 验证 POST/PUT/DELETE 跨源请求均返回 403 且无脏写，而省略 Origin 请求头的同源/非浏览器写请求正常放行。
- * 2. 验证非 JSON Content-Type 返回 415，超限请求体（登录 >16KiB、业务 >64KiB）返回 413。
+ * 1. 验证 POST/PUT/PATCH/DELETE 跨源及 Origin=null/畸形 Origin 请求均返回 403 且无脏写，而省略 Origin 请求头的同源/非浏览器写请求正常放行。
+ * 2. 验证非 JSON Content-Type 返回 415，超限请求体（含 Content-Length 快速路径与 chunked 流式 MaxBytesReader 兜底）返回 413。
  * 3. 验证登录畸形载荷、业务接口未知字段（DisallowUnknownFields）与尾随多 JSON 均返回 400，非法方法返回 405，未知 /api/* 返回 404。
  * 4. 验证未预期 panic 被恢复中间件捕获并统一返回中文 500 JSON。
  */
@@ -32,12 +35,13 @@ func TestAPISecurityGuards(t *testing.T) {
 	t.Parallel()
 
 	app := NewTestApp(t)
+	_, secUser := app.CreateUserViaAdmin("SecUser", "secuser-init-secret-123")
 	s := app.Scenario()
 	b := s.EnsureBaby()
 	feedURL := babyPath(b.ID, "/records/feeding")
 	client := app.Client()
 
-	// 1. 跨来源保护覆盖 POST/PUT/DELETE 全部写方法且零脏写；无 Origin 头由 SameSite=Strict Cookie 兜底允许正常写入。
+	// 1. 跨来源保护覆盖 POST/PUT/PATCH/DELETE 全部写方法与 Origin=null/畸形 Origin 且零脏写；无 Origin 头允许正常写入。
 	evilClient := client.WithOrigin("http://evil.example")
 	for _, tc := range []struct {
 		path string
@@ -49,6 +53,18 @@ func TestAPISecurityGuards(t *testing.T) {
 		{feedURL, map[string]any{"subtype": "formula", "amount_ml": 100, "recorded_at": "2026-11-23T01:00:00Z"}},
 	} {
 		evilClient.Post(t, tc.path, tc.body).RequireError(t, http.StatusForbidden, "跨来源")
+	}
+	for _, badOrigin := range []string{"null", "://bad-origin"} {
+		client.WithOrigin(badOrigin).Post(t, feedURL, records.FeedingInput{
+			Subtype:    records.FeedingSubtypeFormula,
+			AmountML:   ptr(100),
+			RecordedAt: "2026-11-23T01:00:00Z",
+		}).RequireError(t, http.StatusForbidden, "跨来源")
+	}
+	evilClient.Patch(t, fmt.Sprintf("/api/admin/users/%d", secUser.ID), map[string]bool{"disabled": true}).
+		RequireError(t, http.StatusForbidden, "跨来源")
+	if persistedUser := FirstRow[auth.User](t, app, "id = ?", secUser.ID); persistedUser.Disabled {
+		t.Fatalf("跨源 PATCH 被拒后目标用户不应被停用：%+v", persistedUser)
 	}
 	if got := CountRows[records.FeedingRecord](t, app, ""); got != 0 {
 		t.Fatalf("跨源 POST 被拒后不应落库喂养记录，实际 %d", got)
@@ -75,7 +91,7 @@ func TestAPISecurityGuards(t *testing.T) {
 		t.Fatalf("跨源 PUT/DELETE 被拒后原记录不应被篡改或删除：%+v", row)
 	}
 
-	// 2. 非 JSON Content-Type 返回 415，超限请求体返回 413。
+	// 2. 非 JSON Content-Type 返回 415，超限请求体（含 Content-Length 与 chunked MaxBytesReader 两条路径）返回 413。
 	client.DoRaw(t, http.MethodPost, "/api/auth/login", "text/plain", []byte("username=admin")).
 		RequireError(t, http.StatusUnsupportedMediaType, "")
 	client.DoRaw(t, http.MethodPost, feedURL, "text/plain", []byte("subtype=formula")).
@@ -96,6 +112,32 @@ func TestAPISecurityGuards(t *testing.T) {
 	})
 	client.DoRaw(t, http.MethodPost, feedURL, "application/json", oversizedRecord).
 		RequireError(t, http.StatusRequestEntityTooLarge, "")
+
+	// 通过结构封装屏蔽字节长度触发 HTTP chunked 传输（ContentLength = -1），实测 MaxBytesReader 流式兜底返回 413。
+	chunkedReq, err := http.NewRequest(http.MethodPost, app.Server.URL+feedURL, io.NopCloser(bytes.NewReader(oversizedRecord)))
+	if err != nil {
+		t.Fatalf("构造 chunked 请求失败：%v", err)
+	}
+	chunkedReq.ContentLength = -1
+	chunkedReq.Header.Set("Content-Type", "application/json")
+	chunkedReq.Header.Set("Origin", app.Server.URL)
+	chunkedReq.Header.Set("Cookie", client.cookie)
+	chunkedHTTPResp, err := app.Server.Client().Do(chunkedReq)
+	if err != nil {
+		t.Fatalf("发起 chunked 超限请求失败：%v", err)
+	}
+	chunkedBody, readErr := io.ReadAll(chunkedHTTPResp.Body)
+	_ = chunkedHTTPResp.Body.Close()
+	if readErr != nil {
+		t.Fatalf("读取 chunked 超限响应体失败：%v", readErr)
+	}
+	(&Response{
+		Method:     http.MethodPost,
+		Path:       feedURL,
+		StatusCode: chunkedHTTPResp.StatusCode,
+		Header:     chunkedHTTPResp.Header,
+		Body:       chunkedBody,
+	}).RequireError(t, http.StatusRequestEntityTooLarge, "过大")
 
 	// 3. 登录畸形 JSON、业务未知字段（防拼写漂移静默吞掉）、尾随多余 JSON、非法方法 405 与未知路由 404 全部精确拦截。
 	for _, raw := range []string{
@@ -139,9 +181,10 @@ func TestAPISecurityGuards(t *testing.T) {
  * - 宝宝档案：无
  * - 前置业务记录：启用 WithDistFixtures() 在临时目录构造 index.html、manifest.webmanifest、sw.js、带哈希 JS 与指向外部 secret.txt 的符号链接
  * 测试目标：
- * 1. 验证无扩展名 SPA 路由（/dashboard）回退 index.html，返回 text/html 与 Cache-Control: no-cache。
+ * 1. 验证无扩展名 SPA 路由（GET/HEAD /dashboard）回退 index.html，返回 text/html 与 Cache-Control: no-cache。
  * 2. 验证 manifest.webmanifest、sw.js 与带哈希静态资源的 MIME 类型和缓存头策略（no-cache vs immutable）。
- * 3. 验证缺失资源、编码路径穿越（/%2e%2e/secret.txt）与符号链接逃逸（/escape.txt）全部返回 404。
+ * 3. 验证缺失资源、编码路径穿越、反斜杠路径与符号链接逃逸全部返回 404。
+ * 4. 验证静态路径非 GET/HEAD 返回 405、含空字节路径返回 400、以及未构建前端 dist 目录时返回中文构建指引。
  */
 func TestStaticAssetsAndSPAFallback(t *testing.T) {
 	t.Parallel()
@@ -149,7 +192,7 @@ func TestStaticAssetsAndSPAFallback(t *testing.T) {
 	app := NewTestApp(t, WithoutAutoLogin(), WithDistFixtures())
 	anon := app.UnauthenticatedClient()
 
-	// 1. 刷新前端深层路由时必须回退 index.html 并禁止强缓存，防止发布后卡在旧入口 HTML。
+	// 1. 刷新前端深层路由时必须回退 index.html 并禁止强缓存，同时支持 HEAD 探测。
 	spaResp := anon.Get(t, "/dashboard")
 	spaResp.RequireStatus(t, http.StatusOK)
 	if ct := spaResp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
@@ -161,6 +204,7 @@ func TestStaticAssetsAndSPAFallback(t *testing.T) {
 	if !strings.Contains(string(spaResp.Body), "BabyLog Test") {
 		t.Errorf("SPA 回退 HTML 内容不符合预期：%q", string(spaResp.Body))
 	}
+	anon.DoRaw(t, http.MethodHead, "/dashboard", "", nil).RequireStatus(t, http.StatusOK)
 
 	// 2. 核对 PWA 清单、Service Worker 与内容哈希资源的 MIME 及缓存策略，避免 SW 缓存卡死更新。
 	manifestResp := anon.Get(t, "/manifest.webmanifest")
@@ -184,8 +228,16 @@ func TestStaticAssetsAndSPAFallback(t *testing.T) {
 		t.Errorf("带哈希静态资源预期 immutable 缓存头，实际 %q", cc)
 	}
 
-	// 3. 缺失静态资源、编码路径穿越与指向目录外敏感文件的符号链接均须返回 404，杜绝越界读文件。
-	for _, targetPath := range []string{"/assets/missing.js", "/%2e%2e/secret.txt", "/escape.txt"} {
+	// 3. 缺失静态资源、编码路径穿越、反斜杠路径与指向目录外敏感文件的符号链接均须返回 404，杜绝越界读文件。
+	for _, targetPath := range []string{"/assets/missing.js", "/%2e%2e/secret.txt", "/%5csecret.txt", "/escape.txt"} {
 		anon.Get(t, targetPath).RequireStatus(t, http.StatusNotFound)
 	}
+
+	// 4. 非 GET/HEAD 访问静态路径返回 405，含空字节返回 400，未构建 dist 目录时返回中文构建提示。
+	anon.Post(t, "/dashboard", nil).RequireError(t, http.StatusMethodNotAllowed, "不支持此请求方法")
+	anon.Get(t, "/index%00.html").RequireError(t, http.StatusBadRequest, "路径无效")
+
+	unbuiltApp := NewTestApp(t, WithoutAutoLogin())
+	unbuiltApp.UnauthenticatedClient().Get(t, "/").RequireError(t, http.StatusNotFound, "页面尚未构建")
+	unbuiltApp.UnauthenticatedClient().Get(t, "/dashboard").RequireError(t, http.StatusNotFound, "页面尚未构建")
 }

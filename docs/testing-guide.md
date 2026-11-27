@@ -50,52 +50,52 @@
 
 | 分组 | 文件与测试函数 | 类别 | 中文场景说明 |
 | --- | --- | --- | --- |
-| 账号认证 | `auth_test.go` / `TestAuthLoginRestoreAndLogoutClosedLoop` | 正常主流程 | 匿名探测、登录签发安全 Cookie、会话恢复与登出吊销清理 |
+| 账号认证 | `auth_test.go` / `TestAuthLoginRestoreAndLogoutClosedLoop` | 正常主流程 | 匿名探测、登录签发安全 Cookie、会话恢复与多设备/多用户单端登出隔离 |
 | 账号认证 | `auth_test.go` / `TestAuthSessionRotationOnRelogin` | 边界/变体 | 持有效会话重复登录轮换令牌并吊销旧 Cookie |
 | 账号认证 | `auth_test.go` / `TestAuthSessionExpirationCleanup` | 边界/变体 | 推进时钟超 7 天后受保护接口 401 清 Cookie 且会话探测清理过期行 |
-| 账号认证 | `auth_test.go` / `TestAuthForcedAndSelfServicePasswordChangeClosedLoop` | 正常主流程 | 强制改密门禁 403 `PASSWORD_CHANGE_REQUIRED`、拒同密码、改密放行与自助改密吊销他端会话 |
+| 账号认证 | `auth_test.go` / `TestAuthForcedAndSelfServicePasswordChangeClosedLoop` | 正常主流程 | 强制改密门禁 403 `PASSWORD_CHANGE_REQUIRED`（放行登出）、401 `INVALID_CREDENTIALS`、拒同密码与强制/常规改密踢他端 |
 | 账号认证 | `auth_test.go` / `TestAuthInvalidCredentialsThrottleAndDisabledGuards` | 失败/拒绝 | 错误凭据、停用用户密码通过后 403、连续失败限流 429、未初始化管理员 401 与畸形 Cookie 清除 |
-| 用户管理 | `user_management_test.go` / `TestAdminUserManagementLifecycleClosedLoop` | 正常主流程 | 管理员列表零隐私泄露、创建普通用户、重置密码吊销会话、停用即时吊销与重新启用 |
-| 用户管理 | `user_management_test.go` / `TestAdminUserManagementRoleAndSelfProtectionGuards` | 失败/拒绝 | 普通用户 403 越权拦截、重复用户名不区分大小写 409、非法入参 400 与管理员自保防停用/重置 |
+| 用户管理 | `user_management_test.go` / `TestAdminUserManagementLifecycleClosedLoop` | 正常主流程 | 管理员列表零隐私泄露、创建普通用户、重置密码吊销会话与待改密门禁、停用即时吊销与启用数据无损 |
+| 用户管理 | `user_management_test.go` / `TestAdminUserManagementRoleAndSelfProtectionGuards` | 失败/拒绝 | 匿名 401、普通用户 403 越权拦截、非法入参/编号 400、未知用户 404 与管理员自保防停用/重置 |
 | 宝宝档案 | `baby_profile_test.go` / `TestBabyProfileOnboardingAndUpdateClosedLoop` | 正常主流程 | 空列表探测、首次与多宝宝建档、允许同户重名、更新刷新 `updated_at` 与清空可选出生体格落库 `NULL` |
 | 宝宝档案 | `baby_profile_test.go` / `TestBabyProfileTimezoneTodayBirthDateBoundary` | 边界/变体 | 同一 UTC 时刻按 UTC 与 Asia/Shanghai 校验本地当天出生日及省略出生体格建档 |
 | 宝宝档案 | `baby_profile_test.go` / `TestBabyProfileDefaultClinicTriStateUpdate` | 边界/变体 | `default_clinic_name` 裁剪设置、省略保留、超 80 字拒绝与空串清空 |
-| 宝宝档案 | `baby_profile_test.go` / `TestBabyProfileHardDeleteCascadeAndCrossUserGuards` | 边界/变体 | 硬删除级联清空 5 张子表与删除最后宝宝、跨账号读写删 404 及管理员不可访问他人宝宝 |
-| 宝宝档案 | `baby_profile_test.go` / `TestBabyProfileAuthOnboardingValidationAndLimitGuards` | 失败/拒绝 | 未认证 401、未知宝宝 404、非法入参 400 零脏写与单用户 10 个宝宝上限第 11 个 400 拒绝 |
+| 宝宝档案 | `baby_profile_test.go` / `TestBabyProfileHardDeleteCascadeAndCrossUserGuards` | 边界/变体 | 硬删除级联清空 5 张子表与删至最后宝宝归空、双向跨账号读写删 404 及管理员不可改删他人宝宝 |
+| 宝宝档案 | `baby_profile_test.go` / `TestBabyProfileAuthOnboardingValidationAndLimitGuards` | 失败/拒绝 | 未认证 401、待改密 403、未知宝宝 404、非法入参/编号/时区 400 零脏写与单用户 10 宝宝上限第 11 个拒绝 |
 | 日常记录 | `daily_records_test.go` / `TestFeedingCRUDSubtypeClearingAndNotFound` | 正常主流程 | 四类喂养形态创建、跨子类型切换清零可空列与删除 404 |
 | 日常记录 | `daily_records_test.go` / `TestSleepCRUDDurationRecalcAndCrossMidnightList` | 正常主流程 | 睡眠创建算时长、更新重算、删除 404 及跨夜列表交集与双日小计切分 |
 | 日常记录 | `daily_records_test.go` / `TestCareCRUDSubtypeClearingAndFilteredList` | 正常主流程 | 尿布/洗澡/其他护理 CRUD、便便改嘘嘘清零列及列表筛选分页与每日小计 |
 | 日常记录 | `daily_records_test.go` / `TestHealthAndGrowthCRUDSubtypeClearing` | 正常主流程 | 体温/用药/生长/长牙 CRUD、多方向跨子类型清零废弃列与删除 404 |
-| 日常记录 | `daily_records_test.go` / `TestRecordsBatchCreateAtomicityAndSummaryIntegration` | 正常主流程 | 批量补录亲喂/瓶喂母乳/配方奶与合并尿布原子落库，联动验证列表、每日小计、看板与智能默认值 |
-| 日常记录 | `daily_records_test.go` / `TestFeedingAndHealthFilteredPaginationSummaries` | 边界/变体 | 喂养跨 UTC 日界线与稀疏跨月分页不截断小计、健康逗号多子类型隔离与非法 token 400 |
+| 日常记录 | `daily_records_test.go` / `TestRecordsBatchCreateAtomicityAndSummaryIntegration` | 正常主流程 | 批量补录混合/单边与 20 条上限原子落库，联动验证列表、每日小计、看板、默认值与多宝宝隔离 |
+| 日常记录 | `daily_records_test.go` / `TestFeedingAndHealthFilteredPaginationSummaries` | 边界/变体 | 喂养 7d/30d 过滤、超尾页空 JSON、稀疏跨月分页完整小计、健康逗号多子类型隔离与非法 token 400 |
 | 日常记录 | `daily_records_test.go` / `TestRecordsSmartDefaultsStarterAndEvolution` | 边界/变体 | 空历史冷启动默认值与多品类历史演进（Top-3 奶量破平局、亲喂换侧、辅食/用药去重保最新份量剂量、睡眠中位数、护理去重限 5 条） |
 | 日常记录 | `daily_records_test.go` / `TestRecordsAuthOnboardingAndQueryParamGuards` | 失败/拒绝 | 未认证 401、未知/跨宝宝与跨账号 `:babyId` 404、非法列表查询参数/`:id` 400 |
-| 日常记录 | `daily_records_test.go` / `TestRecordsFutureClockSkewAndInvalidPayloads` | 失败/拒绝 | 超前 5 分钟未来时间与四大品类非法载荷全部 400 零脏写 |
+| 日常记录 | `daily_records_test.go` / `TestRecordsFutureClockSkewAndInvalidPayloads` | 失败/拒绝 | 四大品类 POST/PUT 超前 5 分钟未来时间与非法载荷全部 400 零脏写 |
 | 日常记录 | `daily_records_test.go` / `TestRecordsBatchCreateValidationRollbackAndAuthGuards` | 失败/拒绝 | 批量补录鉴权/强制改密/跨宝宝隔离、空批与超限拒绝及混合非法项整事务回滚零脏写 |
 | 首页看板 | `dashboard_insights_test.go` / `TestDashboardSummaryTimezoneSplitAndMedicine` | 正常主流程 | 跨 UTC 日界线喂养、跨夜睡眠切分、多条今日用药聚合与跨时区查询对比 |
-| 首页看板 | `dashboard_insights_test.go` / `TestDashboardSevenDayTrendsAndCareRhythm` | 正常主流程 | 7 日连续趋势空日零填充、跨夜双日切分、瓶喂与亲喂分列、5 时段全覆盖、窗口起点边界与 `days` 参数校验 |
+| 首页看板 | `dashboard_insights_test.go` / `TestDashboardSevenDayTrendsAndCareRhythm` | 正常主流程 | 7 日连续趋势空日零填充、跨夜双日切分、瓶喂与亲喂分列、5 时段全覆盖、窗口起点与 `days=1/14/90` 边界校验 |
 | 首页看板 | `dashboard_insights_test.go` / `TestDashboardMultiDimensionTrendsAndPeriodSummary` | 正常主流程 | 30 日多维趋势拆解（喂养/睡眠昼夜/排泄/体温用药）与周期洞察摘要（侧别均衡、辅食接受度、睡眠连续性、便便关注与空窗冷启动） |
 | 首页看板 | `dashboard_insights_test.go` / `TestDashboardGrowthPartialResolutionAndColdStart` | 边界/变体 | 无记录冷启动全零校验、出生体格兜底与体重/身高/头围跨记录独立解析及出牙统计 |
-| 首页看板 | `dashboard_insights_test.go` / `TestDashboardAuthOnboardingAndTimezoneGuards` | 失败/拒绝 | `summary`/`trends` 未认证 401、未知/跨账号 `:babyId` 404 与非法时区 400 |
-| 数据导出 | `data_export_test.go` / `TestDataExportMultiSheetXLSXAndSanitization` | 正常主流程 | 自定义区间全五类与子集多 Sheet `.xlsx` 导出、跨夜睡眠汇总、多宝宝严格隔离与公式前缀注入中和 |
+| 首页看板 | `dashboard_insights_test.go` / `TestDashboardAuthOnboardingAndTimezoneGuards` | 失败/拒绝 | `summary`/`trends` 未认证 401、待改密 403、未知/跨账号 `:babyId` 404 与非法时区 400 |
+| 数据导出 | `data_export_test.go` / `TestDataExportMultiSheetXLSXAndSanitization` | 正常主流程 | 自定义/默认/366 天多 Sheet `.xlsx` 导出、空记录与头注入清洗、跨夜睡眠汇总、多宝宝隔离与公式前缀中和 |
 | 数据导出 | `data_export_test.go` / `TestDataExportAuthScopeAndQueryParamGuards` | 失败/拒绝 | 导出接口未认证 401、待强制改密 403、未知/跨用户 `:babyId` 404 与非法时区/日期/跨度/分类参数 400 |
 | 疫苗管理 | `vaccine_management_test.go` / `TestVaccinesSeedClampingAndSevenAlertStates` | 正常主流程 | 幂等初始化 22 剂 NIP、月末 1/31→2/28 钳位、推进时钟演进 7 态提醒及 `next_focus` 优先级与同日合并 |
-| 疫苗管理 | `vaccine_management_test.go` / `TestVaccinesOptionalTemplatesCustomAndDeletion` | 正常主流程 | 默认/定制模板导入、重复 409、`flu` 阶段文案、单剂改月龄契约（自费重算 vs NIP 保护）、删中间剂重排、整套移出及非法/404 拒绝 |
-| 疫苗管理 | `vaccine_management_test.go` / `TestVaccinesSingleDoseTransitionsAndValidation` | 正常主流程 | 单剂 `pending → scheduled → completed → pending` 清空废弃列、`recent_clinics` 更新与越界接种日期 400 |
+| 疫苗管理 | `vaccine_management_test.go` / `TestVaccinesOptionalTemplatesCustomAndDeletion` | 正常主流程 | 默认/定制模板导入、重复 409、`flu` 阶段文案、单剂改月龄契约、删中间剂重排、整套/逐剂移出再导入及非法/404 拒绝 |
+| 疫苗管理 | `vaccine_management_test.go` / `TestVaccinesSingleDoseTransitionsAndValidation` | 正常主流程 | 单剂 `pending → scheduled → completed → pending` 清空废弃列、`recent_clinics` Top-3 去重排序与越界接种日期 400 |
 | 疫苗管理 | `vaccine_management_test.go` / `TestVaccinesBatchOperationsAtomicityAndDetailSemantics` | 边界/变体 | 产院两针批量确认不污染默认门诊、批量三态字段保留/清空、批量完成保细节 vs 预约清细节、含非法 ID 整事务回滚 |
 | 疫苗管理 | `vaccine_management_test.go` / `TestVaccinesDefaultClinicAndAutoRemember` | 边界/变体 | 常去门诊独立接口（设置/同步/超长 400/清空）、产院不污染 → 首次常规自动记住 → 偶发不覆盖 → 显式置顶覆写 → 批量预约自动记住 |
 | 疫苗管理 | `vaccine_management_test.go` / `TestVaccinesConcurrentSeedAndTemplateGuards` | 边界/变体 | 并发首访 NIP 初始化幂等 22 剂、并发重复导入自费模板严格一成 201 一败 409 |
-| 疫苗管理 | `vaccine_management_test.go` / `TestVaccinesAuthOnboardingAndTimezoneGuards` | 失败/拒绝 | 疫苗读写端点未认证 401、未知/跨账号 `:babyId` 404 与非法时区 400 |
+| 疫苗管理 | `vaccine_management_test.go` / `TestVaccinesAuthOnboardingAndTimezoneGuards` | 失败/拒绝 | 疫苗端点未认证 401、待改密 403、跨宝宝/跨账号读写删与批量混入 404、多宝宝模板隔离与非法时区/`:id` 400 |
 | 跨模块闭环 | `cross_module_journeys_test.go` / `TestNewParentFirstDayClosedLoop` | 跨模块主流程 | 登录 → 建档 → 首页首访初始化疫苗 → 全天多品类照护 → 看板/趋势/默认值联动 → 预约常规疫苗同步默认门诊 |
 | 跨模块闭环 | `cross_module_journeys_test.go` / `TestRecordEditAndDeleteCrossModuleRollback` | 跨模块边界 | 修改/删除发烧体温、删除最新亲喂、删除唯一手工体重后，看板健康观察、出生体格兜底与默认值换侧建议实时回退 |
 | 跨模块闭环 | `cross_module_journeys_test.go` / `TestBabyBirthDateCorrectionRecalculatesVaccines` | 跨模块边界 | 更正宝宝出生日期后，未手填 `planned_date` 的待接种疫苗自动按新出生日重算排期与状态，手动 `planned_date` 与已接种剂次不变 |
-| 跨模块闭环 | `cross_module_journeys_test.go` / `TestMultiUserMultiBabyFullIsolationJourney` | 跨模块主流程 | 管理员创建普通用户 → 强制改密 → 双娃记录/看板/疫苗严格按 `:babyId` 隔离 → 管理员与用户间零越权 |
-| 安全与基础设施 | `security_and_static_test.go` / `TestAPISecurityGuards` | 安全防线 | POST/PUT/DELETE 跨源 403、无 Origin 放行、415、413、未知字段与尾随 JSON 400、405、404 与 Panic 500 恢复 |
-| 安全与基础设施 | `security_and_static_test.go` / `TestStaticAssetsAndSPAFallback` | 基础设施 | SPA 回退 `index.html`、PWA manifest/SW/哈希资源缓存策略及路径穿越/符号链接逃逸 404 |
+| 跨模块闭环 | `cross_module_journeys_test.go` / `TestMultiUserMultiBabyFullIsolationJourney` | 跨模块主流程 | 管理员创建普通用户 → 强制改密 → 双娃记录/看板/趋势/疫苗严格按 `:babyId` 隔离 → 管理员与用户间零越权 |
+| 安全与基础设施 | `security_and_static_test.go` / `TestAPISecurityGuards` | 安全防线 | POST/PUT/PATCH/DELETE 跨源与 `Origin: null` 403、无 Origin 放行、415、413（含 chunked）、未知字段/尾随 JSON 400、405、404 与 Panic 500 |
+| 安全与基础设施 | `security_and_static_test.go` / `TestStaticAssetsAndSPAFallback` | 基础设施 | SPA 回退 `index.html`（GET/HEAD）、PWA 缓存策略、路径穿越/反斜杠/符号链接 404、非 GET 405、空字节 400 与未构建提示 |
 | CLI 与进程 | `cmd/babylog/cli_test.go` / `TestCLIAdminInitSuccessAndDuplicateGuard` | 正常主流程 | 真实二进制 `admin init` 保留密码空格仅裁单个 CRLF、自定义用户名、重复拒绝保留原账号及相对路径默认 `admin` 初始化认证 |
 | CLI 与进程 | `cmd/babylog/cli_test.go` / `TestCLIAdminInitInvalidPasswordAndArgsGuards` | 失败/拒绝 | 拒绝过短/超长密码文件、目录路径、非法参数与非法用户名，并验证 SQLite 零管理员落库 |
 | CLI 与进程 | `cmd/babylog/cli_test.go` / `TestCLIServeRestartPersistenceLifecycle` | 正常主流程 | 编译产物启动监听、登录建档写入记录、`SIGTERM` 优雅退出并复用同目录重启回读数据完好 |
-| CLI 与进程 | `cmd/babylog/cli_test.go` / `TestCLIUserLifecycleAndAdminRecovery` | 正常主流程 | `babylog user create/list/reset-password/disable/enable` 全闭环、支持 `--force-change`、管理员密码恢复与拒绝停用管理员 |
+| CLI 与进程 | `cmd/babylog/cli_test.go` / `TestCLIUserLifecycleAndAdminRecovery` | 正常主流程 | `babylog user` 全闭环、`--force-change`、启停用业务数据无损、管理员救灾恢复、拒停管理员及负向参数校验 |
 | CLI 与进程 | `cmd/babylog/cli_test.go` / `TestCLIVersionMetadata` | 基础设施 | 验证开发态默认版本输出、非法参数用法提示及 `-ldflags` 注入发布版本元数据 |
 
 ## 5. 中文场景注释模板与用例内注释规范

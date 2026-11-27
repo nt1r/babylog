@@ -243,8 +243,8 @@ func TestBabyProfileDefaultClinicTriStateUpdate(t *testing.T) {
  * - 宝宝档案：用户 A 拥有大宝与二宝；用户 B 拥有三宝
  * - 前置业务记录：大宝名下写入喂养、睡眠、护理、健康与疫苗记录；二宝名下写入 1 条喂养记录
  * 测试目标：
- * 1. 验证用户 B 尝试 PUT 或 DELETE 用户 A 的大宝均返回 404，且大宝档案与全部子记录完好无损。
- * 2. 验证用户 A 硬删除大宝返回 200 {deleted: true}，大宝及 5 张子表记录在 SQLite 中彻底级联清零，而二宝与三宝记录不受影响。
+ * 1. 验证普通用户 B 越权 PUT/DELETE 管理员的大宝，以及管理员反向越权 PUT/DELETE 用户 B 的三宝均返回 404，双方原数据完好无损。
+ * 2. 验证用户 A 硬删除大宝后 5 张子表级联清零且二宝/三宝不受影响，继续删除最后一个宝宝（二宝）后 GET /api/babies 返回空数组 []。
  */
 func TestBabyProfileHardDeleteCascadeAndCrossUserGuards(t *testing.T) {
 	t.Parallel()
@@ -268,7 +268,7 @@ func TestBabyProfileHardDeleteCascadeAndCrossUserGuards(t *testing.T) {
 	babyB := sB.EnsureBaby(BabyParams{Nickname: "三宝"})
 	sB.ForBaby(babyB.ID).AddFormula(150, "2026-11-23T01:30:00Z")
 
-	// 1. 跨用户 PUT/DELETE 均返回 404 且原数据毫发无损。
+	// 1. 双向跨用户 PUT/DELETE（含管理员访问普通用户宝宝）均返回 404 且原数据毫发无损。
 	clientB.Put(t, fmt.Sprintf("/api/babies/%d?tz=Asia/Shanghai", babyA1.ID), baby.UpsertInput{
 		Nickname:  "篡改",
 		BirthDate: "2026-07-15",
@@ -276,11 +276,21 @@ func TestBabyProfileHardDeleteCascadeAndCrossUserGuards(t *testing.T) {
 	}).RequireError(t, http.StatusNotFound, "")
 	clientB.Delete(t, fmt.Sprintf("/api/babies/%d", babyA1.ID)).
 		RequireError(t, http.StatusNotFound, "")
+	clientA.Put(t, fmt.Sprintf("/api/babies/%d?tz=Asia/Shanghai", babyB.ID), baby.UpsertInput{
+		Nickname:  "管理员篡改",
+		BirthDate: "2026-07-15",
+		Gender:    "male",
+	}).RequireError(t, http.StatusNotFound, "")
+	clientA.Delete(t, fmt.Sprintf("/api/babies/%d", babyB.ID)).
+		RequireError(t, http.StatusNotFound, "")
 	if persisted := FirstRow[baby.Profile](t, app, "id = ?", babyA1.ID); persisted.Nickname != "大宝" {
 		t.Fatalf("跨用户越权拒绝后大宝档案被意外修改：%+v", persisted)
 	}
+	if persistedB := FirstRow[baby.Profile](t, app, "id = ?", babyB.ID); persistedB.Nickname != "三宝" {
+		t.Fatalf("管理员越权拒绝后用户 B 的三宝档案被意外修改：%+v", persistedB)
+	}
 
-	// 2. 用户 A 硬删除大宝后 5 张子表级联清零，二宝与用户 B 的三宝完好保留。
+	// 2. 用户 A 硬删除大宝后 5 张子表级联清零且二宝/三宝完好；继续删除最后一个宝宝二宝后列表归空。
 	delResp := clientA.Delete(t, fmt.Sprintf("/api/babies/%d", babyA1.ID))
 	if !DecodeOK[struct {
 		Deleted bool `json:"deleted"`
@@ -299,22 +309,33 @@ func TestBabyProfileHardDeleteCascadeAndCrossUserGuards(t *testing.T) {
 		CountRows[records.FeedingRecord](t, app, "baby_id = ?", babyB.ID) != 1 {
 		t.Fatalf("删除大宝不应误伤二宝或用户 B 的宝宝记录")
 	}
+
+	clientA.Delete(t, fmt.Sprintf("/api/babies/%d", babyA2.ID)).RequireStatus(t, http.StatusOK)
+	remainingA := DecodeOK[struct {
+		Babies []baby.Profile `json:"babies"`
+	}](t, clientA.Get(t, "/api/babies")).Babies
+	if len(remainingA) != 0 || CountRows[records.FeedingRecord](t, app, "baby_id = ?", babyA2.ID) != 0 {
+		t.Fatalf("删除最后一个宝宝后列表应为空且二宝记录级联清零，实际 remaining=%+v", remainingA)
+	}
+	if CountRows[records.FeedingRecord](t, app, "baby_id = ?", babyB.ID) != 1 {
+		t.Fatalf("删除用户 A 全部宝宝不应影响用户 B 的宝宝记录")
+	}
 }
 
 /*
  * Spec: baby-profile / Authenticated access to baby profile endpoints / Reject unauthenticated baby profile request
  * Spec: baby-profile / Multi-baby profile creation / Enforce maximum of 10 baby profiles per user; Reject invalid baby profile input
  * Spec: baby-profile / Baby profile update / Reject update before onboarding
- * 测试场景：集中验证宝宝档案接口的认证门禁、空档案更新 404、非法入参 400 与每用户 10 个宝宝上限且用户间额度独立。
- * 业务背景：多宝宝场景需守住未登录拦截、非法数据零脏写与单用户合理数量配额，同时确保 A 满额不影响 B 建档，且删除后释放配额。
+ * 测试场景：集中验证宝宝档案接口的认证与待改密门禁（401/403）、空档案更新 404、非法路径参数/时区/入参 400 与每用户 10 个宝宝上限且用户间额度独立。
+ * 业务背景：多宝宝场景需守住未登录与待改密拦截、非法数据零脏写与单用户合理数量配额，同时确保 A 满额不影响 B 建档，且删除后释放配额。
  * 前置数据：
  * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
- * - 管理员与会话：管理员（用户 A）与普通用户 B（已完成改密）及匿名客户端
+ * - 管理员与会话：管理员（用户 A）、普通用户 B（已完成改密）、待强制改密用户 P 及匿名客户端
  * - 宝宝档案：初始未建档
  * - 前置业务记录：无
  * 测试目标：
- * 1. 验证匿名访问 GET/POST/PUT/DELETE /api/babies* 均返回 401，未建档时 PUT /api/babies/999 返回 404。
- * 2. 验证非法昵称、日期、性别与出生体格全部返回 400 且零落库。
+ * 1. 验证匿名访问 GET/POST/PUT/DELETE /api/babies* 均返回 401，待改密用户返回 403 PASSWORD_CHANGE_REQUIRED，未建档时 PUT /api/babies/999 返回 404。
+ * 2. 验证非法昵称、日期、性别、出生体格、非法路径 :babyId 与非法时区全部返回 400 且零落库。
  * 3. 验证用户 A 建满 10 个宝宝后第 11 个返回 400，用户 B 仍可正常建档，且 A 删除 1 个宝宝后额度恢复可再建。
  */
 func TestBabyProfileAuthOnboardingValidationAndLimitGuards(t *testing.T) {
@@ -323,9 +344,10 @@ func TestBabyProfileAuthOnboardingValidationAndLimitGuards(t *testing.T) {
 	app := NewTestApp(t)
 	anon := app.UnauthenticatedClient()
 	clientA := app.Client()
+	clientPending, _ := app.CreateUserViaAdmin("BabyPending", "pending-init-secret-123")
 	clientB, _ := app.CreateReadyUserViaAdmin("UserB", "userb-init-secret-123", "userb-final-secret-456")
 
-	// 1. 未认证访问一律 401；不存在或未建档直接 PUT 返回 404。
+	// 1. 未认证访问一律 401；待强制改密用户写/读接口一律 403 PASSWORD_CHANGE_REQUIRED；不存在或未建档直接 PUT 返回 404。
 	anon.Get(t, "/api/babies").RequireError(t, http.StatusUnauthorized, "")
 	anon.Post(t, "/api/babies", baby.UpsertInput{Nickname: "宝", BirthDate: "2026-07-01", Gender: "male"}).
 		RequireError(t, http.StatusUnauthorized, "")
@@ -333,13 +355,27 @@ func TestBabyProfileAuthOnboardingValidationAndLimitGuards(t *testing.T) {
 		RequireError(t, http.StatusUnauthorized, "")
 	anon.Delete(t, "/api/babies/1").RequireError(t, http.StatusUnauthorized, "")
 
+	for _, resp := range []*Response{
+		clientPending.Get(t, "/api/babies"),
+		clientPending.Post(t, "/api/babies", baby.UpsertInput{Nickname: "宝", BirthDate: "2026-07-01", Gender: "male"}),
+		clientPending.Put(t, "/api/babies/1", baby.UpsertInput{Nickname: "宝", BirthDate: "2026-07-01", Gender: "male"}),
+		clientPending.Delete(t, "/api/babies/1"),
+	} {
+		payload := DecodeStatus[struct {
+			Code string `json:"code"`
+		}](t, resp, http.StatusForbidden)
+		if payload.Code != "PASSWORD_CHANGE_REQUIRED" {
+			t.Fatalf("待改密用户访问 %s %s 预期 PASSWORD_CHANGE_REQUIRED，实际 %+v", resp.Method, resp.Path, payload)
+		}
+	}
+
 	clientA.Put(t, "/api/babies/999?tz=Asia/Shanghai", baby.UpsertInput{
 		Nickname:  "团子",
 		BirthDate: "2026-07-15",
 		Gender:    "male",
 	}).RequireError(t, http.StatusNotFound, "")
 
-	// 2. 集中校验各类非法建档载荷均返回 400 中文错误且数据库零脏行。
+	// 2. 集中校验各类非法建档载荷、非法路径编号与非法时区均返回 400 中文错误且数据库零脏行。
 	invalidPayloads := []baby.UpsertInput{
 		{Nickname: "   ", BirthDate: "2026-07-15", Gender: "male"},
 		{Nickname: strings.Repeat("宝", baby.MaxNicknameLength+1), BirthDate: "2026-07-15", Gender: "male"},
@@ -352,6 +388,16 @@ func TestBabyProfileAuthOnboardingValidationAndLimitGuards(t *testing.T) {
 	for _, in := range invalidPayloads {
 		clientA.Post(t, "/api/babies?tz=Asia/Shanghai", in).RequireError(t, http.StatusBadRequest, "")
 	}
+	clientA.Post(t, "/api/babies?tz=Invalid/Zone", baby.UpsertInput{
+		Nickname: "小宝", BirthDate: "2026-07-15", Gender: "male",
+	}).RequireError(t, http.StatusBadRequest, "时区")
+	clientA.Put(t, "/api/babies/abc?tz=Asia/Shanghai", baby.UpsertInput{
+		Nickname: "小宝", BirthDate: "2026-07-15", Gender: "male",
+	}).RequireError(t, http.StatusBadRequest, "编号")
+	clientA.Put(t, "/api/babies/1?tz=Invalid/Zone", baby.UpsertInput{
+		Nickname: "小宝", BirthDate: "2026-07-15", Gender: "male",
+	}).RequireError(t, http.StatusBadRequest, "时区")
+	clientA.Delete(t, "/api/babies/0").RequireError(t, http.StatusBadRequest, "编号")
 	if got := CountRows[baby.Profile](t, app, ""); got != 0 {
 		t.Fatalf("非法建档载荷被拒后 SQLite 应保持 0 行，实际 %d", got)
 	}

@@ -636,6 +636,16 @@ func (r *Response) CookiePair(name string) (string, bool) {
 	return "", false
 }
 
+// RequireCookiePair 断言响应包含指定 Cookie 并返回 "name=value" 键值对，避免忽略 ok 掩盖服务端漏下发 Cookie。
+func (r *Response) RequireCookiePair(t *testing.T, name string) string {
+	t.Helper()
+	pair, ok := r.CookiePair(name)
+	if !ok {
+		t.Fatalf("%s %s: 响应缺少 %s Cookie（Set-Cookie=%q）", r.Method, r.Path, name, r.SetCookieHeader())
+	}
+	return pair
+}
+
 // DecodeStatus 先断言 HTTP 状态码为 wantStatus，再将响应体反序列化为目标泛型结构 T，
 // 从接口签名层面杜绝“漏检状态码直接解包”掩盖服务端错误。
 func DecodeStatus[T any](t *testing.T, resp *Response, wantStatus int) T {

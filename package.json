@@ -29,6 +29,7 @@
     "lint:go": "sh ./scripts/lint-go.sh",
     "format": "biome check --write . && (cd backend && gofmt -w .)",
     "check": "tsc --noEmit",
+    "audit:api": "node scripts/audit-api-contract.mjs",
     "verify:ts": "node scripts/run-ts-check.mjs",
     "test": "sh ./scripts/test-go.sh",
     "test:verbose": "sh ./scripts/test-go.sh --verbose",
