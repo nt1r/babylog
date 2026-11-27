@@ -16,8 +16,8 @@ env:
   CGO_ENABLED: "0"
 
 jobs:
-  validate-and-test:
-    name: Validate Tag, Changelog & Tests
+  validate-release:
+    name: Validate Tag & Changelog
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
@@ -32,20 +32,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
           node-version-file: ".node-version"
-          cache: "pnpm"
-
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: "backend/go.mod"
-          cache-dependency-path: "backend/go.sum"
 
       - name: Validate tag format, main ancestry, package.json & CHANGELOG.md
         id: meta
@@ -64,106 +54,148 @@ jobs:
           path: release-notes.md
           retention-days: 1
 
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Install OpenSpec CLI
-        run: npm install -g @fission-ai/openspec@2.1.1
-
-      - name: Lint & format check
-        run: pnpm lint
-
-      - name: Typecheck
-        run: pnpm check
-
-      - name: Backend tests
-        run: pnpm test
-
-      - name: Backend race tests
-        run: pnpm test:race
-
-  build-binaries:
-    name: Build Cross-Platform Binaries
-    needs: validate-and-test
+  verify-web:
+    name: Verify Web, Guardrails & Build Assets
+    needs: validate-release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
+      - name: Setup Web toolchain & OpenSpec CLI
+        uses: ./.github/actions/setup-web-cached
         with:
-          node-version-file: ".node-version"
-          cache: "pnpm"
+          install-openspec: "true"
 
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: "backend/go.mod"
-          cache-dependency-path: "backend/go.sum"
+      - name: Lint frontend (Biome)
+        run: pnpm lint:web
+
+      - name: Static guardrails & OpenSpec validation
+        run: pnpm lint:guardrails
+
+      - name: Typecheck
+        run: pnpm check
 
       - name: Build frontend static assets
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm build:web
-          mkdir -p backend/internal/webui/dist
-          find backend/internal/webui/dist -mindepth 1 ! -name .gitkeep -delete
-          cp -R dist/. backend/internal/webui/dist/
+        run: pnpm build:web
 
-      - name: Cross-compile binaries & package archives
+      - name: Upload frontend static assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-dist
+          path: dist/
+          retention-days: 1
+
+  verify-backend:
+    name: Verify Go Lint & Tests
+    needs: validate-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go & staticcheck with layered cache
+        uses: ./.github/actions/setup-go-cached
+        with:
+          cache-scope: backend
+          install-staticcheck: "true"
+
+      - name: Go lint & staticcheck
         env:
-          TAG: ${{ needs.validate-and-test.outputs.tag }}
-          COMMIT: ${{ needs.validate-and-test.outputs.commit }}
-          BUILD_DATE: ${{ needs.validate-and-test.outputs.build_date }}
+          BABYLOG_REQUIRE_CACHED_STATICCHECK: "true"
+        run: ./scripts/lint-go.sh
+
+      - name: Backend tests
+        run: ./scripts/test-go.sh
+
+  verify-backend-race:
+    name: Verify Go Race Tests
+    needs: validate-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go with race build cache
+        uses: ./.github/actions/setup-go-cached
+        with:
+          cache-scope: race
+
+      - name: Backend race tests
+        run: ./scripts/test-go.sh --race
+
+  build-binaries:
+    name: Build Binary (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: [validate-release, verify-web, verify-backend, verify-backend-race]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Prepare clean embedded webui directory
+        run: rm -rf backend/internal/webui/dist && mkdir -p backend/internal/webui/dist
+
+      - name: Download frontend static assets
+        uses: actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: backend/internal/webui/dist
+
+      - name: Setup Go with module cache
+        uses: ./.github/actions/setup-go-cached
+        with:
+          cache-build: "false"
+
+      - name: Cross-compile binary & package archive
+        env:
+          TAG: ${{ needs.validate-release.outputs.tag }}
+          COMMIT: ${{ needs.validate-release.outputs.commit }}
+          BUILD_DATE: ${{ needs.validate-release.outputs.build_date }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
         run: |
           set -euo pipefail
           OUT_DIR="${RUNNER_TEMP}/release-assets"
-          mkdir -p "$OUT_DIR"
+          STAGE_DIR="${RUNNER_TEMP}/pkg-${GOOS}-${GOARCH}"
+          mkdir -p "$OUT_DIR" "$STAGE_DIR"
 
           LDFLAGS="-s -w -X main.version=${TAG} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}"
 
-          for TARGET in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
-            GOOS="${TARGET%/*}"
-            GOARCH="${TARGET#*/}"
-            STAGE_DIR="${RUNNER_TEMP}/pkg-${GOOS}-${GOARCH}"
-            rm -rf "$STAGE_DIR"
-            mkdir -p "$STAGE_DIR"
-
-            (
-              cd backend
-              CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build \
-                -tags embedwebui \
-                -trimpath \
-                -ldflags="$LDFLAGS" \
-                -o "${STAGE_DIR}/babylog" \
-                ./cmd/babylog
-            )
-
-            cp LICENSE README.md "$STAGE_DIR/"
-            tar -czf "${OUT_DIR}/babylog_${TAG}_${GOOS}_${GOARCH}.tar.gz" -C "$STAGE_DIR" babylog LICENSE README.md
-          done
-
-          cp scripts/install.sh "${OUT_DIR}/install.sh"
-          chmod 755 "${OUT_DIR}/install.sh"
-
           (
-            cd "$OUT_DIR"
-            sha256sum babylog_*.tar.gz install.sh > SHA256SUMS.txt
+            cd backend
+            CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build \
+              -tags embedwebui \
+              -trimpath \
+              -ldflags="$LDFLAGS" \
+              -o "${STAGE_DIR}/babylog" \
+              ./cmd/babylog
           )
 
-      - name: Upload release assets
+          cp LICENSE README.md "$STAGE_DIR/"
+          tar -czf "${OUT_DIR}/babylog_${TAG}_${GOOS}_${GOARCH}.tar.gz" -C "$STAGE_DIR" babylog LICENSE README.md
+
+      - name: Upload target archive
         uses: actions/upload-artifact@v7
         with:
-          name: release-assets
+          name: release-binary-${{ matrix.goos }}-${{ matrix.goarch }}
           path: ${{ runner.temp }}/release-assets/
           retention-days: 1
 
   publish-docker:
     name: Build & Push Multi-Arch GHCR Image
-    needs: validate-and-test
+    needs: [validate-release, verify-web, verify-backend, verify-backend-race]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -188,9 +220,9 @@ jobs:
       - name: Compute Docker image tags
         id: docker_meta
         env:
-          TAG: ${{ needs.validate-and-test.outputs.tag }}
-          MAJOR_MINOR: ${{ needs.validate-and-test.outputs.major_minor }}
-          IS_PRERELEASE: ${{ needs.validate-and-test.outputs.is_prerelease }}
+          TAG: ${{ needs.validate-release.outputs.tag }}
+          MAJOR_MINOR: ${{ needs.validate-release.outputs.major_minor }}
+          IS_PRERELEASE: ${{ needs.validate-release.outputs.is_prerelease }}
         run: |
           IMAGE_REPO="ghcr.io/$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
           {
@@ -204,7 +236,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build linux/amd64 image for smoke test
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
@@ -213,16 +245,16 @@ jobs:
           push: false
           tags: babylog:smoke
           build-args: |
-            VERSION=${{ needs.validate-and-test.outputs.tag }}
-            COMMIT=${{ needs.validate-and-test.outputs.commit }}
-            BUILD_DATE=${{ needs.validate-and-test.outputs.build_date }}
+            VERSION=${{ needs.validate-release.outputs.tag }}
+            COMMIT=${{ needs.validate-release.outputs.commit }}
+            BUILD_DATE=${{ needs.validate-release.outputs.build_date }}
           cache-from: type=gha
 
       - name: Smoke test container image
         env:
-          TAG: ${{ needs.validate-and-test.outputs.tag }}
-          COMMIT: ${{ needs.validate-and-test.outputs.commit }}
-          BUILD_DATE: ${{ needs.validate-and-test.outputs.build_date }}
+          TAG: ${{ needs.validate-release.outputs.tag }}
+          COMMIT: ${{ needs.validate-release.outputs.commit }}
+          BUILD_DATE: ${{ needs.validate-release.outputs.build_date }}
         run: |
           set -euo pipefail
           EXPECTED_VERSION="babylog ${TAG} (commit: ${COMMIT}, built: ${BUILD_DATE})"
@@ -281,7 +313,7 @@ jobs:
           fi
 
       - name: Build and push multi-arch Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
@@ -289,36 +321,50 @@ jobs:
           push: true
           tags: ${{ steps.docker_meta.outputs.tags }}
           build-args: |
-            VERSION=${{ needs.validate-and-test.outputs.tag }}
-            COMMIT=${{ needs.validate-and-test.outputs.commit }}
-            BUILD_DATE=${{ needs.validate-and-test.outputs.build_date }}
+            VERSION=${{ needs.validate-release.outputs.tag }}
+            COMMIT=${{ needs.validate-release.outputs.commit }}
+            BUILD_DATE=${{ needs.validate-release.outputs.build_date }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   github-release:
     name: Publish GitHub Release
-    needs: [validate-and-test, build-binaries, publish-docker]
+    needs: [validate-release, build-binaries, publish-docker]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - name: Checkout installer script
+        uses: actions/checkout@v7
+
       - name: Download release notes
         uses: actions/download-artifact@v8
         with:
           name: release-notes
           path: ./notes
 
-      - name: Download release assets
+      - name: Download binary archives
         uses: actions/download-artifact@v8
         with:
-          name: release-assets
+          pattern: release-binary-*
+          merge-multiple: true
           path: ./assets
+
+      - name: Package installer & SHA256SUMS
+        run: |
+          set -euo pipefail
+          cp scripts/install.sh ./assets/install.sh
+          chmod 755 ./assets/install.sh
+          (
+            cd ./assets
+            LC_ALL=C sha256sum babylog_*.tar.gz install.sh > SHA256SUMS.txt
+          )
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.validate-and-test.outputs.tag }}
-          IS_PRERELEASE: ${{ needs.validate-and-test.outputs.is_prerelease }}
+          TAG: ${{ needs.validate-release.outputs.tag }}
+          IS_PRERELEASE: ${{ needs.validate-release.outputs.is_prerelease }}
         run: |
           set -euo pipefail
           EXTRA_FLAGS=()

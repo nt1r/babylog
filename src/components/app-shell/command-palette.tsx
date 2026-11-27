@@ -2,7 +2,9 @@ import { useNavigate, useRouterState } from '@tanstack/react-router';
 import {
   Baby,
   Bath,
+  ClipboardList,
   CornerDownLeft,
+  FileSpreadsheet,
   HeartPulse,
   type LucideIcon,
   Milk,
@@ -25,10 +27,8 @@ import { useActiveBabyId } from '@/lib/baby';
 import { cn } from '@/lib/utils';
 import { getVisibleNavGroups, openContextualCreate } from '@/navigation/menu';
 import { useAuthStore } from '@/stores/auth';
-import { useCommandPaletteStore } from '@/stores/command-palette';
-import { useGrowthRecordStore } from '@/stores/growth-record';
+import { useOverlayStore } from '@/stores/overlays';
 import { usePreferencesStore } from '@/stores/preferences';
-import { useQuickRecordStore } from '@/stores/quick-record';
 
 interface CommandActionItem {
   readonly id: string;
@@ -50,8 +50,10 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return Boolean(target.closest('[contenteditable="true"], [role="textbox"]'));
 }
 
-// 依赖 UI 原语统一的 data-slot 属性检测当前是否存在活跃弹窗、抽屉或浮层，防止全局快捷键叠开或打断提交中抽屉。
+// 优先经统一全局浮层 Store 拦截已打开的全局抽屉/弹窗，再辅以 UI 原语 data-slot 检测页面局部浮层（如疫苗详情、删除确认、Popover、下拉菜单），
+// 防止全局快捷键叠开或打断提交中抽屉。
 function hasOpenOverlay(): boolean {
+  if (useOverlayStore.getState().active !== null) return true;
   return Boolean(
     document.querySelector(
       '[data-slot="dialog-content"], [data-slot="alert-dialog-content"], [data-slot="drawer-popup"], [data-slot="popover-content"], [data-slot="dropdown-menu-content"]',
@@ -67,19 +69,21 @@ export function getShortcutModifierSymbol(): string {
 
 /**
  * 全局快捷命令面板（⌘K / Ctrl+K）与轻量单键快捷记一笔（N）：
- * 支持中文与关键词实时过滤、方向键与回车直达，所有操作均复用既有路由与抽屉 Store。
+ * 支持中文与关键词实时过滤、方向键与回车直达，所有操作均复用既有路由与统一浮层 Store。
  */
 export function CommandPalette() {
-  const open = useCommandPaletteStore((state) => state.open);
-  const setOpen = useCommandPaletteStore((state) => state.setOpen);
-  const toggle = useCommandPaletteStore((state) => state.toggle);
+  const open = useOverlayStore((state) => state.active === 'command-palette');
+  const closeOverlay = useOverlayStore((state) => state.close);
+  const toggle = useOverlayStore((state) => state.toggleCommandPalette);
 
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const user = useAuthStore((state) => state.user);
   const activeBabyId = useActiveBabyId();
-  const openQuickCreate = useQuickRecordStore((state) => state.openCreate);
-  const openGrowthCreate = useGrowthRecordStore((state) => state.openCreate);
+  const openQuickCreate = useOverlayStore((state) => state.openQuickCreate);
+  const openBatchRecord = useOverlayStore((state) => state.openBatchRecord);
+  const openGrowthCreate = useOverlayStore((state) => state.openGrowthCreate);
+  const openExportDrawer = useOverlayStore((state) => state.openExport);
   const setThemeMode = usePreferencesStore((state) => state.setThemeMode);
 
   const [query, setQuery] = useState('');
@@ -122,6 +126,15 @@ export function CommandPalette() {
 
   const allItems = useMemo<CommandActionItem[]>(() => {
     const quickItems: CommandActionItem[] = [
+      {
+        id: 'quick-batch',
+        group: '快速记录',
+        label: '批量补录',
+        hint: '喂奶 · 嘘嘘便便',
+        keywords: '批量 补录 月嫂 纸质 记录本 喂奶 喂养 嘘嘘 便便 排尿 排便 换尿布 护理 batch backfill',
+        icon: ClipboardList,
+        run: () => openBatchRecord(),
+      },
       {
         id: 'quick-formula',
         group: '快速记录',
@@ -212,6 +225,15 @@ export function CommandPalette() {
         icon: Sparkles,
         run: () => openGrowthCreate('teeth'),
       },
+      {
+        id: 'quick-export-xlsx',
+        group: '快速记录',
+        label: '导出照护数据表格',
+        hint: 'Excel 多表汇总与明细',
+        keywords: '导出 表格 excel xlsx 统计 报告 export',
+        icon: FileSpreadsheet,
+        run: () => openExportDrawer('30'),
+      },
     ];
 
     const navItems: CommandActionItem[] = getVisibleNavGroups(user?.role).flatMap((group) =>
@@ -268,7 +290,16 @@ export function CommandPalette() {
     ];
 
     return [...(activeBabyId !== null ? quickItems : []), ...navItems, ...themeItems];
-  }, [activeBabyId, user?.role, navigate, openQuickCreate, openGrowthCreate, setThemeMode]);
+  }, [
+    activeBabyId,
+    user?.role,
+    navigate,
+    openQuickCreate,
+    openBatchRecord,
+    openGrowthCreate,
+    openExportDrawer,
+    setThemeMode,
+  ]);
 
   const filteredItems = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -301,7 +332,7 @@ export function CommandPalette() {
   }, [open, safeActiveIndex]);
 
   function executeItem(item: CommandActionItem) {
-    setOpen(false);
+    closeOverlay('command-palette');
     item.run();
   }
 
@@ -323,7 +354,12 @@ export function CommandPalette() {
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) closeOverlay('command-palette');
+      }}
+    >
       <DialogContent
         showCloseButton={false}
         className="top-[18%] max-w-lg translate-y-0 gap-0 overflow-hidden p-0 sm:top-[20%]"

@@ -1,6 +1,7 @@
 package records
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -76,27 +77,27 @@ func ValidateFeeding(in FeedingInput, now time.Time) (FeedingInput, error) {
 		}
 		mode := strings.TrimSpace(*in.FeedingMode)
 		switch mode {
-		case "direct":
+		case FeedingModeDirect:
 			if in.BreastSide == nil {
 				return FeedingInput{}, &ValidationError{Message: "请选择亲喂侧别"}
 			}
 			side := strings.TrimSpace(*in.BreastSide)
-			if side != "left" && side != "right" && side != "both" {
+			if side != BreastSideLeft && side != BreastSideRight && side != BreastSideBoth {
 				return FeedingInput{}, &ValidationError{Message: "请选择有效的亲喂侧别"}
 			}
 			if in.DurationMin == nil || *in.DurationMin < MinBreastMin || *in.DurationMin > MaxBreastMin {
 				return FeedingInput{}, &ValidationError{Message: "亲喂时长应在 1 至 180 分钟之间"}
 			}
 			dur := *in.DurationMin
-			out.FeedingMode = strPtr("direct")
+			out.FeedingMode = strPtr(FeedingModeDirect)
 			out.BreastSide = strPtr(side)
 			out.DurationMin = &dur
-		case "bottle":
+		case FeedingModeBottle:
 			if in.AmountML == nil || *in.AmountML < MinMilkML || *in.AmountML > MaxMilkML {
 				return FeedingInput{}, &ValidationError{Message: "瓶喂母乳奶量应在 1 至 1000 ml 之间"}
 			}
 			ml := *in.AmountML
-			out.FeedingMode = strPtr("bottle")
+			out.FeedingMode = strPtr(FeedingModeBottle)
 			out.AmountML = &ml
 		default:
 			return FeedingInput{}, &ValidationError{Message: "请选择有效的母乳方式"}
@@ -124,7 +125,7 @@ func ValidateFeeding(in FeedingInput, now time.Time) (FeedingInput, error) {
 		var acceptance *string
 		if in.Acceptance != nil && strings.TrimSpace(*in.Acceptance) != "" {
 			acc := strings.TrimSpace(*in.Acceptance)
-			if acc != "like" && acc != "neutral" && acc != "dislike" {
+			if acc != AcceptanceLike && acc != AcceptanceNeutral && acc != AcceptanceDislike {
 				return FeedingInput{}, &ValidationError{Message: "请选择有效的辅食接受度"}
 			}
 			acceptance = &acc
@@ -202,17 +203,17 @@ func ValidateCare(in CareInput, now time.Time) (CareInput, error) {
 			return CareInput{}, &ValidationError{Message: "请选择尿布类型（嘘嘘/便便/混合）"}
 		}
 		kind := strings.TrimSpace(*in.DiaperKind)
-		if kind != "pee" && kind != "poop" && kind != "both" {
+		if kind != DiaperKindPee && kind != DiaperKindPoop && kind != DiaperKindBoth {
 			return CareInput{}, &ValidationError{Message: "请选择有效的尿布类型"}
 		}
 		out.DiaperKind = strPtr(kind)
 
 		// 仅包含便便时保留可选性状与颜色；纯嘘嘘时自动置空。
-		if kind == "poop" || kind == "both" {
+		if kind == DiaperKindPoop || kind == DiaperKindBoth {
 			if in.StoolConsistency != nil && strings.TrimSpace(*in.StoolConsistency) != "" {
 				c := strings.TrimSpace(*in.StoolConsistency)
 				switch c {
-				case "watery", "soft", "formed", "hard":
+				case StoolConsistencyWatery, StoolConsistencySoft, StoolConsistencyFormed, StoolConsistencyHard:
 					out.StoolConsistency = &c
 				default:
 					return CareInput{}, &ValidationError{Message: "请选择有效的便便性状"}
@@ -221,7 +222,7 @@ func ValidateCare(in CareInput, now time.Time) (CareInput, error) {
 			if in.StoolColor != nil && strings.TrimSpace(*in.StoolColor) != "" {
 				color := strings.TrimSpace(*in.StoolColor)
 				switch color {
-				case "yellow", "green", "brown", "abnormal":
+				case StoolColorYellow, StoolColorGreen, StoolColorBrown, StoolColorAbnormal:
 					out.StoolColor = &color
 				default:
 					return CareInput{}, &ValidationError{Message: "请选择有效的便便颜色"}
@@ -339,4 +340,40 @@ func ValidateHealth(in HealthInput, now time.Time) (HealthInput, error) {
 	}
 
 	return out, nil
+}
+
+// ValidateBatchCreate 校验并标准化批量写入的喂养与护理记录切片；
+// 强制总条数位于 [1, MaxBatchCreateItems]，并使用同一次时钟快照复用 [ValidateFeeding] 与 [ValidateCare]，
+// 任一条校验失败立即返回带条目序号的 [*ValidationError]，确保调用方在开启事务前即可快速拦截异常批次。
+func ValidateBatchCreate(in BatchCreateInput, now time.Time) (BatchCreateInput, error) {
+	total := len(in.Feedings) + len(in.Cares)
+	if total == 0 {
+		return BatchCreateInput{}, &ValidationError{Message: "请至少填写一项记录"}
+	}
+	if total > MaxBatchCreateItems {
+		return BatchCreateInput{}, &ValidationError{Message: fmt.Sprintf("单次最多批量提交 %d 条记录", MaxBatchCreateItems)}
+	}
+
+	cleanFeedings := make([]FeedingInput, 0, len(in.Feedings))
+	for i, item := range in.Feedings {
+		clean, err := ValidateFeeding(item, now)
+		if err != nil {
+			return BatchCreateInput{}, &ValidationError{Message: fmt.Sprintf("第 %d 条喂养记录：%s", i+1, err.Error())}
+		}
+		cleanFeedings = append(cleanFeedings, clean)
+	}
+
+	cleanCares := make([]CareInput, 0, len(in.Cares))
+	for i, item := range in.Cares {
+		clean, err := ValidateCare(item, now)
+		if err != nil {
+			return BatchCreateInput{}, &ValidationError{Message: fmt.Sprintf("第 %d 条护理记录：%s", i+1, err.Error())}
+		}
+		cleanCares = append(cleanCares, clean)
+	}
+
+	return BatchCreateInput{
+		Feedings: cleanFeedings,
+		Cares:    cleanCares,
+	}, nil
 }

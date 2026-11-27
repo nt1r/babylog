@@ -10,7 +10,7 @@
 </h1>
 
 <p><strong>奶爸视角的开源自托管宝宝日常记录应用</strong></p>
-<p>把喂养、睡眠、护理与健康点滴留在自己家里——单手 3 秒记完，昼夜护眼不刺眼，零云端依赖。</p>
+<p>把喂养、睡眠、护理、健康、疫苗与生长曲线留在自己家里——单手 3 秒快录，支持多维统计与 Excel 导出，昼夜护眼不刺眼，零云端依赖。</p>
 
 <p>
   <a href="https://github.com/nt1r/babylog/actions/workflows/ci.yml"><img src="https://github.com/nt1r/babylog/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
@@ -38,8 +38,8 @@
 
 **BabyLog** 由此诞生：
 
-- **只为自家服务**：无开放注册、无广告、无数据上报，单一零 CGO Go 二进制 + SQLite 轻量运行，家庭数据牢牢掌握在自己的 NAS 或小服务器上。
-- **为真实带娃场景打磨**：鼠尾草绿与暖米白绘本调性，配合深夜护眼深色模式、PWA 桌面安装、智能默认值回填与移动端单手底部抽屉，真正做到掏出手机 3 秒记完。
+- **只为自家服务**：无开放注册、无广告、无数据上报，轻量部署在自己的 NAS 或小服务器上，家庭数据全部保存在本地，随时可导出 Excel 带走。
+- **为真实带娃场景打磨**：鼠尾草绿与暖米白绘本调性，配合深夜护眼深色模式、手机桌面 PWA 安装、智能默认值回填、批量补录与移动端单手底部抽屉，掏出手机 3 秒记完。
 
 ---
 
@@ -47,7 +47,7 @@
 
 ### 昼夜双色桌面看板
 
-白天是克制温柔的**暖米白 + 鼠尾草绿**绘本画布，夜晚一键切入低眩光的**深森绿灰护眼主题**（支持跟随系统、首屏无闪烁）。左侧支持多宝宝切换与分类导航，顶部提供 `⌘K` 快捷命令面板与一键记一笔；首页聚合今日喂养/睡眠/护理/体温 KPI、近期疫苗预约提醒、一键直记、近 7/14 日趋势曲线与全天照护节律。
+白天是克制温柔的**暖米白 + 鼠尾草绿**绘本画布，夜晚一键切入低眩光的**深森绿灰护眼主题**（支持跟随系统）。左侧支持多宝宝切换与分类导航，顶部提供 `⌘K` 快捷命令面板与一键记一笔；首页聚合今日喂养/睡眠/护理/健康观察概览、疫苗预约与接种后 48 小时体温观察提醒、一键直记与批量补录入口、近 7/30 日趋势曲线（直达多维统计分析）与全天照护节律。
 
 <p align="center">
   <img src="./docs/assets/dashboard-light.png" alt="BabyLog 桌面端浅色看板" width="100%" />
@@ -63,9 +63,37 @@
   <sub>🌙 <strong>深色护眼模式</strong> — 为深夜起夜喂奶校准柔和对比度，暗光环境下同样清晰舒适</sub>
 </p>
 
+### 多维统计分析与多表 Excel 导出
+
+独立的「统计分析」页支持按 **近 7 / 14 / 30 / 90 天** 切换查看宝宝的日均指标与长期趋势，完整拆分奶量结构（配方奶 / 瓶喂母乳）、亲喂时长与左右侧均衡度、白天小睡与夜间睡眠连续性、排尿排便频次及体温用药波动；每张图表均支持**一键保存高清 PNG 图片**，右上角可随时打开导出抽屉，按预设或自定义日期（最长 366 天）与所选分类生成带「按日汇总」及各分类明细的**多工作表 Excel（`.xlsx`）**。
+
+<p align="center">
+  <img src="./docs/assets/insights-light.png" alt="BabyLog 多维统计分析页面：周期日均摘要、每日奶量结构、睡眠昼夜结构与排尿排便趋势" width="100%" />
+  <br />
+  <sub>📊 <strong>多维统计分析</strong> — 7/14/30/90 天周期切换、奶量结构/睡眠昼夜/排泄多维趋势与图表一键保存高清图片</sub>
+</p>
+
+<br />
+
+<p align="center">
+  <img src="./docs/assets/export-excel-light.png" alt="BabyLog 多工作表 Excel 数据导出抽屉" width="100%" />
+  <br />
+  <sub>📤 <strong>多表 Excel 导出</strong> — 自由选择预设或自定义日期范围与照护分类，自动附带「按日汇总」与各分类明细工作表</sub>
+</p>
+
+### 喂养与护理批量补录
+
+带娃忙起来顾不上实时记录、或需要对照纸质本集中补录时，可一键打开「批量补录」抽屉：在同一个时间点同时填完亲喂、瓶喂母乳、配方奶与嘘嘘/便便（同次嘘嘘+便便自动合并，未发生项留空跳过）；点击「保存并继续」自动保留日期并提供 `-3h / -2h / +2h / +3h` 快捷时间推算，顶部实时记录本次已补录批次并支持一键撤销。
+
+<p align="center">
+  <img src="./docs/assets/batch-backfill-light.png" alt="BabyLog 喂养与护理批量补录抽屉" width="100%" />
+  <br />
+  <sub>📋 <strong>喂养与护理批量补录</strong> — 同一时间点一次记齐多项照护、智能推算下一时间点、实时条数预览与会话内一键撤销</sub>
+</p>
+
 ### 疫苗接种计划与 WHO 生长曲线
 
-内置国家免疫规划疫苗懒初始化、常见自费疫苗模板与自定义计划，提供接种日历、月龄时间线、常去门诊管理、一键批量标记已接种及 `.ics` 日历导出；独立的「生长发育」页提供身高、体重、头围记录管理，并自动叠加 **WHO 儿童生长百分位参考区间（P3–P97 与 P50 中位线）**。
+按宝宝出生日期自动生成国家免费疫苗接种计划，内置常见自费疫苗模板与自定义计划，提供接种日历、月龄时间线、常去门诊自动记住、一键批量标记已接种及 `.ics` 系统日历导出；独立的「生长发育」页支持身高、体重、头围与出牙记录，自动计算阶段增长变化、叠加 **WHO 儿童生长百分位参考区间（P3–P97 与 P50 中位线）**，并支持一键保存高清曲线图。
 
 <p align="center">
   <img src="./docs/assets/vaccines-light.png" alt="BabyLog 疫苗接种日历与月龄接种计划" width="100%" />
@@ -78,22 +106,22 @@
 <p align="center">
   <img src="./docs/assets/growth-who-light.png" alt="BabyLog 生长发育概览与 WHO 百分位曲线" width="100%" />
   <br />
-  <sub>📏 <strong>WHO 生长发育曲线</strong> — 支持体重、身高、头围切换与 WHO 性别百分位参考区间直观对照</sub>
+  <sub>📏 <strong>WHO 生长发育曲线</strong> — 支持体重、身高、头围切换、阶段增长对比、WHO 百分位对照与高清存图</sub>
 </p>
 
-### 多用户行级隔离与多宝宝管理
+### 多家庭独立账号与多宝宝管理
 
-面向家庭自托管设计，无开放注册入口。唯一管理员可通过 Web「用户管理」或 CLI 为不同家庭创建、停用与重置独立账号（支持强制首次改密与自助改密）；每个账号可管理最多 **10 个宝宝档案**并随时在顶部/侧栏切换，跨账号数据在数据库查询与写入层严格行级隔离，管理员也无法查看其他账号的宝宝档案与记录。
+面向家庭自托管设计，无开放注册入口。管理员可在 Web 端「用户管理」为亲友家庭创建、停用或重置独立账号；每个账号可管理最多 **10 个宝宝档案**并随时在顶部/侧栏切换，各家庭数据完全隔离，管理员也无法查看其他账号的宝宝档案与记录。
 
 <p align="center">
   <img src="./docs/assets/admin-users-light.png" alt="BabyLog 管理员用户管理与多账号隔离界面" width="100%" />
   <br />
-  <sub>👨‍👩‍👧‍👦 <strong>多户多娃隔离管理</strong> — 账号生命周期管理（正常 / 待改密 / 已停用）与跨家庭隐私严格隔离</sub>
+  <sub>👨‍👩‍👧‍👦 <strong>多户多娃隔离管理</strong> — 独立家庭账号管理（正常 / 待改密 / 已停用）与跨家庭隐私严格隔离</sub>
 </p>
 
 ### 移动端 PWA · 日常快录与生长免疫双三连屏
 
-支持添加到 iOS / Android 主屏幕作为 PWA 使用，完整适配安全区与底部 5 槽位单手导航。顶部随时切换宝宝，点击底部中央 `+` 唤起**底部滑出抽屉**，自动预填宝宝常用奶量、建议亲喂侧别与时间快捷偏移；同时在手机端完整覆盖 WHO 生长曲线、疫苗日历提醒与深色护眼下的多宝宝设置。
+支持添加到 iOS / Android 主屏幕作为应用使用（详细步骤见 [手机桌面安装教程](./docs/mobile-install-guide.md)），完整适配安全区与底部单手导航。顶部随时切换宝宝，点击底部中央 `+` 唤起**底部滑出抽屉**，自动预填宝宝常用奶量、建议亲喂侧别与时间快捷偏移；同时在手机端完整覆盖多维统计分析、WHO 生长曲线、疫苗日历提醒与深色护眼下的多宝宝设置。
 
 <p align="center">
   <img src="./docs/assets/mobile-showcase.png" alt="BabyLog 移动端三连屏展示：移动看板、底部单手快捷录入抽屉与分类记录列表" width="100%" />
@@ -116,32 +144,32 @@
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>🍼 3 秒单手快录 & 智能回填</h3>
-      <p>覆盖 <strong>喂养</strong>（亲喂/瓶喂母乳/配方奶/辅食）、<strong>睡眠</strong>（小睡/夜觉跨夜切分）、<strong>护理</strong>（尿布性状颜色/洗澡/自定义）与 <strong>健康</strong>（体温/用药/出牙）。自动记住常用奶量、上次亲喂侧别与常用药品，配合「一键直记」、时间偏移与桌面 <code>⌘K</code> 快捷命令面板大幅减少输入。</p>
+      <h3>🍼 3 秒单手快录 & 批量补录</h3>
+      <p>覆盖 <strong>喂养</strong>（亲喂/瓶喂母乳/配方奶/辅食）、<strong>睡眠</strong>（小睡/夜觉自动跨夜统计）、<strong>护理</strong>（尿布性状颜色/洗澡/自定义）与 <strong>健康</strong>（体温/用药）。自动记住常用奶量、亲喂侧别与常用药品；漏记时支持<strong>批量补录</strong>，同一时间点一次录完喂养与换尿布，还可连续补录与一键撤销。</p>
     </td>
     <td width="50%" valign="top">
-      <h3>📈 趋势洞察 & WHO 生长曲线</h3>
-      <p>首页看板实时计算宝宝月龄天数、距上次喂养/换尿布时长与今日汇总，提供近 7/14 日趋势图与全天 5 时段照护节律；独立「生长发育」页支持身高、体重、头围记录并叠加 <strong>WHO 百分位参考区间</strong>，清晰追踪发育曲线。</p>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <h3>💉 疫苗接种计划 & 多态提醒</h3>
-      <p>按宝宝出生日期自动懒初始化国家免疫规划疫苗，内置常见自费疫苗模板与自定义接种计划；支持默认接种门诊、日历与月龄时间线双视图、一键批量完成/预约、首页临期提醒及 <code>.ics</code> 日历导出。</p>
-    </td>
-    <td width="50%" valign="top">
-      <h3>👨‍👩‍👧‍👦 多用户隔离 & 多宝宝管理</h3>
-      <p>无开放注册，唯一管理员可通过 CLI 或 Web「用户管理」为不同家庭创建独立账号（支持强制/自助改密与即时停用吊销会话）；每账号支持管理最多 10 个宝宝档案并随时切换，跨账号行级严格隔离且管理员无法查看他人数据。</p>
+      <h3>📊 多维统计分析 & 首页看板</h3>
+      <p>首页看板实时展示宝宝月龄、距上次喂养/换尿布时长与今日汇总；独立的「统计分析」页支持 <strong>近 7 / 14 / 30 / 90 天</strong> 切换，呈现奶量结构、亲喂左右侧平衡、辅食接受度、白天小睡与夜间睡眠连续性、排便规律与体温用药趋势，直观读懂宝宝作息节律。</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <h3>🔒 本地优先与安全基线</h3>
-      <p>所有育儿数据仅存于本地 SQLite（WAL 模式），零云端依赖；采用加盐 <code>scrypt</code> 密码派生与常量时间比较、登录防爆破限流、<code>HttpOnly; SameSite=Strict</code> 会话 Cookie（支持 <code>BABYLOG_COOKIE_SECURE</code>）与写接口 Same-Origin 校验。</p>
+      <h3>📏 生长发育 & WHO 生长曲线</h3>
+      <p>独立的「生长发育」页支持记录身高、体重、头围与出牙里程碑，自动提示相较上次测量的增长变化与下一颗出牙参考，并叠加 <strong>WHO 儿童生长百分位参考区间（P3–P97 / P50）</strong>，清晰追踪宝宝成长轨迹。</p>
     </td>
     <td width="50%" valign="top">
-      <h3>🪶 零 CGO 单二进制 · 极简更新</h3>
-      <p>后端使用 Go + 零 CGO SQLite 并通过 <code>embed.FS</code> 内嵌前端打包为单二进制；提供多架构 GHCR Docker 镜像、一键安装脚本与 SQLite 合并备份脚本，部署 <code>latest</code> 时只需 <code>docker compose up -d --force-recreate --wait</code> 单命令平滑更新。</p>
+      <h3>💉 疫苗接种计划 & 贴心提醒</h3>
+      <p>按宝宝出生日期自动生成国家免费疫苗计划，内置常见自费疫苗模板与自定义计划；支持常去门诊自动记住、接种部位交替提示、日历与月龄时间线双视图、一键批量完成/预约、临期提醒、接种后 48 小时体温观察提示及 <code>.ics</code> 日历导出。</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>📤 高清存图 & 多表 Excel 导出</h3>
+      <p>统计分析图表与 WHO 生长曲线均支持<strong>一键保存高清 PNG 图片</strong>（附带宝宝月龄与日期范围），方便分享给家人或儿保医生；支持按预设或自定义日期（最长 366 天）与所选分类导出<strong>多工作表 Excel（<code>.xlsx</code>）</strong>，含「按日汇总」与各分类明细，备份复盘无忧。</p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>👨‍👩‍👧‍👦 多家庭隔离 · 昼夜护眼自托管</h3>
+      <p>无开放注册，支持为多个家庭创建独立账号且彼此数据完全隔离，每账号可管理最多 10 个宝宝档案；提供浅色绘本与深夜护眼深色双主题、手机桌面 PWA 安装与桌面 <code>⌘K</code> 快捷命令面板，所有数据仅存于自有设备，隐私完全自主掌控。</p>
     </td>
   </tr>
 </table>
@@ -304,8 +332,6 @@ baby.example.com {
 
 ```sh
 DEPLOY_HOST=user@your-server
-DEPLOY_DIR=/opt/babylog
-DEPLOY_DOMAIN=baby.example.com
 ```
 
 执行 [scripts/backup.sh](./scripts/backup.sh) 即可从远程运行中的容器拉取 SQLite 数据库（含 WAL 日志），在本地合并为单文件并执行 `PRAGMA integrity_check` 后保存到 `~/Desktop/babylog-backups/`：
@@ -350,20 +376,12 @@ pnpm dev
 - `pnpm build`：构建前端产物并内嵌打包为单二进制 `bin/babylog`。
 - `pnpm start`：运行 `bin/babylog serve` 提供 UI 与 API（21115 端口）。
 
-### 从源码构建 Docker 镜像与远程推送
+### 从源码构建 Docker 镜像
 
 如需本地直接从源码构建镜像，可叠加 [compose.build.yaml](./compose.build.yaml)：
 
 ```bash
 docker compose -f compose.yaml -f compose.build.yaml up -d --build
-```
-
-维护者也可配合上述 `.env.deploy` 使用 [scripts/deploy.sh](./scripts/deploy.sh) 完成本地检查、白名单源码同步、远程重建容器与健康验证：
-
-```sh
-./scripts/deploy.sh              # 默认执行 pnpm lint && pnpm check 后发布
-./scripts/deploy.sh --skip-checks
-./scripts/deploy.sh --no-cache
 ```
 
 </details>
@@ -372,13 +390,14 @@ docker compose -f compose.yaml -f compose.build.yaml up -d --build
 
 ## 功能规划
 
-- [x] 安全认证与 Cookie 会话管理（加盐 scrypt、防爆破限流、强制/自助改密与 Same-Origin 防护）
-- [x] 多账号（一户一账号）与单账号多宝宝隔离管理（CLI + Web 用户管理、强制/自助改密与硬删除级联）
-- [x] 宝宝建档、核心日常记录（喂养 / 睡眠 / 排便 / 体温 / 生长发育）与智能默认值
-- [x] 疫苗接种计划、国家免疫规划懒初始化、自费模板与多态提醒
-- [x] 首页数据看板、近 7/14 日趋势图表与全天照护节律
-- [x] PWA 支持、浅色/深色护眼主题与移动端单手录入适配
-- [x] Docker Compose / GHCR 多架构镜像、跨平台单二进制发版与一键部署/备份脚本
+- [x] 多家庭独立账号与多宝宝档案（无开放注册、各账号数据隔离、每账号最多 10 个宝宝）
+- [x] 宝宝日常快录与批量补录（喂养 / 睡眠 / 护理 / 体温用药、智能默认值与连续补录）
+- [x] 首页照护看板与多维统计分析（近 7 / 14 / 30 / 90 天多维趋势、全天照护节律与周期汇总）
+- [x] 生长发育与出牙记录（身高 / 体重 / 头围、阶段增长对比与 WHO 百分位曲线）
+- [x] 疫苗接种计划与提醒（国家免费疫苗、自费模板与自定义、日历/时间线、接种后 48h 体温观察与 `.ics` 导出）
+- [x] 图表高清 PNG 存图与多工作表 Excel（`.xlsx`）按日汇总/明细导出
+- [x] 手机桌面 PWA 安装、浅色/深色护眼主题与移动端单手录入适配
+- [x] Docker 一键部署升级、单程序运行与本地数据备份脚本
 - [ ] 更多提醒待办（定时用药、儿保体检与自定义待办）
 
 ---
@@ -390,12 +409,14 @@ docker compose -f compose.yaml -f compose.build.yaml up -d --build
 - 安全漏洞请勿在公开 Issue 披露，请按 [SECURITY.md](./SECURITY.md) 通过 GitHub Security Advisories 私下报告。
 - 本项目基于 [Apache-2.0](./LICENSE) 协议开源。
 
-<details>
-<summary><strong>参考文档与致谢</strong></summary>
+---
 
-- Base UI：https://base-ui.com/react/overview/quick-start
-- shadcn/ui：https://ui.shadcn.com/docs
-- TanStack Router：https://tanstack.com/router/latest
-- 设计参考项目：https://github.com/ppxb/continew-ui-next
+## 致谢与参考
 
-</details>
+感谢 [LINUX DO](https://linux.do) 社区温暖友善的开源氛围与真诚的技术分享，也感谢以下开源项目与设计参考给予本项目的启发：
+
+- **LINUX DO 社区**：https://linux.do
+- **Base UI**：https://base-ui.com/react/overview/quick-start
+- **shadcn/ui**：https://ui.shadcn.com/docs
+- **TanStack Router**：https://tanstack.com/router/latest
+- **设计参考项目**：https://github.com/ppxb/continew-ui-next

@@ -19,7 +19,7 @@ import {
   getAlertBadgeMeta,
   type VaccineOverviewResponse,
 } from '@/lib/vaccines';
-import type { GrowthEntrySubtype } from '@/stores/growth-record';
+import type { GrowthEntrySubtype } from '@/stores/overlays';
 
 /** 条件浮现的首屏疫苗常驻提醒条（产院未确认 / 预约逾期 / 临期 / 待补种），窄屏允许自然换行避免关键信息被截断。 */
 export function DashboardVaccineBanner({ alert }: { readonly alert: DashboardVaccineAlertBanner }) {

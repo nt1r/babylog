@@ -1,16 +1,9 @@
-import {
-  type InfiniteData,
-  type QueryClient,
-  useInfiniteQuery,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query';
-import { resolveMutationBabyId, useActiveBabyId } from '@/lib/baby';
+import { type InfiniteData, useInfiniteQuery } from '@tanstack/react-query';
+import { useActiveBabyId } from '@/lib/baby';
+import { babyApiRequest, invalidateBabyDomain, useBabyMutation, useBabyQuery } from '@/lib/baby-api';
 import type { RecordCategory } from '@/lib/categories';
-import { ApiError, apiRequest } from '@/lib/http';
-import { babyDashboardQueryKey, babyRecordDefaultsQueryKey, babyRecordsQueryKey } from '@/lib/query-client';
-import { getBrowserTimeZone } from '@/lib/time';
+import { ApiError } from '@/lib/http';
+import { babyRecordDefaultsQueryKey, babyRecordsQueryKey } from '@/lib/query-client';
 
 export type RecordRange = 'today' | '7d' | '30d' | 'all';
 
@@ -209,6 +202,21 @@ export type SaveRecordRequest =
   | { readonly category: 'care'; readonly id?: number; readonly payload: CareInput }
   | { readonly category: 'health'; readonly id?: number; readonly payload: HealthInput };
 
+export interface BatchCreateRecordsInput {
+  readonly feedings: readonly FeedingInput[];
+  readonly cares: readonly CareInput[];
+}
+
+interface BatchCreateRecordsResult {
+  readonly feedings: FeedingRecord[];
+  readonly cares: CareRecord[];
+}
+
+export interface BatchUndoTarget {
+  readonly category: 'feeding' | 'care';
+  readonly id: number;
+}
+
 /** 将泛型分类与对应记录打包为判别联合 EditableRecord，供通用列表页安全传给编辑/复制抽屉。 */
 export function toEditableRecord<C extends RecordCategory>(category: C, record: RecordOf<C>): EditableRecord {
   return { category, record } as EditableRecord;
@@ -269,28 +277,11 @@ export function getTemperatureSeverity(temp: number): {
   return { level: 'normal', label: '体温正常' };
 }
 
-/** 单条记录的新增/编辑/删除会同时影响当前宝宝的分页列表、智能默认值与首页看板统计，统一失效三组查询缓存。 */
-function invalidateAllRecordQueries(queryClient: QueryClient, babyId: number) {
-  void queryClient.invalidateQueries({ queryKey: babyRecordsQueryKey(babyId) });
-  void queryClient.invalidateQueries({ queryKey: babyRecordDefaultsQueryKey(babyId) });
-  void queryClient.invalidateQueries({ queryKey: babyDashboardQueryKey(babyId) });
-}
-
 interface ListParams {
   subtype?: string;
   range?: RecordRange;
   limit?: number;
   offset?: number;
-}
-
-function buildListQueryString(params: ListParams): string {
-  const q = new URLSearchParams();
-  q.set('tz', getBrowserTimeZone());
-  if (params.subtype && params.subtype !== 'all') q.set('subtype', params.subtype);
-  if (params.range) q.set('range', params.range);
-  if (params.limit !== undefined) q.set('limit', String(params.limit));
-  if (params.offset !== undefined) q.set('offset', String(params.offset));
-  return q.toString();
 }
 
 async function fetchRecordList<C extends RecordCategory>(
@@ -299,39 +290,37 @@ async function fetchRecordList<C extends RecordCategory>(
   params: ListParams,
   signal?: AbortSignal,
 ): Promise<ListResult<RecordOf<C>, DailySummaryOf<C>>> {
-  return apiRequest<ListResult<RecordOf<C>, DailySummaryOf<C>>>(
-    `/api/babies/${babyId}/records/${category}?${buildListQueryString(params)}`,
-    { signal },
-  );
-}
-
-async function fetchSmartDefaults(babyId: number, signal?: AbortSignal): Promise<SmartDefaults> {
-  return apiRequest<SmartDefaults>(`/api/babies/${babyId}/records/defaults`, { signal });
+  return babyApiRequest<ListResult<RecordOf<C>, DailySummaryOf<C>>>(babyId, `/records/${category}`, {
+    tz: true,
+    query: {
+      subtype: params.subtype && params.subtype !== 'all' ? params.subtype : undefined,
+      range: params.range,
+      limit: params.limit,
+      offset: params.offset,
+    },
+    signal,
+  });
 }
 
 async function saveRecord(babyId: number, req: SaveRecordRequest): Promise<RecordOf<RecordCategory>> {
-  const path =
-    req.id !== undefined
-      ? `/api/babies/${babyId}/records/${req.category}/${req.id}`
-      : `/api/babies/${babyId}/records/${req.category}`;
+  const subPath = req.id !== undefined ? `/records/${req.category}/${req.id}` : `/records/${req.category}`;
   const method = req.id !== undefined ? 'PUT' : 'POST';
-  const res = await apiRequest<{ record: RecordOf<RecordCategory> }>(path, { method, body: req.payload });
+  const res = await babyApiRequest<{ record: RecordOf<RecordCategory> }>(babyId, subPath, {
+    method,
+    body: req.payload,
+  });
   return res.record;
 }
 
 async function deleteRecord(babyId: number, category: RecordCategory, id: number): Promise<void> {
-  await apiRequest<{ deleted: boolean }>(`/api/babies/${babyId}/records/${category}/${id}`, { method: 'DELETE' });
+  await babyApiRequest<{ deleted: boolean }>(babyId, `/records/${category}/${id}`, { method: 'DELETE' });
 }
 
 export function useSmartDefaultsQuery(enabled = true) {
-  const activeBabyId = useActiveBabyId();
-  return useQuery({
-    queryKey: babyRecordDefaultsQueryKey(activeBabyId),
-    queryFn: ({ signal }) => {
-      if (activeBabyId === null) throw new ApiError(400, '请先选择宝宝档案。');
-      return fetchSmartDefaults(activeBabyId, signal);
-    },
-    enabled: enabled && activeBabyId !== null,
+  return useBabyQuery({
+    queryKey: babyRecordDefaultsQueryKey,
+    queryFn: (babyId, signal) => babyApiRequest<SmartDefaults>(babyId, '/records/defaults', { signal }),
+    enabled,
   });
 }
 
@@ -386,43 +375,73 @@ const GROWTH_CHART_LIMIT = 100;
 
 /** 生长曲线专用查询：一次拉取最多 100 条历史生长测量（对齐后端 MaxListLimit），避免受列表 20 条分页截断。 */
 export function useGrowthChartQuery() {
-  const activeBabyId = useActiveBabyId();
-  return useQuery({
-    queryKey: [...babyRecordsQueryKey(activeBabyId), 'health', 'growth-chart'],
-    queryFn: ({ signal }) => {
-      if (activeBabyId === null) throw new ApiError(400, '请先选择宝宝档案。');
-      return fetchRecordList(
-        activeBabyId,
+  return useBabyQuery({
+    queryKey: (babyId) => [...babyRecordsQueryKey(babyId), 'health', 'growth-chart'],
+    queryFn: (babyId, signal) =>
+      fetchRecordList(
+        babyId,
         'health',
         { subtype: 'growth', range: 'all', limit: GROWTH_CHART_LIMIT, offset: 0 },
         signal,
-      );
-    },
-    enabled: activeBabyId !== null,
+      ),
   });
 }
 
 export function useSaveRecordMutation() {
-  const queryClient = useQueryClient();
-  const activeBabyId = useActiveBabyId();
-  return useMutation({
-    mutationFn: async (req: SaveRecordRequest) => {
-      const targetBabyId = resolveMutationBabyId(activeBabyId);
-      const saved = await saveRecord(targetBabyId, req);
-      invalidateAllRecordQueries(queryClient, targetBabyId);
-      return saved;
-    },
+  return useBabyMutation({
+    mutationFn: (babyId, req: SaveRecordRequest) => saveRecord(babyId, req),
+    invalidate: 'records',
   });
 }
 
 export function useDeleteRecordMutation() {
-  const queryClient = useQueryClient();
-  const activeBabyId = useActiveBabyId();
-  return useMutation({
-    mutationFn: async ({ category, id }: { readonly category: RecordCategory; readonly id: number }) => {
-      const targetBabyId = resolveMutationBabyId(activeBabyId);
-      await deleteRecord(targetBabyId, category, id);
-      invalidateAllRecordQueries(queryClient, targetBabyId);
+  return useBabyMutation({
+    mutationFn: (babyId, { category, id }: { readonly category: RecordCategory; readonly id: number }) =>
+      deleteRecord(babyId, category, id),
+    invalidate: 'records',
+  });
+}
+
+/** 单事务批量创建喂养与护理记录，成功后统一刷新列表、智能默认值与首页看板缓存。 */
+export function useBatchCreateRecordsMutation() {
+  return useBabyMutation({
+    mutationFn: (babyId, input: BatchCreateRecordsInput) =>
+      babyApiRequest<BatchCreateRecordsResult>(babyId, '/records/batch', { method: 'POST', body: input }),
+    invalidate: 'records',
+  });
+}
+
+/**
+ * 撤销单次批量补录生成的全部记录：
+ * 逐条调用既有 DELETE 接口；对已删除（404）按幂等成功处理，若中途部分失败则保留未删项并仍刷新已生效缓存。
+ */
+export function useUndoBatchRecordsMutation() {
+  return useBabyMutation({
+    mutationFn: async (targetBabyId, targets: readonly BatchUndoTarget[], queryClient) => {
+      const remaining: BatchUndoTarget[] = [];
+      let deletedAny = false;
+      let firstError = '';
+
+      for (const target of targets) {
+        try {
+          await deleteRecord(targetBabyId, target.category, target.id);
+          deletedAny = true;
+        } catch (cause) {
+          if (cause instanceof ApiError && cause.status === 404) {
+            deletedAny = true;
+            continue;
+          }
+          remaining.push(target);
+          if (!firstError) {
+            firstError = cause instanceof Error ? cause.message : '撤销失败，请稍后重试';
+          }
+        }
+      }
+
+      if (deletedAny) {
+        invalidateBabyDomain(queryClient, targetBabyId, 'records');
+      }
+      return { remaining, firstError };
     },
   });
 }

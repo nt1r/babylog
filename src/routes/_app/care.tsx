@@ -1,5 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
+import { ClipboardList } from 'lucide-react';
 import { RecordListPage, type RecordRowDescriptor } from '@/components/record-list-page';
+import { Button } from '@/components/ui/button';
 import { CARE_SUBTYPE_LABELS, CARE_SUBTYPE_OPTIONS, RECORD_CATEGORY_META } from '@/lib/categories';
 import {
   type CareDailySummary,
@@ -9,6 +11,7 @@ import {
   STOOL_CONSISTENCY_LABELS,
 } from '@/lib/records';
 import { formatLocalDateTimeShort, formatLocalTimeFromISO, getLocalDateKeyFromISO } from '@/lib/time';
+import { useOverlayStore } from '@/stores/overlays';
 
 export const Route = createFileRoute('/_app/care')({
   component: CarePage,
@@ -56,6 +59,12 @@ function CarePage() {
       icon={META.icon}
       badgeClassName={META.softClass}
       createButtonLabel={META.createLabel}
+      secondaryHeaderAction={
+        <Button type="button" variant="outline" size="sm" onClick={() => useOverlayStore.getState().openBatchRecord()}>
+          <ClipboardList className="size-4" />
+          批量补录
+        </Button>
+      }
       subtypeTabs={SUBTYPE_TABS}
       loadErrorFallback="无法加载护理记录"
       emptyTitle="当前范围内还没有护理记录"

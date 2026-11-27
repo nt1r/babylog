@@ -14,45 +14,94 @@ permissions:
   contents: read
 
 jobs:
-  verify:
-    name: Lint, Typecheck, Test & Build
+  web:
+    name: Web, Guardrails & Typecheck
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
+      - name: Setup Web toolchain & OpenSpec CLI
+        uses: ./.github/actions/setup-web-cached
         with:
-          node-version-file: ".node-version"
-          cache: "pnpm"
+          install-openspec: "true"
 
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: "backend/go.mod"
-          cache-dependency-path: "backend/go.sum"
+      - name: Lint frontend (Biome)
+        run: pnpm lint:web
 
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Install OpenSpec CLI
-        run: npm install -g @fission-ai/openspec@2.1.1
-
-      - name: Lint & format check
-        run: pnpm lint
+      - name: Static guardrails & OpenSpec validation
+        run: pnpm lint:guardrails
 
       - name: Typecheck
         run: pnpm check
 
-      - name: Backend vet & tests
-        run: pnpm test
+      - name: Build frontend static assets
+        run: pnpm build:web
+
+      - name: Upload frontend static assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-web-dist
+          path: dist/
+          retention-days: 1
+
+  backend:
+    name: Go Lint & Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go & staticcheck with layered cache
+        uses: ./.github/actions/setup-go-cached
+        with:
+          cache-scope: backend
+          install-staticcheck: "true"
+
+      - name: Go lint & staticcheck
+        env:
+          BABYLOG_REQUIRE_CACHED_STATICCHECK: "true"
+        run: ./scripts/lint-go.sh
+
+      - name: Backend unit & integration tests
+        run: ./scripts/test-go.sh
+
+  backend-race:
+    name: Go Race Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go with race build cache
+        uses: ./.github/actions/setup-go-cached
+        with:
+          cache-scope: race
 
       - name: Backend race tests
-        run: pnpm test:race
+        run: ./scripts/test-go.sh --race
 
-      - name: Build frontend & single binary
-        run: pnpm build
+  build:
+    name: Build Single Binary
+    needs: [web, backend]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download frontend static assets
+        uses: actions/download-artifact@v8
+        with:
+          name: ci-web-dist
+          path: dist
+
+      - name: Setup Go with build cache
+        uses: ./.github/actions/setup-go-cached
+        with:
+          # build-server.sh 使用 -trimpath，其 Go build action ID 与普通 go test 不同，须独立缓存作用域。
+          cache-scope: build
+
+      - name: Build single binary with embedded frontend
+        run: |
+          ./scripts/build-server.sh
+          ./bin/babylog version

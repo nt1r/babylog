@@ -15,7 +15,7 @@ import { toast } from '@/components/ui/toast';
 import { MAX_BABIES_PER_USER, useActiveBaby } from '@/lib/baby';
 import { formatBabyAge } from '@/lib/time';
 import { getInitials } from '@/lib/utils';
-import { useBabyStore } from '@/stores/baby';
+import { useOverlayStore } from '@/stores/overlays';
 
 interface BabySwitcherProps {
   readonly variant: 'sidebar' | 'header';
@@ -28,7 +28,7 @@ interface BabySwitcherProps {
  */
 export function BabySwitcher({ variant }: BabySwitcherProps) {
   const { babies, activeBaby, activeBabyId, selectBaby } = useActiveBaby();
-  const setAddDialogOpen = useBabyStore((state) => state.setAddDialogOpen);
+  const openAddBaby = useOverlayStore((state) => state.openAddBaby);
   const { isMobile, setOpenMobile, state } = useSidebar();
 
   const atLimit = babies.length >= MAX_BABIES_PER_USER;
@@ -46,7 +46,7 @@ export function BabySwitcher({ variant }: BabySwitcherProps) {
 
   function handleOpenAdd() {
     if (variant === 'sidebar') setOpenMobile(false);
-    setAddDialogOpen(true);
+    openAddBaby();
   }
 
   if (variant === 'header') {

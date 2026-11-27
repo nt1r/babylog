@@ -19,6 +19,7 @@ import { Route as AppDashboardRouteImport } from './routes/_app/dashboard'
 import { Route as AppFeedingRouteImport } from './routes/_app/feeding'
 import { Route as AppGrowthRouteImport } from './routes/_app/growth'
 import { Route as AppHealthRouteImport } from './routes/_app/health'
+import { Route as AppInsightsRouteImport } from './routes/_app/insights'
 import { Route as AppRemindersRouteImport } from './routes/_app/reminders'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppSleepRouteImport } from './routes/_app/sleep'
@@ -74,6 +75,11 @@ const AppHealthRoute = AppHealthRouteImport.update({
   path: '/health',
   getParentRoute: () => AppRoute,
 } as any)
+const AppInsightsRoute = AppInsightsRouteImport.update({
+  id: '/insights',
+  path: '/insights',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppRemindersRoute = AppRemindersRouteImport.update({
   id: '/reminders',
   path: '/reminders',
@@ -110,6 +116,7 @@ export interface FileRoutesByFullPath {
   '/feeding': typeof AppFeedingRoute
   '/growth': typeof AppGrowthRoute
   '/health': typeof AppHealthRoute
+  '/insights': typeof AppInsightsRoute
   '/reminders': typeof AppRemindersRoute
   '/settings': typeof AppSettingsRoute
   '/sleep': typeof AppSleepRoute
@@ -126,6 +133,7 @@ export interface FileRoutesByTo {
   '/feeding': typeof AppFeedingRoute
   '/growth': typeof AppGrowthRoute
   '/health': typeof AppHealthRoute
+  '/insights': typeof AppInsightsRoute
   '/reminders': typeof AppRemindersRoute
   '/settings': typeof AppSettingsRoute
   '/sleep': typeof AppSleepRoute
@@ -144,6 +152,7 @@ export interface FileRoutesById {
   '/_app/feeding': typeof AppFeedingRoute
   '/_app/growth': typeof AppGrowthRoute
   '/_app/health': typeof AppHealthRoute
+  '/_app/insights': typeof AppInsightsRoute
   '/_app/reminders': typeof AppRemindersRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/sleep': typeof AppSleepRoute
@@ -162,6 +171,7 @@ export interface FileRouteTypes {
     | '/feeding'
     | '/growth'
     | '/health'
+    | '/insights'
     | '/reminders'
     | '/settings'
     | '/sleep'
@@ -178,6 +188,7 @@ export interface FileRouteTypes {
     | '/feeding'
     | '/growth'
     | '/health'
+    | '/insights'
     | '/reminders'
     | '/settings'
     | '/sleep'
@@ -195,6 +206,7 @@ export interface FileRouteTypes {
     | '/_app/feeding'
     | '/_app/growth'
     | '/_app/health'
+    | '/_app/insights'
     | '/_app/reminders'
     | '/_app/settings'
     | '/_app/sleep'
@@ -282,6 +294,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppHealthRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/insights': {
+      id: '/_app/insights'
+      path: '/insights'
+      fullPath: '/insights'
+      preLoaderRoute: typeof AppInsightsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/reminders': {
       id: '/_app/reminders'
       path: '/reminders'
@@ -326,6 +345,7 @@ interface AppRouteChildren {
   AppFeedingRoute: typeof AppFeedingRoute
   AppGrowthRoute: typeof AppGrowthRoute
   AppHealthRoute: typeof AppHealthRoute
+  AppInsightsRoute: typeof AppInsightsRoute
   AppRemindersRoute: typeof AppRemindersRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppSleepRoute: typeof AppSleepRoute
@@ -339,6 +359,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppFeedingRoute: AppFeedingRoute,
   AppGrowthRoute: AppGrowthRoute,
   AppHealthRoute: AppHealthRoute,
+  AppInsightsRoute: AppInsightsRoute,
   AppRemindersRoute: AppRemindersRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppSleepRoute: AppSleepRoute,

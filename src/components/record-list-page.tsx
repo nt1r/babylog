@@ -25,7 +25,7 @@ import {
 } from '@/lib/records';
 import { formatDateGroupLabel } from '@/lib/time';
 import { cn } from '@/lib/utils';
-import { useQuickRecordStore } from '@/stores/quick-record';
+import { useOverlayStore } from '@/stores/overlays';
 
 const DEFAULT_RANGE_OPTIONS: ReadonlyArray<RecordRange> = ['today', '7d', '30d', 'all'];
 
@@ -293,6 +293,7 @@ interface RecordListPageBaseProps<C extends RecordCategory> {
   readonly deleteSuccessToast: string;
   readonly describeRow: (rec: RecordOf<C>) => RecordRowDescriptor;
   readonly formatDeleteDescription: (rec: RecordOf<C>) => string;
+  readonly secondaryHeaderAction?: ReactNode;
   readonly onCreate?: (activeFilter: string) => void;
   readonly onEdit?: (rec: RecordOf<C>) => void;
 }
@@ -333,6 +334,7 @@ export function RecordListPage<C extends RecordCategory>(props: RecordListPagePr
     deleteSuccessToast,
     describeRow,
     formatDeleteDescription,
+    secondaryHeaderAction,
     onCreate,
     onEdit,
   } = props;
@@ -356,7 +358,7 @@ export function RecordListPage<C extends RecordCategory>(props: RecordListPagePr
       onCreate(filter);
       return;
     }
-    useQuickRecordStore.getState().openCreate(category, filter === 'all' ? undefined : filter);
+    useOverlayStore.getState().openQuickCreate(category, filter === 'all' ? undefined : filter);
   }
 
   function handleEdit(rec: RecordOf<C>) {
@@ -364,7 +366,7 @@ export function RecordListPage<C extends RecordCategory>(props: RecordListPagePr
       onEdit(rec);
       return;
     }
-    useQuickRecordStore.getState().openEdit(toEditableRecord(category, rec));
+    useOverlayStore.getState().openQuickEdit(toEditableRecord(category, rec));
   }
 
   async function handleConfirmDelete() {
@@ -394,7 +396,7 @@ export function RecordListPage<C extends RecordCategory>(props: RecordListPagePr
         onEdit={() => handleEdit(rec)}
         onDuplicate={
           enableDuplicate
-            ? () => useQuickRecordStore.getState().openDuplicate(toEditableRecord(category, rec))
+            ? () => useOverlayStore.getState().openQuickDuplicate(toEditableRecord(category, rec))
             : undefined
         }
         onDelete={() => setDeleting(rec)}
@@ -444,10 +446,13 @@ export function RecordListPage<C extends RecordCategory>(props: RecordListPagePr
           </span>
         }
         headerAction={
-          <Button size="sm" onClick={handleOpenCreate}>
-            <PlusIcon className="size-4" />
-            {createButtonLabel}
-          </Button>
+          <div className="flex items-center gap-2">
+            {secondaryHeaderAction}
+            <Button size="sm" onClick={handleOpenCreate}>
+              <PlusIcon className="size-4" />
+              {createButtonLabel}
+            </Button>
+          </div>
         }
         filters={
           <Tabs value={filter} onValueChange={(value) => setFilter(String(value))}>

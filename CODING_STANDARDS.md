@@ -6,8 +6,9 @@
 
 ### 设计系统与无障碍
 - 配色、圆角与业务分类色以 `docs/design-system.md`、`src/styles/tokens.css` 与 `src/styles/globals.css` 为准；业务界面统一复用语义 Token（含 `feeding` / `sleep` / `health` / `care` 分类色）与 `src/components/ui/` 原语（机械色阶、字号与裸控件禁令由 `scripts/lint-guardrails.sh` 自动兜底）。
+- 本仓 `Card` 仅提供垂直留白（`py-(--card-spacing)`），`CardHeader` / `CardContent` 负责水平留白（`px-(--card-spacing)`）；业务页卡片（含 KPI 摘要卡）统一采用 `Card` + `CardHeader` + `CardContent` 结构并与首页看板保持一致的图标尺寸与字号层级，不在 `CardContent` 上用 `p-0` / `px-0` 清空左右留白（仅需收紧上间距时用 `pt-0`）。
 - 移动端原生 `<input>` / `<select>`（含透明覆盖层）保持 `text-base md:text-sm`（`>= 16px`）避免 iOS 放大，桌面紧凑覆写须带 `md:` 前缀；同层级表单标签与 `FieldLabel`（`13px`）对齐、卡片单选块与 `ChoiceCardButton`（`h-10 text-sm`）对齐。
-- 响应式宽度与布局断点与 `useIsMobile`（`768px` = `md:`）保持一致；含内部滚动区的底部 `Drawer` 在滚动容器标注 `data-base-ui-swipe-ignore`，浮层与抽屉（`Popover`/`Drawer`）在 `disabled` 时仅拦截打开、始终放行关闭并在转为 `disabled` 时自动收起。
+- 响应式宽度与布局断点与 `useIsMobile`（`768px` = `md:`）保持一致；浮层与抽屉（`Popover`/`Drawer`）在 `disabled` 时仅拦截打开、始终放行关闭并在转为 `disabled` 时自动收起（底部 `Drawer` 滚动区 `data-base-ui-swipe-ignore` 由 `scripts/lint-guardrails.sh` 自动校验）。
 - 亮/暗双色语义变量在 `src/styles/tokens.css` 中成对维护：亮色覆写限定在 `:root:not(.dark):not([data-theme="dark"]), .light, [data-theme="light"]`，暗色覆写限定在 `.dark, [data-theme="dark"]`。
 - 所有无障碍文案（`Spinner`、抽屉/弹窗关闭按钮、面包屑、步进按钮的 `aria-label`）使用中文；按钮内的 `Spinner` 标注 `aria-hidden="true" role="presentation"`，避免嵌套 live region 或中英文混播。
 - 界面可见文案面向非技术家长，用日常中文表达操作与可感知的结果；工程与实现概念（如实例、元数据、CLI、明文、文件扩展名 `.ics`、HTTP/Cookie/接口字段）保留在代码注释与运维文档中。
@@ -20,10 +21,11 @@
 - 列表翻页使用 `useInfiniteQuery` 按 `offset` 递增拉取并与后端 `MaxListLimit` 对齐。翻页请求失败（`isFetchNextPageError`）时保留已加载列表并在底部提供内联重试按钮（重试中禁用并展示加载态），仅在首屏无数据且报错时渲染整页错误态。
 - 图表与全量趋势聚合使用专用查询（显式指定对齐 `MaxListLimit` 的 `limit`，并透传错误重试态与上限提示），不直接复用 `PAGE_SIZE = 20` 的列表分页 Hook，避免静默截断早期历史。按日统计或绘图的时序数据以本地自然日 `YYYY-MM-DD` 去重，不用四舍五入后的近似月龄/天数作为去重键。
 - 提交或删除进行中（`isPending`）时，抽屉与弹窗须锁定关闭操作（遮罩点击 / `Esc` / 返回键 / 下滑手势 / 顶部关闭按钮）：表单弹窗统一使用 `<Dialog pending={isPending}>`、危险确认复用 `<DeleteConfirmDialog pending={isPending}>`、实体抽屉复用 `<EntityDrawer pending={isPending}>`，同步禁用影响草稿的表单控件，防止异步失败错误丢失反馈。
-- 高频直记按钮除禁用态外须配备 `useRef` 同步防重入锁；一次性撤销回调（如 Toast 撤销按钮）须配备单次执行守卫，防止连点重复请求导致误报 404。
+- 非幂等创建/批量写入提交、高频直记按钮与一次性撤销回调除禁用态外须配备同步 `useRef` 防重入锁（在 `finally` 中释放），防止 React 重渲染前连点或快捷键连按触发重复请求。
 - 抽屉关闭动画期间保持当前意图稳定，由下次打开动作写入新意图，避免标题与表单区在滑出瞬间闪烁；表单初始化 `useEffect` 仅依赖 `[open, entityId]`（其余默认值通过 `useRef` 读取），避免后台 Query 刷新冲掉未保存编辑，且校验与提交仅覆盖当前激活状态下可见的字段。
+- 全局浮层锁定态须绑定当前活跃槽位归属（解锁仅对持有锁的浮层生效）；持有锁的异步抽屉在组件卸载与切娃异常路径均须释放锁并收口残留界面。
 - 由可关闭浮层/抽屉（特别是移动端渲染为 `<Drawer>` 的 `Sidebar`，以及 `DropdownMenu` / `Popover`）触发的弹窗或抽屉，须提升挂载到 `AppShell` 等常驻根节点并由 Zustand 驱动显隐，避免触发容器退场卸载子树时连带销毁刚打开的浮层（`Sidebar` 内直接挂载已由 `scripts/lint-guardrails.sh` 自动拦截）。
-- React 19 Ref 写入时机：最新回调或快照 Ref 统一在 `useLayoutEffect` 中同步，避免在渲染体直接改写 `ref.current`；跨渲染稳定的惰性单例用 `useState(() => ...)` 初始化。
+- React 19 Ref 与状态派生：最新回调或快照 Ref 统一在 `useLayoutEffect` 中同步，跨渲染稳定的惰性单例用 `useState(() => ...)` 初始化；可由主列表或会话数组推导的次级状态（如最近提交项、交替建议）直接派生，保持 `setState` updater 纯净、不在 updater 内触发其他 `setState`。
 
 ### 表单受控、步进单调性与智能默认值
 - 数字与小数输入框一律以 `string` 受控，仅在点击步进或提交时解析与校验，保证退格删空重输流畅。
@@ -40,8 +42,9 @@
 - 环境变量在入口阶段显式校验；跨目录脚本调用的相对路径基于调用方工作目录解析；SQLite 连接参数、WAL 配置与 `goose` 迁移保持单一事实来源。
 - 凡依赖 `time.Now()` 做校验、会话过期或聚合的 Store/Service 均支持 `WithClock` 注入，测试统一使用固定时钟消除宿主机日期依赖。
 - 跨多接口的公共前置检查（如已建档校验）下沉为 Gin 中间件；跨模块同口径统计（如列表小计与首页看板）收敛为单一共享累加函数。
-- 跨包导出的 Store 与事务原语须自守输入不变量（如关键指针判空与字段标准化校验），不隐式假设上层 HTTP 中间件已完成前置拦截。
-- GORM 错误判断统一使用 `errors.Is`；读后写更新包入 `db.Transaction` 并显式 `Select` 更新列清单，确保跨子类型切换时废弃可空列落库为 `NULL`；跨 `scrypt` 等慢操作的读后写须在事务内以条件 `WHERE`（如原状态/原哈希未变更）配合 `RowsAffected` 防 TOCTOU。
+- 需区分“省略参数回退默认”与“显式传空拒绝 400”的查询参数统一使用 `c.GetQuery` 显式判断存在性。
+- 跨包导出的 Store 与事务原语须自守输入不变量（如关键指针判空与字段标准化校验），不隐式假设上层 HTTP 中间件已完成前置拦截；领域包新增或统一标准枚举常量时，同包校验、默认值与外部调用方一并收敛。
+- GORM 错误判断统一使用 `errors.Is`；读后写更新包入 `db.Transaction` 并显式 `Select` 更新列清单，确保跨子类型切换时废弃可空列落库为 `NULL`；跨 `scrypt` 等慢操作的读后写须在事务内以条件 `WHERE`（如原状态/原哈希未变更）配合 `RowsAffected` 防 TOCTOU，慢计算并发信号量在派生完成后立即释放（保留 `defer` 异常兜底），避免跨数据库 I/O 占槽。
 - 内存限流或缓存表须具备硬容量上限与淘汰策略（优先淘汰最冷条目），防止恶意唯一键洪泛造成 OOM 或挤出受限账号。
 - HTTP 错误与异常恢复统一返回结构化中文 JSON，CLI 提示保持中文一致；服务端日志统一经 `log/slog` 输出且不含原始请求头、Cookie、凭据或个人敏感数据。
 
@@ -49,7 +52,8 @@
 - 分层定位、场景数据生成器、断言红线、中文场景注释模板与环境隔离细则以 `docs/testing-guide.md` 为单一事实来源；代码审查须核对写操作具备回读终态断言、业务前置数据经真实 HTTP API 构造，且与活动 OpenSpec 变更的 `test-plan.md` 逐项对应。
 - 并发测试的 worker goroutine 不得直接或间接调用 `t.Fatalf` / `t.FailNow`（含封装了 `t.Fatalf` 的测试客户端或解码助手），须在子协程收集响应与错误并在 `wg.Wait()` 后由主协程统一断言。
 - 无 `FakeClock` 注入的真实进程测试（如 `backend/cmd/babylog/cli_test.go`）不得硬编码可能晚于宿主机当前日期的固定业务日期（如出生日期），应基于 `time.Now()` 相对偏移构造合法历史日期。
-- 断言深度须与 `测试目标` 逐条匹配：核查排序、全零填充、回读计数与落库终态，避免仅凭切片长度或内存返回值“伪通过”。
+- 断言深度须与 `测试目标` 及 `docs/testing-guide.md` 索引描述逐条匹配：核查排序、全零填充、回读计数、落库终态，以及描述中声称的每个 HTTP 动词（如“改删”须同时覆盖 `PUT` 与 `DELETE`）、反向越权主体与边界入参，避免仅凭切片长度、内存返回值或文字声称造成“伪覆盖”。
+- 凡前端请求层（`src/lib/http.ts`）按结构化 `code` 字段做全局分流的接口（如 `INVALID_CREDENTIALS`、`PASSWORD_CHANGE_REQUIRED`），集成测试须解码并断言精确 `code`，不能仅校验 HTTP 状态码与中文提示文案。
 
 ## 中文注释规范
 - **聚焦“为什么”与高危隐性契约**：统一使用中文并对齐 `GLOSSARY.md` 术语（业务域操作者称“家长”或“管理员”）；重点阐明核心业务逻辑、复杂算法、面向非 Go 背景维护者的 Go 特有机制（就地讲清“机制 + 本处作用”，同包仅首处说明），以及重构易踩坑的高危隐性契约——如三态指针语义（`nil` 保留 vs `""` 清空）、批量与单条更新的字段保留差异、时间存储单位与 UTC/DST 假设、跨层安全耦合（如 `changeOrigin: false`、Same-Origin、`/dev/tty` 管道交互）与复杂前端状态守卫（双守卫、单次锁、主副联动覆写、防误关）。
@@ -57,8 +61,9 @@
 - **随代码同步演进**：修改行为或叠加新功能时同步更新包/文件总览注释与意图注释，保持静态事实描述（去掉“重构后的”“第 1 期”等过程时态词），清理废弃注释代码。机械格式基线与集成测试模板一致性由 `scripts/check-comments.mjs`、`scripts/check-spec-refs.mjs` 与 `// cross-table:` 门禁自动兜底（不以覆盖率或字数为指标）。
 
 ## 前后端契约与审查核对
-- 修改或精简请求/响应字段前，同步核对三处事实来源：Go `json` tag、前端 `src/lib/*.ts` 类型定义与 `openspec/specs/*.md`。
+- 修改或精简请求/响应字段前，同步核对三处事实来源：Go `json` tag、前端 `src/lib/*.ts` 类型定义与 `openspec/specs/*.md`；跨接口复用的 Go 汇总结构体若仅为内部累加保留分项，用 `json:"-"` 隔离，避免向未消费接口暴露冗余字段。
+- 业务枚举中文文案以 `src/lib/records.ts` 与 `src/lib/categories.ts` 为单一事实来源；前端直接引用字典常量，后端导出文案与其保持一致。
 - Go 后端以 `*string` 表达三态语义（`nil` 保留原值、`""` 显式清空）时，前端留空输入默认序列化为 `undefined`，仅在明确需要清空旧值时发送空字符串。
-- 确认任何未消费字段或接口前，先检索全仓页面、导航、抽屉与 OpenSpec 规格，确保不破坏既有契约或引发回归。
+- 确认任何未消费字段或接口前，先运行 `pnpm audit:api` 并结合全仓页面、导航、抽屉、`src/lib/http.ts`（全局错误码分流单一事实来源）与 `openspec/specs/` 核对，确保不破坏既有契约或引发回归。
 - 迁移路由前缀、删改接口或重命名中间件后，用 `rg` 全仓检索旧路径与旧符号名，同步清理 handler 注释、测试描述与 `openspec/specs/` 文案。
 - 保持模块边界清晰，避免跨业务模块横向耦合引用（前端未引用死导出已由 `pnpm lint` 自动门禁拦截）。

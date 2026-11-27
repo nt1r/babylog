@@ -95,7 +95,7 @@ func TestDashboardSummaryTimezoneSplitAndMedicine(t *testing.T) {
  * 1. 验证返回连续 7 个有序日桶且前 5 个空日全零填充。
  * 2. 验证跨夜睡眠拆分为 11-22 的 2.0h 与 11-23 的 6.0h；配方奶+瓶喂母乳合计 220ml 计入 feeding_ml，亲喂 30min/2次独立统计不混入奶量。
  * 3. 验证 5 个有序照护节律时段（清晨/上午/下午/傍晚/夜间）全部命中且计数准确。
- * 4. 验证跨 7 天窗口起点的睡眠仅切分落入首日的 6.0h 且不计入时段频次；省略 days 默认 7 天、days=14 返回 11/23 标签，非法 days 返回 400。
+ * 4. 验证跨 7 天窗口起点的睡眠仅切分落入首日的 6.0h 且不计入时段频次；省略 days 默认 7 天、days=1/14/90 合法边界正确，非法 days 返回 400。
  */
 func TestDashboardSevenDayTrendsAndCareRhythm(t *testing.T) {
 	t.Parallel()
@@ -186,9 +186,136 @@ func TestDashboardSevenDayTrendsAndCareRhythm(t *testing.T) {
 		t.Errorf("14 天趋势预期末日标签 11/23，实际 %+v", t14.Daily[13])
 	}
 
+	// 验证合法天数上下限边界：days=1 返回单日 2026-11-23，days=90 返回 90 个日桶且末日标签 11/23。
+	t1 := DecodeOK[dashboard.TrendsResponse](t, app.Client().Get(t, trendsBase+"?days=1&tz=Asia/Shanghai"))
+	if len(t1.Daily) != 1 || t1.Daily[0].Date != "2026-11-23" {
+		t.Fatalf("days=1 边界预期返回 1 个日桶（2026-11-23），实际 %+v", t1.Daily)
+	}
+	t90 := DecodeOK[dashboard.TrendsResponse](t, app.Client().Get(t, trendsBase+"?days=90&tz=Asia/Shanghai"))
+	if len(t90.Daily) != 90 || t90.Daily[89].Label != "11/23" {
+		t.Fatalf("days=90 边界预期返回 90 个日桶且末日标签 11/23，实际 len=%d", len(t90.Daily))
+	}
+
 	for _, badDays := range []string{"0", "91", "abc"} {
 		app.Client().Get(t, trendsBase+"?days="+badDays+"&tz=Asia/Shanghai").
 			RequireError(t, http.StatusBadRequest, "趋势天数")
+	}
+}
+
+/*
+ * Spec: dashboard-insights / Multi-dimension trend breakdown and period insights / Break down feeding, sleep, care, and health metrics per local day; Compute period summary for side balance, solid acceptance, sleep continuity, stool flags, and active days
+ * 测试场景：验证 30 日多维趋势拆解（配方奶/瓶喂母乳/亲喂/辅食、白天小睡/夜间睡眠、嘘嘘/便便/洗澡、最高体温与用药）及周期洞察摘要（含空窗冷启动）。
+ * 业务背景：统计分析页支持近 30 天等多维图表，需在不破坏原有字段的前提下准确拆分各品类每日数据与周期级指标（亲喂侧别均衡、辅食接受度、最长连续夜觉、小睡均长与便便关注提示）。
+ * 前置数据：
+ * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
+ * - 管理员与会话：主环境与空窗环境各自已初始化并登录管理员
+ * - 宝宝档案：默认档案小汤圆（2026-07-15，female）
+ * - 前置业务记录：主环境在近 30 天内写入配方奶、瓶喂母乳、左/右/双侧亲喂、带接受度辅食、2 段白天小睡、跨夜整觉、各类尿布（含稀便/干硬/异常颜色）、洗澡、同日多条体温与用药；空窗环境无记录
+ * 测试目标：
+ * 1. 验证 30 日每日桶准确拆解喂养、睡眠、护理与健康分项，且无体温日 max_temp_c 为 null。
+ * 2. 验证 period_summary 准确汇总有效记录天数、亲喂侧别分布、辅食接受度、最长夜觉/小睡均长与便便观察计数。
+ * 3. 验证空窗冷启动查询 30 日趋势时 period_summary 各项归零且全部每日桶零填充无异常。
+ */
+func TestDashboardMultiDimensionTrendsAndPeriodSummary(t *testing.T) {
+	t.Parallel()
+
+	app := NewTestApp(t)
+	s := app.Scenario()
+	b := s.EnsureBaby()
+	trendsBase := babyPath(b.ID, "/dashboard/trends")
+
+	// 前置造数：在 2026-11-21、11-22、11-23 三天写入完整多品类样本覆盖全部新拆解维度。
+	s.AddFormula(120, "2026-11-23T00:10:00Z")                                             // 11-23 08:10+08
+	s.AddFormula(90, "2026-11-23T01:10:00Z")                                              // 11-23 09:10+08
+	s.AddBottleBreast(80, "2026-11-23T01:20:00Z")                                         // 11-23 09:20+08
+	s.AddDirectBreast("left", 15, "2026-11-23T01:30:00Z")                                 // 11-23 09:30+08
+	s.AddDirectBreast("right", 12, "2026-11-22T02:00:00Z")                                // 11-22 10:00+08
+	s.AddDirectBreast("both", 20, "2026-11-22T06:00:00Z")                                 // 11-22 14:00+08
+	s.AddSolid("米粉", "半碗", "like", "2026-11-23T01:40:00Z")                                // 11-23 09:40+08
+	s.AddSolid("南瓜泥", "两勺", "neutral", "2026-11-22T04:00:00Z")                            // 11-22 12:00+08
+	s.AddSolid("西兰花泥", "一口", "dislike", "2026-11-21T04:00:00Z")                           // 11-21 12:00+08
+	s.AddSleep(records.SleepSubtypeNap, "2026-11-22T01:00:00Z", "2026-11-22T02:00:00Z")   // 11-22 60min 小睡
+	s.AddSleep(records.SleepSubtypeNap, "2026-11-22T06:30:00Z", "2026-11-22T08:00:00Z")   // 11-22 90min 小睡
+	s.AddSleep(records.SleepSubtypeNight, "2026-11-22T14:00:00Z", "2026-11-22T22:00:00Z") // 11-22 22:00→11-23 06:00（480min 夜觉，切分 2.0h/6.0h）
+	s.AddDiaper("pee", "", "", "2026-11-23T00:30:00Z")                                    // 11-23 嘘嘘
+	s.AddDiaper("poop", "watery", "yellow", "2026-11-23T01:00:00Z")                       // 11-23 稀便
+	s.AddDiaper("both", "hard", "abnormal", "2026-11-22T05:00:00Z")                       // 11-22 混合+干硬+异常色
+	s.AddBath("2026-11-22T12:00:00Z")                                                     // 11-22 洗澡
+	s.AddTemperature(37.4, "2026-11-23T00:40:00Z")                                        // 11-23 体温 1
+	s.AddTemperature(38.6, "2026-11-23T01:50:00Z")                                        // 11-23 体温 2（当日峰值）
+	s.AddMedicine("维生素 D3", "1 粒", "2026-11-23T00:50:00Z")                                // 11-23 用药 1
+	s.AddMedicine("布洛芬", "2.5 ml", "2026-11-23T01:55:00Z")                                // 11-23 用药 2
+
+	// 1. 请求近 30 天趋势，校验 11-22 与 11-23 每日分项拆解及无体温日 max_temp_c 保持 null。
+	resp := app.Client().Get(t, trendsBase+"?days=30&tz=Asia/Shanghai")
+	resp.RequireStatus(t, http.StatusOK)
+	tr := DecodeOK[dashboard.TrendsResponse](t, resp)
+	if len(tr.Daily) != 30 {
+		t.Fatalf("预期返回 30 个日桶，实际 len=%d", len(tr.Daily))
+	}
+
+	day22 := tr.Daily[28]
+	day23 := tr.Daily[29]
+	if day22.Date != "2026-11-22" || day23.Date != "2026-11-23" {
+		t.Fatalf("末两日日期键异常：day22=%s day23=%s", day22.Date, day23.Date)
+	}
+	if day23.FeedingML != 290 || day23.FormulaML != 210 || day23.FormulaCount != 2 ||
+		day23.BottleBreastML != 80 || day23.BottleBreastCount != 1 ||
+		day23.DirectBreastMin != 15 || day23.DirectBreastCount != 1 ||
+		day23.SolidCount != 1 || day23.FeedingCount != 5 {
+		t.Errorf("2026-11-23 喂养拆解异常：%+v", day23)
+	}
+	if day22.NapHours != 2.5 || day22.NightHours != 2.0 || day22.SleepHours != 4.5 || day22.NapCount != 2 {
+		t.Errorf("2026-11-22 昼夜睡眠拆解异常：%+v", day22)
+	}
+	if day23.NapHours != 0 || day23.NightHours != 6.0 || day23.SleepHours != 6.0 || day23.NapCount != 0 {
+		t.Errorf("2026-11-23 跨夜睡眠拆解异常：%+v", day23)
+	}
+	if day22.PeeCount != 1 || day22.PoopCount != 1 || day22.BathCount != 1 ||
+		day23.PeeCount != 1 || day23.PoopCount != 1 || day23.BathCount != 0 {
+		t.Errorf("护理拆解异常：day22=%+v day23=%+v", day22, day23)
+	}
+	if day22.MaxTempC != nil || day22.MedicineCount != 0 {
+		t.Errorf("无体温/用药日 2026-11-22 预期 max_temp_c=nil 且 medicine_count=0，实际 %+v", day22)
+	}
+	if day23.MaxTempC == nil || *day23.MaxTempC != 38.6 || day23.MedicineCount != 2 {
+		t.Errorf("2026-11-23 健康观察拆解预期 max_temp_c=38.6 且 medicine_count=2，实际 %+v", day23)
+	}
+
+	// 2. 校验周期级洞察 period_summary 的各项统计结果。
+	ps := tr.PeriodSummary
+	if ps.ActiveDays.FeedingDays != 3 || ps.ActiveDays.SleepDays != 2 || ps.ActiveDays.CareDays != 2 {
+		t.Errorf("有效记录天数异常：%+v", ps.ActiveDays)
+	}
+	if ps.BreastSide.LeftCount != 1 || ps.BreastSide.RightCount != 1 || ps.BreastSide.BothCount != 1 {
+		t.Errorf("亲喂侧别分布异常：%+v", ps.BreastSide)
+	}
+	if ps.SolidAcceptance.LikeCount != 1 || ps.SolidAcceptance.NeutralCount != 1 || ps.SolidAcceptance.DislikeCount != 1 {
+		t.Errorf("辅食接受度分布异常：%+v", ps.SolidAcceptance)
+	}
+	if ps.Sleep.LongestNightMin != 480 || ps.Sleep.AvgNapMin != 75 {
+		t.Errorf("周期睡眠连续性异常（预期 longest_night=480, avg_nap=75）：%+v", ps.Sleep)
+	}
+	if ps.Stool.TotalPoopCount != 2 || ps.Stool.WateryCount != 1 || ps.Stool.HardCount != 1 || ps.Stool.AbnormalColorCount != 1 {
+		t.Errorf("周期便便观察统计异常：%+v", ps.Stool)
+	}
+
+	// 3. 验证空窗冷启动宝宝查询 30 天趋势时 period_summary 归零且每日桶零填充。
+	emptyApp := NewTestApp(t)
+	emptyBaby := emptyApp.Scenario().EnsureBaby()
+	emptyResp := emptyApp.Client().Get(t, babyPath(emptyBaby.ID, "/dashboard/trends?days=30&tz=Asia/Shanghai"))
+	emptyResp.RequireStatus(t, http.StatusOK)
+	emptyTrend := DecodeOK[dashboard.TrendsResponse](t, emptyResp)
+	if len(emptyTrend.Daily) != 30 {
+		t.Fatalf("空窗 30 日趋势预期 30 个日桶，实际 %d", len(emptyTrend.Daily))
+	}
+	if emptyTrend.PeriodSummary != (dashboard.PeriodTrendSummary{}) {
+		t.Errorf("空窗期 period_summary 预期全零，实际 %+v", emptyTrend.PeriodSummary)
+	}
+	for _, day := range emptyTrend.Daily {
+		if day.FeedingCount != 0 || day.SleepHours != 0 || day.PeeCount != 0 || day.PoopCount != 0 || day.MaxTempC != nil {
+			t.Errorf("空窗日桶 %s 存在非零残留：%+v", day.Date, day)
+		}
 	}
 }
 
@@ -293,11 +420,11 @@ func TestDashboardGrowthPartialResolutionAndColdStart(t *testing.T) {
  * 业务背景：看板聚合严格绑定归属宝宝与合法 IANA 时区，未登录、不存在或他人宝宝 ID 与非法时区均须在入口层明确拦截。
  * 前置数据：
  * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
- * - 管理员与会话：用户 A（admin）、普通用户 B（已完成改密）及匿名客户端
+ * - 管理员与会话：用户 A（admin）、待强制改密用户 DashPending、普通用户 B（已完成改密）及匿名客户端
  * - 宝宝档案：步骤 1–2 用户 A 未建档；步骤 3 用户 A 建档后验证跨用户 404 与非法时区 400
  * - 前置业务记录：无
  * 测试目标：
- * 1. 验证匿名请求 /api/babies/1/dashboard/summary 与 trends 均返回 401。
+ * 1. 验证匿名请求 /api/babies/1/dashboard/summary 与 trends 均返回 401，待强制改密用户返回 403 PASSWORD_CHANGE_REQUIRED。
  * 2. 验证已登录但未拥有目标宝宝时请求两接口均返回 404。
  * 3. 验证建档后用户 B 访问用户 A 的宝宝看板返回 404，且携带非法 tz=Invalid/Zone 返回 400 中文错误。
  */
@@ -307,11 +434,20 @@ func TestDashboardAuthOnboardingAndTimezoneGuards(t *testing.T) {
 	app := NewTestApp(t)
 	anon := app.UnauthenticatedClient()
 	clientA := app.Client()
+	clientPending, _ := app.CreateUserViaAdmin("DashPending", "pending-init-secret-123")
 	clientB, _ := app.CreateReadyUserViaAdmin("UserB", "userb-init-secret-123", "userb-final-secret-456")
 
-	// 1. 未认证返回 401。
+	// 1. 未认证返回 401，待强制改密用户返回 403 PASSWORD_CHANGE_REQUIRED。
 	anon.Get(t, babyPath(1, "/dashboard/summary")).RequireError(t, http.StatusUnauthorized, "")
 	anon.Get(t, babyPath(1, "/dashboard/trends")).RequireError(t, http.StatusUnauthorized, "")
+	for _, suffix := range []string{"/dashboard/summary", "/dashboard/trends"} {
+		payload := DecodeStatus[struct {
+			Code string `json:"code"`
+		}](t, clientPending.Get(t, babyPath(1, suffix)), http.StatusForbidden)
+		if payload.Code != "PASSWORD_CHANGE_REQUIRED" {
+			t.Fatalf("待改密用户访问 %s 预期 PASSWORD_CHANGE_REQUIRED，实际 %+v", suffix, payload)
+		}
+	}
 
 	// 2. 已认证但无对应归属宝宝返回 404。
 	clientA.Get(t, babyPath(999, "/dashboard/summary")).RequireError(t, http.StatusNotFound, "")

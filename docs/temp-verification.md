@@ -2,42 +2,28 @@
 
 根据 `AGENTS.md`，纳入 Git 的自动化测试仅限后端 Go 测试；前端纯逻辑（codec、视图模型、列表聚合等）通过系统临时目录（`$TMPDIR`）执行 `in-process` 断言验证，任务结束立即清理。编辑完前后端代码后建议先执行 `pnpm format`，再串联 `pnpm check && pnpm lint`，避免因格式差异触发额外重试。
 
-## 在 `$TMPDIR` 下加载工作区 TS 模块（避免 `ERR_MODULE_NOT_FOUND`）
+## 在 `$TMPDIR` 下加载工作区 TS 模块（推荐 `pnpm verify:ts`）
 
-由于临时脚本位于 Git 工作区之外，Node ESM 无法直接按裸包名 `import 'vite'` 解析工作区 `node_modules`。通过 `pathToFileURL` 指向当前工作区的 Vite 入口并调用 `ssrLoadModule`，即可复用 `@/` 路径别名与 TypeScript 转译；脚本开头务必启用 `set -euo pipefail` 与 `trap`，防止前置步骤失败后残留临时文件或误入交互式 `node` REPL：
+由于临时脚本位于 Git 工作区之外，直接用 `node` 执行无法解析 TypeScript 与 `@/` 路径别名。使用仓库内置的轻量运行器 `pnpm verify:ts`（[scripts/run-ts-check.mjs](../scripts/run-ts-check.mjs)）可自动托管 Vite `ssrLoadModule` 生命周期并在结束后关闭服务；脚本开头务必启用 `set -euo pipefail` 与 `trap`，防止前置步骤失败后残留临时文件：
 
 ```bash
 set -euo pipefail
 [ -d node_modules ] || pnpm install --frozen-lockfile
-TMP_TEST="${TMPDIR:-/tmp}/verify-frontend-$$.mjs"
+TMP_TEST="${TMPDIR:-/tmp}/verify-frontend-$$.mts"
 trap 'rm -f "$TMP_TEST"' EXIT
 
 cat <<'EOF' > "$TMP_TEST"
 import assert from 'node:assert/strict';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { useOverlayStore } from '@/stores/overlays';
 
-const { createServer } = await import(
-  pathToFileURL(path.resolve(process.cwd(), 'node_modules/vite/dist/node/index.js')).href
-);
-const server = await createServer({
-  root: process.cwd(),
-  server: { middlewareMode: true },
-  appType: 'custom',
-  logLevel: 'error',
-});
-
-try {
-  const mod = await server.ssrLoadModule('/src/lib/dashboard.ts');
-  // 在此编写 assert 断言
-  assert.ok(mod);
-} finally {
-  await server.close();
-}
+assert.equal(useOverlayStore.getState().active, null);
+console.log('verify ok');
 EOF
 
-node "$TMP_TEST"
+pnpm verify:ts "$TMP_TEST"
 ```
+
+如需在异步 `export default async function ({ load })` 中按需动态加载模块，`pnpm verify:ts` 也会自动注入 `load('/src/...')` 助手并在 `finally` 中关闭 Vite 服务。
 
 ## 免登录隔离 UI 组件视觉预览（按需用于新页面/大幅排版与配色调整）
 
@@ -130,14 +116,14 @@ if [ -x "$CHROME" ]; then
 fi
 ```
 
-- 重点核对：390px 窄屏是否出现关键提醒截断或磁贴数值异常折行、卡片/区块留白是否过大、同层级字号是否统一、相邻语义色（如成功/信息/提醒）区分度、暗色可读性，以及涉及侧边栏改动时的**桌面折叠态（图标态）与展开态**视觉。
+- 重点核对：390px 窄屏是否出现关键提醒截断、磁贴数值异常折行或横向溢出（`scrollWidth > clientWidth`）、卡片内容是否贴边（无水平内边距）或留白过大、同层级字号是否统一、相邻语义色（如成功/信息/提醒）区分度、暗色可读性，以及涉及侧边栏改动时的**桌面折叠态（图标态）与展开态**视觉；整页较长时，除全页图外对新增顶部摘要/卡片区块单独截一帧近景，或用 `getComputedStyle` 校验 `[data-slot="card-content"]` 实际水平留白 > 0（除非父 `[data-slot="card"]` 显式提供水平留白）。
 - **无头截屏常见陷阱（避免误判为功能缺陷）**：
   1. **macOS 最小窗口宽度**：无头 Chrome 在 macOS 下存在约 500px 最小窗口宽度限制；复现 390px 窄屏时，在预览页外层包一层 `w-[390px]` 容器并配合 `--window-size=500,960` 截屏。
   2. **Base UI 进场过渡帧（`data-starting-style`）**：用 JS 自动点击打开 `Popover` / `Dialog` 后立即截屏时，`--virtual-time-budget` 可能停留在 `data-starting-style`（`opacity: 0`）的首帧导致浮层看似空白。将触发延迟设小（如 `10ms`）并将 `--virtual-time-budget` 提高至 `3500–4000` 即可截到完全显现的浮层。
   3. **Recharts 默认入场动画**：`<Line>` / `<Area>` 开启默认入场动画时，无头截屏可能只绘出散点而未完成折线描边；业务曲线或预览核验时显式设置 `isAnimationActive={false}`，既避免切换 Tab 闪烁也确保截屏稳定。
-  4. **单次脚本批量出图**：将亮/暗色与桌面/移动端多个视口放进同一份 Node 脚本循环调用 Chrome 后在 `finally` 统一关闭 Vite server，避免反复启动服务和重复生成样板脚本。
+  4. **单次脚本批量出图**：将亮/暗色与桌面/移动端多个视口放进同一份 Node 脚本循环调用 Chrome 后在 `finally` 统一关闭 Vite server，避免反复启动服务和重复生成样板脚本；同进程内统一使用异步 `promisify(execFile)` 启动 Chrome，确保 Vite HTTP 事件循环持续响应页面请求。
   5. **侧边栏折叠态存储键**：本仓桌面侧边栏展开状态持久化在 `localStorage` 的 `babylog_sidebar_open`（非 shadcn 默认 Cookie）；核验折叠态（图标态）须在渲染前显式写入 `localStorage.setItem('babylog_sidebar_open', 'false')`。
-  6. **虚拟时钟下的交互断言与 `data-slot` 选择器**：`--dump-dom --virtual-time-budget` 会快进 JS 定时器而不按虚拟时间推进 CSS 过渡帧，交互回归断言应检查 Zustand 状态及 Base UI 的 `data-open`/`data-closed`/`data-ending-style` 属性，不以 `getComputedStyle().opacity` 或退场 `transitionend` 卸载作为判据；本仓 UI 原语统一使用 `data-slot="..."` 属性（如 `data-slot="sidebar-trigger"`、`data-slot="drawer-content"`、`data-slot="dialog-content"`），而非上游 `data-sidebar` 等属性。
+  6. **虚拟时钟下的交互断言、过渡色截屏与 `data-slot` 选择器**：`--dump-dom --virtual-time-budget` 会快进 JS 定时器而不按虚拟时间推进 CSS 过渡帧——交互回归断言应检查 Zustand 状态及 Base UI 的 `data-open`/`data-closed`/`data-ending-style` 属性，不以 `getComputedStyle().opacity` 或退场 `transitionend` 卸载作为判据；截屏验证模拟点击后的 `transition-colors` 高亮态时，在临时 `preview.tsx` 注入 `*, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; }` 即可直接定格终态配色；本仓 UI 原语统一使用 `data-slot="..."` 属性（如 `data-slot="sidebar-trigger"`、`data-slot="drawer-content"`、`data-slot="dialog-content"`），而非上游 `data-sidebar` 等属性。
 - **整页路由 + Mock `fetch` 预览最小骨架**（需要审视含 `AppShell` 与真实路由页的布局时，替换 `preview.tsx` 挂载段即可）：
 
 ```tsx
@@ -163,4 +149,4 @@ const router = createRouter({ routeTree, history: createMemoryHistory({ initialE
 ## 约束提醒
 
 - 始终在 `finally` 或信号处理中关闭 Vite server，并在退出前清理系统临时目录中的所有脚本与截图。
-- 不将临时验证脚本、截图或 Mock 预览入口写入仓库、`.gitignore` 目录、常驻 `package.json` 脚本或 CI。
+- 不将具体验证用例脚本、截图或 Mock 预览入口写入仓库、`.gitignore` 目录或 CI（仅保留通用运行器 `pnpm verify:ts`）。

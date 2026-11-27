@@ -343,15 +343,9 @@ var feedingUpdateCols = []string{
 	"solid_food", "solid_amount", "acceptance", "recorded_at", "note", "updated_at",
 }
 
-// CreateFeeding 校验并持久化一条喂养记录，校验不通过返回 [*ValidationError]。
-func (s *Store) CreateFeeding(ctx context.Context, babyID int64, in FeedingInput) (*FeedingRecord, error) {
-	now := s.now()
-	clean, err := ValidateFeeding(in, now)
-	if err != nil {
-		return nil, err
-	}
-	ts := timeutil.FormatUTC(now)
-	rec := FeedingRecord{
+// buildFeedingRecord 根据已通过校验的喂养输入构造待插入模型，供单条创建与批量写入共享。
+func buildFeedingRecord(babyID int64, clean FeedingInput, ts string) FeedingRecord {
+	return FeedingRecord{
 		BabyID:      babyID,
 		Subtype:     clean.Subtype,
 		FeedingMode: clean.FeedingMode,
@@ -366,6 +360,16 @@ func (s *Store) CreateFeeding(ctx context.Context, babyID int64, in FeedingInput
 		CreatedAt:   ts,
 		UpdatedAt:   ts,
 	}
+}
+
+// CreateFeeding 校验并持久化一条喂养记录，校验不通过返回 [*ValidationError]。
+func (s *Store) CreateFeeding(ctx context.Context, babyID int64, in FeedingInput) (*FeedingRecord, error) {
+	now := s.now()
+	clean, err := ValidateFeeding(in, now)
+	if err != nil {
+		return nil, err
+	}
+	rec := buildFeedingRecord(babyID, clean, timeutil.FormatUTC(now))
 	if err := s.db.WithContext(ctx).Create(&rec).Error; err != nil {
 		return nil, err
 	}
@@ -406,7 +410,7 @@ func (s *Store) ListFeeding(ctx context.Context, babyID int64, f ListFilter) (*L
 		allowedSubtypes: feedingSubtypes,
 		invalidMsg:      "喂养子类型筛选参数无效",
 		recordedAt:      func(r FeedingRecord) string { return r.RecordedAt },
-		accumulate:      AccumulateFeedingSummary,
+		accumulate:      accumulateFeedingSummary,
 	})
 }
 
@@ -523,15 +527,9 @@ var careUpdateCols = []string{
 	"recorded_at", "note", "updated_at",
 }
 
-// CreateCare 校验并持久化一条日常护理记录，校验不通过返回 [*ValidationError]。
-func (s *Store) CreateCare(ctx context.Context, babyID int64, in CareInput) (*CareRecord, error) {
-	now := s.now()
-	clean, err := ValidateCare(in, now)
-	if err != nil {
-		return nil, err
-	}
-	ts := timeutil.FormatUTC(now)
-	rec := CareRecord{
+// buildCareRecord 根据已通过校验的护理输入构造待插入模型，供单条创建与批量写入共享。
+func buildCareRecord(babyID int64, clean CareInput, ts string) CareRecord {
+	return CareRecord{
 		BabyID:           babyID,
 		Subtype:          clean.Subtype,
 		DiaperKind:       clean.DiaperKind,
@@ -543,10 +541,62 @@ func (s *Store) CreateCare(ctx context.Context, babyID int64, in CareInput) (*Ca
 		CreatedAt:        ts,
 		UpdatedAt:        ts,
 	}
+}
+
+// CreateCare 校验并持久化一条日常护理记录，校验不通过返回 [*ValidationError]。
+func (s *Store) CreateCare(ctx context.Context, babyID int64, in CareInput) (*CareRecord, error) {
+	now := s.now()
+	clean, err := ValidateCare(in, now)
+	if err != nil {
+		return nil, err
+	}
+	rec := buildCareRecord(babyID, clean, timeutil.FormatUTC(now))
 	if err := s.db.WithContext(ctx).Create(&rec).Error; err != nil {
 		return nil, err
 	}
 	return &rec, nil
+}
+
+// BatchCreate 校验并在单个 SQLite 事务内原子持久化多条喂养与护理记录；
+// 任一条记录校验失败或写入异常均完整回滚，确保不残留半截脏数据。
+func (s *Store) BatchCreate(ctx context.Context, babyID int64, in BatchCreateInput) (*BatchCreateResult, error) {
+	if babyID <= 0 {
+		return nil, &ValidationError{Message: "无效的宝宝编号"}
+	}
+	now := s.now()
+	clean, err := ValidateBatchCreate(in, now)
+	if err != nil {
+		return nil, err
+	}
+
+	ts := timeutil.FormatUTC(now)
+	feedings := make([]FeedingRecord, 0, len(clean.Feedings))
+	cares := make([]CareRecord, 0, len(clean.Cares))
+
+	if txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, item := range clean.Feedings {
+			rec := buildFeedingRecord(babyID, item, ts)
+			if err := tx.Create(&rec).Error; err != nil {
+				return err
+			}
+			feedings = append(feedings, rec)
+		}
+		for _, item := range clean.Cares {
+			rec := buildCareRecord(babyID, item, ts)
+			if err := tx.Create(&rec).Error; err != nil {
+				return err
+			}
+			cares = append(cares, rec)
+		}
+		return nil
+	}); txErr != nil {
+		return nil, txErr
+	}
+
+	return &BatchCreateResult{
+		Feedings: feedings,
+		Cares:    cares,
+	}, nil
 }
 
 // UpdateCare 校验并在事务内更新指定护理记录（跨子类型切换时清空废弃可空列），
@@ -580,7 +630,7 @@ func (s *Store) ListCare(ctx context.Context, babyID int64, f ListFilter) (*List
 		allowedSubtypes: careSubtypes,
 		invalidMsg:      "护理子类型筛选参数无效",
 		recordedAt:      func(r CareRecord) string { return r.RecordedAt },
-		accumulate:      AccumulateCareSummary,
+		accumulate:      accumulateCareSummary,
 	})
 }
 
@@ -664,39 +714,103 @@ func (s *Store) ListHealth(ctx context.Context, babyID int64, f ListFilter) (*Li
 
 // --- 时间窗口快照与最近标记读取 ---
 
-// ReadWindow 读取指定宝宝在 [start, end) 时间窗口内的全部四类日常记录快照，
-// 供首页看板等聚合模块使用，避免外部模块直接耦合记录表结构与 SQL 谓词。
-func (s *Store) ReadWindow(ctx context.Context, babyID int64, start, end time.Time) (*WindowSnapshot, error) {
+// ReadWindow 读取指定宝宝在 [q.Start, q.End) 时间窗口内所选分类的有序日常记录快照（按时间升序、同时间戳按 ID 升序），
+// 供首页看板与数据导出等聚合模块使用，对外隐藏表结构、SQL 谓词与 health_records 单表双工作区拆分细节。
+func (s *Store) ReadWindow(ctx context.Context, babyID int64, q WindowQuery) (*WindowSnapshot, error) {
 	snap := &WindowSnapshot{}
-	if !end.After(start) {
+	if !q.End.After(q.Start) {
 		return snap, nil
 	}
 
-	startUTC := timeutil.FormatUTC(start)
-	endUTC := timeutil.FormatUTC(end)
+	wantFeeding, wantSleep, wantCare, wantHealth, wantGrowth, err := resolveWindowCategories(q.Categories)
+	if err != nil {
+		return nil, err
+	}
+	startUTC := timeutil.FormatUTC(q.Start)
+	endUTC := timeutil.FormatUTC(q.End)
 
-	if err := s.db.WithContext(ctx).
-		Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, startUTC, endUTC).
-		Find(&snap.Feedings).Error; err != nil {
-		return nil, err
+	if wantFeeding {
+		if err := s.db.WithContext(ctx).
+			Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, startUTC, endUTC).
+			Order("recorded_at ASC, id ASC").
+			Find(&snap.Feedings).Error; err != nil {
+			return nil, err
+		}
 	}
-	if err := s.db.WithContext(ctx).
-		Where("baby_id = ? AND ended_at > ? AND started_at < ?", babyID, startUTC, endUTC).
-		Find(&snap.Sleeps).Error; err != nil {
-		return nil, err
+	if wantSleep {
+		if err := s.db.WithContext(ctx).
+			Where("baby_id = ? AND ended_at > ? AND started_at < ?", babyID, startUTC, endUTC).
+			Order("started_at ASC, id ASC").
+			Find(&snap.Sleeps).Error; err != nil {
+			return nil, err
+		}
 	}
-	if err := s.db.WithContext(ctx).
-		Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, startUTC, endUTC).
-		Find(&snap.Cares).Error; err != nil {
-		return nil, err
+	if wantCare {
+		if err := s.db.WithContext(ctx).
+			Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, startUTC, endUTC).
+			Order("recorded_at ASC, id ASC").
+			Find(&snap.Cares).Error; err != nil {
+			return nil, err
+		}
 	}
-	if err := s.db.WithContext(ctx).
-		Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, startUTC, endUTC).
-		Find(&snap.Healths).Error; err != nil {
-		return nil, err
+	if wantHealth && wantGrowth {
+		var allHealth []HealthRecord
+		if err := s.db.WithContext(ctx).
+			Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, startUTC, endUTC).
+			Order("recorded_at ASC, id ASC").
+			Find(&allHealth).Error; err != nil {
+			return nil, err
+		}
+		for _, r := range allHealth {
+			switch r.Subtype {
+			case HealthSubtypeTemperature, HealthSubtypeMedicine:
+				snap.Healths = append(snap.Healths, r)
+			case HealthSubtypeGrowth, HealthSubtypeTeeth:
+				snap.Growths = append(snap.Growths, r)
+			}
+		}
+	} else if wantHealth {
+		if err := s.db.WithContext(ctx).
+			Where("baby_id = ? AND subtype IN ? AND recorded_at >= ? AND recorded_at < ?",
+				babyID, []string{HealthSubtypeTemperature, HealthSubtypeMedicine}, startUTC, endUTC).
+			Order("recorded_at ASC, id ASC").
+			Find(&snap.Healths).Error; err != nil {
+			return nil, err
+		}
+	} else if wantGrowth {
+		if err := s.db.WithContext(ctx).
+			Where("baby_id = ? AND subtype IN ? AND recorded_at >= ? AND recorded_at < ?",
+				babyID, []string{HealthSubtypeGrowth, HealthSubtypeTeeth}, startUTC, endUTC).
+			Order("recorded_at ASC, id ASC").
+			Find(&snap.Growths).Error; err != nil {
+			return nil, err
+		}
 	}
 
 	return snap, nil
+}
+
+func resolveWindowCategories(cats []WindowCategory) (feeding, sleep, care, health, growth bool, err error) {
+	if len(cats) == 0 {
+		return true, true, true, true, true, nil
+	}
+	for _, c := range cats {
+		switch c {
+		case WindowCategoryFeeding:
+			feeding = true
+		case WindowCategorySleep:
+			sleep = true
+		case WindowCategoryCare:
+			care = true
+		case WindowCategoryHealth:
+			health = true
+		case WindowCategoryGrowth:
+			growth = true
+		default:
+			return false, false, false, false, false, &ValidationError{Message: "未知的时间窗口分类"}
+		}
+	}
+	return feeding, sleep, care, health, growth, nil
 }
 
 type growthMetricKind uint8

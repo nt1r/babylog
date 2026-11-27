@@ -25,7 +25,7 @@ import (
  * 测试目标：
  * 1. 验证匿名探测 GET /api/auth/session 返回 200 {user: null} 且禁止缓存（Cache-Control: no-store）。
  * 2. 验证大小写不敏感凭据登录返回完整用户信息（id/username/role/must_change_password）、43 位安全 Cookie，并可恢复会话。
- * 3. 验证管理员退出后仅吊销自身会话并下发 Max-Age=0，而在线普通用户 Alice 的会话依然有效。
+ * 3. 验证管理员多设备登录时单端退出仅吊销自身令牌并下发 Max-Age=0，同账号另一设备及在线普通用户 Alice 的会话均不受影响。
  */
 func TestAuthLoginRestoreAndLogoutClosedLoop(t *testing.T) {
 	t.Parallel()
@@ -80,7 +80,15 @@ func TestAuthLoginRestoreAndLogoutClosedLoop(t *testing.T) {
 		t.Fatalf("会话恢复返回的用户信息异常：%+v", restoreBody.User)
 	}
 
-	// 3. 登出仅吊销调用方当前令牌，不影响在线普通用户 Alice 的会话。
+	// 3. 同账号另一设备再登录，随后设备 1 登出仅吊销自身令牌，同账号设备 2 与在线普通用户 Alice 会话均保持有效。
+	secondLoginResp := anon.Login(t, defaultAdminUser, defaultAdminPass)
+	secondLoginResp.RequireStatus(t, http.StatusOK)
+	secondCookiePair, ok := secondLoginResp.CookiePair(auth.SessionCookieName)
+	if !ok {
+		t.Fatalf("同账号第二台设备登录未返回会话 Cookie")
+	}
+	adminDevice2 := anon.WithCookie(secondCookiePair)
+
 	logoutResp := authed.Post(t, "/api/auth/logout", nil)
 	logoutResp.RequireStatus(t, http.StatusOK)
 	if !strings.Contains(logoutResp.SetCookieHeader(), "Max-Age=0") {
@@ -101,6 +109,13 @@ func TestAuthLoginRestoreAndLogoutClosedLoop(t *testing.T) {
 		User *auth.AuthUser `json:"user"`
 	}](t, staleResp).User != nil {
 		t.Fatalf("已吊销 Cookie 不得恢复登录态")
+	}
+
+	adminDev2Sess := DecodeOK[struct {
+		User *auth.AuthUser `json:"user"`
+	}](t, adminDevice2.Get(t, "/api/auth/session")).User
+	if adminDev2Sess == nil || adminDev2Sess.Username != defaultAdminUser || adminDev2Sess.Role != auth.RoleAdmin {
+		t.Fatalf("同账号设备 1 登出后，设备 2 会话应保持有效，实际 %+v", adminDev2Sess)
 	}
 
 	aliceSess := DecodeOK[struct {
@@ -221,9 +236,9 @@ func TestAuthSessionExpirationCleanup(t *testing.T) {
  * - 宝宝档案：无
  * - 前置业务记录：无
  * 测试目标：
- * 1. 验证待改密态访问 /api/babies、/api/babies/1/records/feeding 与 /api/admin/users 统一返回 403 PASSWORD_CHANGE_REQUIRED，而 GET /api/auth/session 放行。
- * 2. 验证错误当前密码返回 401、强制改密态提交相同新旧密码返回 400，且均不修改密码或清除待改密标记。
- * 3. 验证提交合法新密码返回 200（must_change_password=false）并签发轮换新 Cookie，另一设备旧会话立即失效（401），新会话可正常访问 /api/babies。
+ * 1. 验证待改密态访问 /api/babies、/api/babies/1/records/feeding 与 /api/admin/users 统一返回 403 PASSWORD_CHANGE_REQUIRED，而 GET /api/auth/session 与 POST /api/auth/logout 放行。
+ * 2. 验证错误当前密码返回 401 且携带 code=INVALID_CREDENTIALS、匿名改密返回 401、非法载荷与强制改密态提交相同新旧密码返回 400，且均不修改密码或清除待改密标记。
+ * 3. 验证强制改密与已就绪常规自助改密均返回 200 并签发轮换新 Cookie、踢出其他端会话、旧密码失效且新密码可重新登录。
  */
 func TestAuthForcedAndSelfServicePasswordChangeClosedLoop(t *testing.T) {
 	t.Parallel()
@@ -232,10 +247,9 @@ func TestAuthForcedAndSelfServicePasswordChangeClosedLoop(t *testing.T) {
 	device1, _ := app.CreateUserViaAdmin("Bob", "bob-temp-secret-123")
 	login2 := app.UnauthenticatedClient().Login(t, "bob", "bob-temp-secret-123")
 	login2.RequireStatus(t, http.StatusOK)
-	cookie2, _ := login2.CookiePair(auth.SessionCookieName)
-	device2 := app.UnauthenticatedClient().WithCookie(cookie2)
+	device2 := app.UnauthenticatedClient().WithCookie(login2.RequireCookiePair(t, auth.SessionCookieName))
 
-	// 1. 待改密门禁拦截业务与管理端点并返回结构化 PASSWORD_CHANGE_REQUIRED 错误码，但放行会话探测。
+	// 1. 待改密门禁拦截业务与管理端点并返回结构化 PASSWORD_CHANGE_REQUIRED 错误码，但放行会话探测与主动登出。
 	for _, path := range []string{"/api/babies", "/api/babies/1/records/feeding", "/api/admin/users"} {
 		resp := device1.Get(t, path)
 		payload := DecodeStatus[struct {
@@ -252,19 +266,50 @@ func TestAuthForcedAndSelfServicePasswordChangeClosedLoop(t *testing.T) {
 	if sessUser == nil || !sessUser.MustChangePassword {
 		t.Fatalf("待改密态会话探测应返回 must_change_password=true，实际 %+v", sessUser)
 	}
+	// 单独签发一个待改密态临时会话验证 POST /api/auth/logout 正常放行且不影响设备 1/2。
+	tempLogin := app.UnauthenticatedClient().Login(t, "bob", "bob-temp-secret-123")
+	tempLogin.RequireStatus(t, http.StatusOK)
+	tempDevice := app.UnauthenticatedClient().WithCookie(tempLogin.RequireCookiePair(t, auth.SessionCookieName))
+	pendingLogout := tempDevice.Post(t, "/api/auth/logout", nil)
+	pendingLogout.RequireStatus(t, http.StatusOK)
+	if !strings.Contains(pendingLogout.SetCookieHeader(), "Max-Age=0") {
+		t.Fatalf("待改密态登出应清除会话 Cookie，实际 %q", pendingLogout.SetCookieHeader())
+	}
 
-	// 2. 错误旧密码返回 401，强制改密态下新旧密码相同返回 400，且均保留待改密态与原密码。
-	device1.Post(t, "/api/auth/change-password", map[string]string{
+	// 2. 匿名 401、错误旧密码返回 401 且带 INVALID_CREDENTIALS（前端凭此避免误退登）、非法载荷与强制改密态同密码返回 400。
+	app.UnauthenticatedClient().Post(t, "/api/auth/change-password", map[string]string{
+		"current_password": "bob-temp-secret-123",
+		"new_password":     "bob-brand-new-secret-789",
+	}).RequireError(t, http.StatusUnauthorized, "登录")
+
+	wrongCurResp := device1.Post(t, "/api/auth/change-password", map[string]string{
 		"current_password": "wrong-current-secret",
 		"new_password":     "bob-brand-new-secret-789",
-	}).RequireError(t, http.StatusUnauthorized, "当前密码")
+	})
+	wrongCurPayload := DecodeStatus[struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}](t, wrongCurResp, http.StatusUnauthorized)
+	if wrongCurPayload.Code != "INVALID_CREDENTIALS" || !strings.Contains(wrongCurPayload.Error, "当前密码") {
+		t.Fatalf("当前密码错误预期返回 401 INVALID_CREDENTIALS，实际 %+v", wrongCurPayload)
+	}
+
+	device1.Post(t, "/api/auth/change-password", map[string]string{
+		"current_password": "bob-temp-secret-123",
+		"new_password":     "short-11-ch",
+	}).RequireError(t, http.StatusBadRequest, "12")
+	device1.Post(t, "/api/auth/change-password", map[string]any{
+		"current_password": "bob-temp-secret-123",
+		"new_password":     "bob-brand-new-secret-789",
+		"extra":            true,
+	}).RequireError(t, http.StatusBadRequest, "格式不正确")
 
 	device1.Post(t, "/api/auth/change-password", map[string]string{
 		"current_password": "bob-temp-secret-123",
 		"new_password":     "bob-temp-secret-123",
 	}).RequireError(t, http.StatusBadRequest, "不能与初始密码相同")
 
-	// 3. 合法改密成功清除标记、轮换设备 1 会话、踢出设备 2 会话并解锁 /api/babies。
+	// 3. 合法强制改密成功清除标记、轮换设备 1 会话、踢出设备 2、旧密失效新密可登，并续测已就绪态常规自助改密闭环。
 	okResp := device1.Post(t, "/api/auth/change-password", map[string]string{
 		"current_password": "bob-temp-secret-123",
 		"new_password":     "bob-brand-new-secret-789",
@@ -284,6 +329,25 @@ func TestAuthForcedAndSelfServicePasswordChangeClosedLoop(t *testing.T) {
 	device2.Get(t, "/api/babies").RequireError(t, http.StatusUnauthorized, "登录")
 	device1.Get(t, "/api/babies").RequireError(t, http.StatusUnauthorized, "登录")
 	device1New.Get(t, "/api/babies").RequireStatus(t, http.StatusOK)
+
+	app.UnauthenticatedClient().Login(t, "bob", "bob-temp-secret-123").
+		RequireError(t, http.StatusUnauthorized, "账号或密码")
+	reLogin := app.UnauthenticatedClient().Login(t, "bob", "bob-brand-new-secret-789")
+	reLogin.RequireStatus(t, http.StatusOK)
+	secondActive := app.UnauthenticatedClient().WithCookie(reLogin.RequireCookiePair(t, auth.SessionCookieName))
+
+	// 已就绪态常规自助改密：验证同样轮换当前会话、踢出另一活跃设备会话并使新密码生效。
+	selfResp := device1New.Post(t, "/api/auth/change-password", map[string]string{
+		"current_password": "bob-brand-new-secret-789",
+		"new_password":     "bob-third-secret-999999",
+	})
+	selfResp.RequireStatus(t, http.StatusOK)
+	selfCookie := selfResp.RequireCookiePair(t, auth.SessionCookieName)
+	secondActive.Get(t, "/api/babies").RequireError(t, http.StatusUnauthorized, "登录")
+	app.UnauthenticatedClient().WithCookie(selfCookie).Get(t, "/api/babies").RequireStatus(t, http.StatusOK)
+	app.UnauthenticatedClient().Login(t, "bob", "bob-brand-new-secret-789").
+		RequireError(t, http.StatusUnauthorized, "账号或密码")
+	app.UnauthenticatedClient().Login(t, "bob", "bob-third-secret-999999").RequireStatus(t, http.StatusOK)
 }
 
 /*

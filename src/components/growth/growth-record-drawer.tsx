@@ -21,13 +21,13 @@ import { GROWTH_SUBTYPE_OPTIONS } from '@/lib/categories';
 import { useGrowthSummaryQuery } from '@/lib/growth';
 import { useSaveRecordMutation } from '@/lib/records';
 import { formatLocalDateKey } from '@/lib/time';
-import { useGrowthRecordStore } from '@/stores/growth-record';
+import { useOverlayStore } from '@/stores/overlays';
 
 /** 生长发育专属录入抽屉（体格测量 / 长牙），日期精度简化为按日选择。 */
 export function GrowthRecordDrawer() {
-  const open = useGrowthRecordStore((state) => state.open);
-  const intent = useGrowthRecordStore((state) => state.intent);
-  const setOpen = useGrowthRecordStore((state) => state.setOpen);
+  const open = useOverlayStore((state) => state.active === 'growth-record');
+  const intent = useOverlayStore((state) => state.growthRecordIntent);
+  const closeOverlay = useOverlayStore((state) => state.close);
   const { babies, activeBaby } = useActiveBaby();
 
   const saveMutation = useSaveRecordMutation();
@@ -78,7 +78,7 @@ export function GrowthRecordDrawer() {
     try {
       await saveMutation.mutateAsync(built.request);
       toast.success(built.toastTitle, built.toastDescription);
-      setOpen(false);
+      closeOverlay('growth-record');
     } catch (cause) {
       setFormError(cause instanceof Error ? cause.message : '保存失败，请稍后重试');
     }
@@ -91,7 +91,7 @@ export function GrowthRecordDrawer() {
       open={open}
       pending={saveMutation.isPending}
       onOpenChange={(next) => {
-        if (!saveMutation.isPending) setOpen(next);
+        if (!next && !saveMutation.isPending) closeOverlay('growth-record');
       }}
       title={drawerTitle}
       icon={<Ruler className="size-4.5" />}
@@ -116,7 +116,7 @@ export function GrowthRecordDrawer() {
               variant="outline"
               disabled={saveMutation.isPending}
               className="h-11 rounded-xl sm:h-10 sm:px-4"
-              onClick={() => setOpen(false)}
+              onClick={() => closeOverlay('growth-record')}
             >
               取消
             </Button>

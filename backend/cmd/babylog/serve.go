@@ -17,14 +17,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/cobra"
 
-	"github.com/nt1r/babylog/backend/internal/auth"
-	"github.com/nt1r/babylog/backend/internal/baby"
 	"github.com/nt1r/babylog/backend/internal/config"
-	"github.com/nt1r/babylog/backend/internal/dashboard"
 	"github.com/nt1r/babylog/backend/internal/database"
 	"github.com/nt1r/babylog/backend/internal/httpapi"
-	"github.com/nt1r/babylog/backend/internal/records"
-	"github.com/nt1r/babylog/backend/internal/vaccines"
 )
 
 // newServeCommand 构建 `babylog serve` 子命令，用于启动内置 HTTP 服务。
@@ -62,21 +57,10 @@ func runServe(parentCtx context.Context) error {
 	}
 	defer func() { _ = db.Close() }()
 
-	// 3. 显式注入认证、宝宝档案、日常记录、首页看板、疫苗存储与静态资源配置，组装 HTTP 路由。
-	store := auth.NewStore(db.Gorm())
-	loginGuard := auth.NewLoginGuard()
-	babyStore := baby.NewStore(db.Gorm())
-	recordStore := records.NewStore(db.Gorm())
-	dashboardSvc := dashboard.NewService(recordStore)
-	vaccineStore := vaccines.NewStore(db.Gorm())
+	// 3. 注入数据库与运行参数，由 httpapi.NewRouter 内部统一装配各业务模块与静态资源回退。
 	router := httpapi.NewRouter(httpapi.Options{
-		Store:           store,
-		LoginGuard:      loginGuard,
+		DB:              db,
 		CookieSecure:    cfg.CookieSecure,
-		BabyStore:       babyStore,
-		RecordStore:     recordStore,
-		DashboardSvc:    dashboardSvc,
-		VaccineStore:    vaccineStore,
 		DistDir:         cfg.DistDir,
 		FallbackDistDir: config.DefaultDistDir(),
 		Logger:          logger,

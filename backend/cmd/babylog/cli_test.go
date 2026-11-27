@@ -487,11 +487,13 @@ func TestCLIServeRestartPersistenceLifecycle(t *testing.T) {
  * 前置数据：
  * - 运行环境：预编译只读 babylog 二进制与独立 t.TempDir() 数据目录
  * - 管理员与会话：先经 `admin init` 初始化唯一管理员 `Boss`
- * - 密码文件：Alice 初始密码、Alice 新密码与 Boss 救灾新密码各一份
+ * - 密码文件：Alice 初始密码、Alice 新密码、Boss 救灾新密码与过短弱密码文件各一份
+ * - 业务数据：步骤 2 通过领域 Store 为 Alice 写入 1 个宝宝档案与 1 条喂养记录（验证启停用不丢数据）
  * 测试目标：
  * 1. 验证 `user create` 创建普通用户 `Alice`（含 `--force-change`）、拒绝忽略大小写重复名 `alice`，且 `user list` 输出非敏感账号元数据。
- * 2. 验证 `user disable` 拒绝停用唯一管理员 `Boss`，停用 `Alice` 后立即吊销其会话并阻止认证，`user enable` 恢复后可重新认证。
- * 3. 验证 `user reset-password` 支持重置普通用户与唯一管理员 `Boss` 密码并吊销既有会话，同时 `admin init` 仍拒绝创建第二个管理员。
+ * 2. 验证 `user disable` 拒绝停用唯一管理员 `Boss`，停用 `Alice` 后立即吊销其会话并阻止认证，`user enable` 恢复后可重新认证且既有宝宝与记录完好无损。
+ * 3. 验证 `user reset-password` 支持 `--force-change` 置位与默认清除，并支持救灾重置唯一管理员 `Boss` 密码、吊销既有会话，同时 `admin init` 仍拒绝创建第二个管理员。
+ * 4. 验证 `babylog user` 子命令对未知用户名、缺参及弱密码文件均返回非零退出码与中文提示。
  */
 func TestCLIUserLifecycleAndAdminRecovery(t *testing.T) {
 	binPath := testBinaryPath
@@ -502,11 +504,13 @@ func TestCLIUserLifecycleAndAdminRecovery(t *testing.T) {
 	bossPass2 := filepath.Join(workDir, "boss2.pass")
 	alicePass1 := filepath.Join(workDir, "alice1.pass")
 	alicePass2 := filepath.Join(workDir, "alice2.pass")
+	shortPass := filepath.Join(workDir, "short.pass")
 	for file, content := range map[string]string{
 		bossPass1:  "boss-initial-secret-123\n",
 		bossPass2:  "boss-recovery-secret-456\n",
 		alicePass1: "alice-initial-secret-123\n",
 		alicePass2: "alice-reset-secret-456\n",
+		shortPass:  "too-short\n",
 	} {
 		if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
 			t.Fatalf("写入测试密码文件 %s 失败: %v", file, err)
@@ -529,7 +533,7 @@ func TestCLIUserLifecycleAndAdminRecovery(t *testing.T) {
 		t.Fatalf("user list 输出异常：code=%d stdout=%q stderr=%q", listCode, listOut, listErr)
 	}
 
-	// 2. 拒绝停用唯一管理员 Boss；停用 Alice 立即吊销其会话，重新启用后恢复认证。
+	// 2. 拒绝停用唯一管理员 Boss；为 Alice 写入宝宝档案与喂养记录后，停用立即吊销会话，重新启用后业务数据完整保留。
 	if code, _, stderr := runCLI(binPath, dataDir, "user", "disable", "--username", "Boss"); code == 0 || !strings.Contains(stderr, "唯一管理员") {
 		t.Fatalf("期望拒绝停用唯一管理员：code=%d stderr=%q", code, stderr)
 	}
@@ -548,6 +552,25 @@ func TestCLIUserLifecycleAndAdminRecovery(t *testing.T) {
 	if err != nil {
 		_ = db.Close()
 		t.Fatalf("为 Alice 创建会话失败: %v", err)
+	}
+	// 通过领域 Store 为 Alice 写入 1 个宝宝档案与 1 条喂养记录，验证启停用不损失业务数据。
+	aliceBaby, err := baby.NewStore(db.Gorm()).CreateForUser(context.Background(), aliceAuth.ID, baby.UpsertInput{
+		Nickname:  "CLI宝宝",
+		BirthDate: time.Now().UTC().AddDate(0, -2, 0).Format("2006-01-02"),
+		Gender:    "female",
+	}, time.UTC)
+	if err != nil {
+		_ = db.Close()
+		t.Fatalf("为 Alice 创建宝宝档案失败: %v", err)
+	}
+	feedAmount := 110
+	if _, err := records.NewStore(db.Gorm()).CreateFeeding(context.Background(), aliceBaby.ID, records.FeedingInput{
+		Subtype:    records.FeedingSubtypeFormula,
+		AmountML:   &feedAmount,
+		RecordedAt: time.Now().UTC().Add(-15 * time.Minute).Format(time.RFC3339),
+	}); err != nil {
+		_ = db.Close()
+		t.Fatalf("为 Alice 写入喂养记录失败: %v", err)
 	}
 	bossAuth, err := store.Authenticate(context.Background(), "boss", "boss-initial-secret-123")
 	if err != nil || bossAuth == nil {
@@ -583,7 +606,20 @@ func TestCLIUserLifecycleAndAdminRecovery(t *testing.T) {
 		t.Fatalf("重新启用 Alice 失败：code=%d stderr=%q", code, stderr)
 	}
 
-	// 3. CLI 重置普通用户 Alice 与唯一管理员 Boss 密码并吊销既有会话，且二次 admin init 继续被拒。
+	// 3. 验证 CLI reset-password 的 --force-change 置位与默认清除、救灾重置管理员 Boss 及二次 admin init 拒绝。
+	if code, _, stderr := runCLI(binPath, dataDir, "user", "reset-password", "--username", "Alice", "--password-file", alicePass2, "--force-change"); code != 0 {
+		t.Fatalf("带 --force-change 重置 Alice 密码失败：code=%d stderr=%q", code, stderr)
+	}
+	db, err = database.Open(dataDir)
+	if err != nil {
+		t.Fatalf("检查 --force-change 后重开库失败: %v", err)
+	}
+	if aliceForced, authErr := auth.NewStore(db.Gorm()).Authenticate(context.Background(), "Alice", "alice-reset-secret-456"); authErr != nil || aliceForced == nil || !aliceForced.MustChangePassword {
+		_ = db.Close()
+		t.Fatalf("带 --force-change 重置后 Alice 应处于待改密态：(%+v, %v)", aliceForced, authErr)
+	}
+	_ = db.Close()
+
 	if code, _, stderr := runCLI(binPath, dataDir, "user", "reset-password", "--username", "Alice", "--password-file", alicePass2); code != 0 {
 		t.Fatalf("重置 Alice 密码失败：code=%d stderr=%q", code, stderr)
 	}
@@ -594,20 +630,52 @@ func TestCLIUserLifecycleAndAdminRecovery(t *testing.T) {
 		t.Fatalf("二次 admin init 应被拒绝：code=%d stderr=%q", code, stderr)
 	}
 
-	db, err = database.Open(dataDir)
-	if err != nil {
-		t.Fatalf("重置密码后重开库失败: %v", err)
+	func() {
+		db, err := database.Open(dataDir)
+		if err != nil {
+			t.Fatalf("重置密码后重开库失败: %v", err)
+		}
+		defer func() { _ = db.Close() }()
+
+		store := auth.NewStore(db.Gorm())
+		if sess, err := store.GetSession(context.Background(), bossToken); err != nil || sess != nil {
+			t.Fatalf("重置 Boss 密码后原会话应被吊销，实际 (%+v, %v)", sess, err)
+		}
+		if recovered, err := store.Authenticate(context.Background(), "boss", "boss-recovery-secret-456"); err != nil || recovered == nil || recovered.Role != auth.RoleAdmin {
+			t.Fatalf("Boss 救灾新密码认证失败：(%+v, %v)", recovered, err)
+		}
+		if aliceRecovered, err := store.Authenticate(context.Background(), "Alice", "alice-reset-secret-456"); err != nil || aliceRecovered == nil || aliceRecovered.MustChangePassword {
+			t.Fatalf("Alice 新密码认证失败（未指定 --force-change 应为 false）：(%+v, %v)", aliceRecovered, err)
+		}
+		// 核验停用再启用及重置密码后，Alice 原有的宝宝档案与喂养记录完整保留零丢失。
+		aliceBabies, err := baby.NewStore(db.Gorm()).ListByUser(context.Background(), aliceAuth.ID)
+		if err != nil || len(aliceBabies) != 1 || aliceBabies[0].ID != aliceBaby.ID || aliceBabies[0].Nickname != "CLI宝宝" {
+			t.Fatalf("启停用后 Alice 宝宝档案未完整保留：(%+v, %v)", aliceBabies, err)
+		}
+		aliceFeeds, err := records.NewStore(db.Gorm()).ListFeeding(context.Background(), aliceBaby.ID, records.ListFilter{Range: "all"})
+		if err != nil || aliceFeeds.Total != 1 || len(aliceFeeds.Items) != 1 || aliceFeeds.Items[0].AmountML == nil || *aliceFeeds.Items[0].AmountML != 110 {
+			t.Fatalf("启停用后 Alice 喂养记录未完整保留：(%+v, %v)", aliceFeeds, err)
+		}
+	}()
+
+	// 4. 验证 babylog user 子命令的未知用户、缺参、多余参数及弱密码文件负向报错。
+	if code, _, stderr := runCLI(binPath, dataDir, "user", "disable", "--username", "no-such-user"); code == 0 || !strings.Contains(stderr, "不存在") {
+		t.Errorf("停用未知用户预期返回中文不存在提示：code=%d stderr=%q", code, stderr)
 	}
-	defer func() { _ = db.Close() }()
-	store = auth.NewStore(db.Gorm())
-	if sess, err := store.GetSession(context.Background(), bossToken); err != nil || sess != nil {
-		t.Fatalf("重置 Boss 密码后原会话应被吊销，实际 (%+v, %v)", sess, err)
+	if code, _, stderr := runCLI(binPath, dataDir, "user", "enable", "--username", "no-such-user"); code == 0 || !strings.Contains(stderr, "不存在") {
+		t.Errorf("启用未知用户预期返回中文不存在提示：code=%d stderr=%q", code, stderr)
 	}
-	if recovered, err := store.Authenticate(context.Background(), "boss", "boss-recovery-secret-456"); err != nil || recovered == nil || recovered.Role != auth.RoleAdmin {
-		t.Fatalf("Boss 救灾新密码认证失败：(%+v, %v)", recovered, err)
+	if code, _, stderr := runCLI(binPath, dataDir, "user", "reset-password", "--username", "no-such-user", "--password-file", alicePass2); code == 0 || !strings.Contains(stderr, "不存在") {
+		t.Errorf("重置未知用户密码预期返回中文不存在提示：code=%d stderr=%q", code, stderr)
 	}
-	if aliceRecovered, err := store.Authenticate(context.Background(), "Alice", "alice-reset-secret-456"); err != nil || aliceRecovered == nil || aliceRecovered.MustChangePassword {
-		t.Fatalf("Alice 新密码认证失败（未指定 --force-change 应为 false）：(%+v, %v)", aliceRecovered, err)
+	if code, _, stderr := runCLI(binPath, dataDir, "user", "create", "--username", "WeakUser", "--password-file", shortPass); code == 0 || !strings.Contains(stderr, "12 至 1024") {
+		t.Errorf("弱密码创建用户预期被拒：code=%d stderr=%q", code, stderr)
+	}
+	if code, _, stderr := runCLI(binPath, dataDir, "user", "create", "--username", "OnlyName"); code == 0 || !strings.Contains(stderr, "用法") {
+		t.Errorf("缺少 --password-file 预期输出中文用法：code=%d stderr=%q", code, stderr)
+	}
+	if code, _, stderr := runCLI(binPath, dataDir, "user", "list", "extra"); code == 0 || !strings.Contains(stderr, "用法") {
+		t.Errorf("user list 多余参数预期输出中文用法：code=%d stderr=%q", code, stderr)
 	}
 }
 

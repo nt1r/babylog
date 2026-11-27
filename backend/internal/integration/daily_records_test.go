@@ -3,8 +3,10 @@ package integration_test
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
+	"github.com/nt1r/babylog/backend/internal/dashboard"
 	"github.com/nt1r/babylog/backend/internal/records"
 )
 
@@ -344,16 +346,162 @@ func TestHealthAndGrowthCRUDSubtypeClearing(t *testing.T) {
 }
 
 /*
+ * Spec: daily-records / Atomic batch creation of feeding and care records / Create feeding and care records atomically in a single batch
+ * 测试场景：同一时间点批量补录亲喂、瓶喂母乳、配方奶与合并尿布记录，验证原子落库及列表、每日小计、看板与智能默认值全链路兼容。
+ * 业务背景：家长对照月嫂纸质本补录同一时间点的多项喂养与排尿排便记录时，需在一次事务内全部落库，且排尿+排便合并为 both 后各项统计口径不重复也不遗漏。
+ * 前置数据：
+ * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
+ * - 管理员与会话：已初始化并登录管理员
+ * - 宝宝档案：同账号下大宝（目标宝宝）与二宝（用于验证多宝宝隔离）
+ * - 前置业务记录：无
+ * 测试目标：
+ * 1. 验证 POST /api/babies/:babyId/records/batch 一次提交 3 条喂养与 1 条 both 尿布返回 201，且返回全部自增 ID 与裁剪后的公共备注。
+ * 2. 验证回读喂养/护理列表、每日小计、首页看板今日 KPI 与智能默认值准确反映全部 4 条记录。
+ * 3. 验证只读查询 SQLite 确认落库终态，并续测仅 feedings、仅 cares 与恰好 20 条上限边界提交成功及同用户多宝宝严格隔离。
+ */
+func TestRecordsBatchCreateAtomicityAndSummaryIntegration(t *testing.T) {
+	t.Parallel()
+
+	app := NewTestApp(t)
+	s := app.Scenario()
+	b := s.EnsureBaby(BabyParams{Nickname: "大宝"})
+	sibling := s.EnsureBaby(BabyParams{Nickname: "二宝"})
+	client := app.Client()
+
+	// 1. 同一时间点提交亲喂(左 15 分)、瓶喂母乳(40ml)、配方奶(60ml)与合并尿布(both + 软便/黄色)及公共备注。
+	ts := "2026-11-23T01:10:00Z" // 上海 09:10
+	batchResp := client.Post(t, babyPath(b.ID, "/records/batch"), records.BatchCreateInput{
+		Feedings: []records.FeedingInput{
+			{
+				Subtype:     records.FeedingSubtypeBreast,
+				FeedingMode: ptr("direct"),
+				BreastSide:  ptr("left"),
+				DurationMin: ptr(15),
+				RecordedAt:  ts,
+				Note:        "  月嫂纸质本补录  ",
+			},
+			{
+				Subtype:     records.FeedingSubtypeBreast,
+				FeedingMode: ptr("bottle"),
+				AmountML:    ptr(40),
+				RecordedAt:  ts,
+				Note:        "  月嫂纸质本补录  ",
+			},
+			{
+				Subtype:    records.FeedingSubtypeFormula,
+				AmountML:   ptr(60),
+				RecordedAt: ts,
+				Note:       "  月嫂纸质本补录  ",
+			},
+		},
+		Cares: []records.CareInput{
+			{
+				Subtype:          records.CareSubtypeDiaper,
+				DiaperKind:       ptr("both"),
+				StoolConsistency: ptr("soft"),
+				StoolColor:       ptr("yellow"),
+				RecordedAt:       ts,
+				Note:             "  月嫂纸质本补录  ",
+			},
+		},
+	})
+	created := DecodeStatus[records.BatchCreateResult](t, batchResp, http.StatusCreated)
+	if len(created.Feedings) != 3 || len(created.Cares) != 1 {
+		t.Fatalf("批量创建预期返回 3 条喂养与 1 条护理，实际 feedings=%d cares=%d", len(created.Feedings), len(created.Cares))
+	}
+	if created.Feedings[0].ID <= 0 || created.Feedings[2].ID <= 0 || created.Cares[0].ID <= 0 {
+		t.Fatalf("批量创建返回记录缺少自增 ID：%+v", created)
+	}
+	if created.Feedings[0].Note != "月嫂纸质本补录" || created.Cares[0].Note != "月嫂纸质本补录" {
+		t.Fatalf("批量创建未裁剪公共备注：feeding=%q care=%q", created.Feedings[0].Note, created.Cares[0].Note)
+	}
+
+	// 2. 回读喂养/护理列表、每日小计、首页今日看板及智能默认值，核对同时间戳多条记录的统计口径与换侧建议。
+	feedList := DecodeOK[records.ListResult[records.FeedingRecord, records.FeedingDailySummary]](
+		t,
+		client.Get(t, babyPath(b.ID, "/records/feeding?range=today&tz="+defaultTimezone)),
+	)
+	feedSum := feedList.DailySummaries["2026-11-23"]
+	if feedList.Total != 3 || feedSum.TotalML != 100 || feedSum.DirectBreastCount != 1 || feedSum.DirectBreastMin != 15 || feedSum.TotalCount != 3 {
+		t.Fatalf("喂养列表或每日小计异常：total=%d sum=%+v", feedList.Total, feedSum)
+	}
+
+	careList := DecodeOK[records.ListResult[records.CareRecord, records.CareDailySummary]](
+		t,
+		client.Get(t, babyPath(b.ID, "/records/care?range=today&tz="+defaultTimezone)),
+	)
+	careSum := careList.DailySummaries["2026-11-23"]
+	if careList.Total != 1 || careSum.PeeCount != 1 || careSum.PoopCount != 1 || careSum.TotalCount != 1 {
+		t.Fatalf("护理列表或合并尿布每日小计异常：total=%d sum=%+v", careList.Total, careSum)
+	}
+
+	dash := DecodeOK[dashboard.SummaryResponse](t, client.Get(t, babyPath(b.ID, "/dashboard/summary?tz="+defaultTimezone)))
+	if dash.Feeding.TotalML != 100 || dash.Feeding.DirectBreastCount != 1 || dash.Care.PeeCount != 1 || dash.Care.PoopCount != 1 || dash.Care.TotalCount != 1 {
+		t.Fatalf("首页今日看板汇总与批量补录不一致：feeding=%+v care=%+v", dash.Feeding, dash.Care)
+	}
+	if dash.Feeding.LastFeedingAt == nil || *dash.Feeding.LastFeedingAt != ts || dash.Care.LastDiaperAt == nil || *dash.Care.LastDiaperAt != ts {
+		t.Fatalf("首页距上次照护时间戳未更新：feeding=%v care=%v", dash.Feeding.LastFeedingAt, dash.Care.LastDiaperAt)
+	}
+
+	defaults := DecodeOK[records.SmartDefaults](t, client.Get(t, babyPath(b.ID, "/records/defaults")))
+	if defaults.Feeding.SuggestedBreastSide != "right" || defaults.Feeding.LastMilkML != 60 {
+		t.Fatalf("批量补录后智能默认值未反映最新亲喂换侧与奶量：%+v", defaults.Feeding)
+	}
+
+	// 3. 只读查询 SQLite 核验落库终态，并验证单边批次（仅 feedings / 仅 cares）、恰好 20 条上限边界与同账号二宝严格隔离。
+	if got := CountRows[records.FeedingRecord](t, app, "baby_id = ?", b.ID); got != 3 {
+		t.Fatalf("SQLite feeding_records 预期 3 行，实际 %d", got)
+	}
+	if got := CountRows[records.CareRecord](t, app, "baby_id = ?", b.ID); got != 1 {
+		t.Fatalf("SQLite care_records 预期 1 行，实际 %d", got)
+	}
+
+	onlyFeedRes := DecodeStatus[records.BatchCreateResult](t, client.Post(t, babyPath(b.ID, "/records/batch"), records.BatchCreateInput{
+		Feedings: []records.FeedingInput{{Subtype: records.FeedingSubtypeFormula, AmountML: ptr(70), RecordedAt: ts}},
+	}), http.StatusCreated)
+	if len(onlyFeedRes.Feedings) != 1 || len(onlyFeedRes.Cares) != 0 {
+		t.Fatalf("仅喂养单边批次返回异常：%+v", onlyFeedRes)
+	}
+	onlyCareRes := DecodeStatus[records.BatchCreateResult](t, client.Post(t, babyPath(b.ID, "/records/batch"), records.BatchCreateInput{
+		Cares: []records.CareInput{{Subtype: records.CareSubtypeDiaper, DiaperKind: ptr("pee"), RecordedAt: ts}},
+	}), http.StatusCreated)
+	if len(onlyCareRes.Feedings) != 0 || len(onlyCareRes.Cares) != 1 {
+		t.Fatalf("仅护理单边批次返回异常：%+v", onlyCareRes)
+	}
+
+	// 恰好 20 条上限（10 条喂养 + 10 条护理）应成功落库。
+	maxFeeds := make([]records.FeedingInput, 10)
+	maxCares := make([]records.CareInput, 10)
+	for i := range 10 {
+		maxFeeds[i] = records.FeedingInput{Subtype: records.FeedingSubtypeFormula, AmountML: ptr(50), RecordedAt: ts}
+		maxCares[i] = records.CareInput{Subtype: records.CareSubtypeDiaper, DiaperKind: ptr("pee"), RecordedAt: ts}
+	}
+	maxRes := DecodeStatus[records.BatchCreateResult](t, client.Post(t, babyPath(b.ID, "/records/batch"), records.BatchCreateInput{
+		Feedings: maxFeeds,
+		Cares:    maxCares,
+	}), http.StatusCreated)
+	if len(maxRes.Feedings) != 10 || len(maxRes.Cares) != 10 {
+		t.Fatalf("恰好 20 条上限批次返回条数异常：feedings=%d cares=%d", len(maxRes.Feedings), len(maxRes.Cares))
+	}
+	if got := CountRows[records.FeedingRecord](t, app, "baby_id = ?", sibling.ID); got != 0 {
+		t.Fatalf("大宝批量补录不应污染二宝 feeding_records，实际 %d", got)
+	}
+	if got := CountRows[records.CareRecord](t, app, "baby_id = ?", sibling.ID); got != 0 {
+		t.Fatalf("大宝批量补录不应污染二宝 care_records，实际 %d", got)
+	}
+}
+
+/*
  * Spec: daily-records / Filtered, timezone-scoped listing with pagination and daily subtotals / Filter feeding records by subtype and date range; Filter health records by comma-separated subtype group; Reject invalid or empty token in comma-separated health subtype filter
  * 测试场景：喂养记录时区筛选与稀疏跨月分页完整小计，以及健康记录逗号多子类型严格隔离与非法 token 拒绝。
- * 业务背景：喂养页与拆分后的健康(/health)/生长(/growth)工作区均依赖后端按筛选条件准确计算每日小计，分页不得截断同日小计，非法逗号 token 须明确报错。
+ * 业务背景：喂养页与独立的健康(/health)/生长(/growth)工作区均依赖后端按筛选条件准确计算每日小计，分页不得截断同日小计，非法逗号 token 须明确报错。
  * 前置数据：
  * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
  * - 管理员与会话：已初始化并登录管理员
  * - 宝宝档案：默认档案小汤圆（2026-07-15，female）
  * - 前置业务记录：6 条跨 UTC 日界线与跨月喂养记录（5 条配方奶 + 1 条亲喂）；5 条覆盖体温/用药/生长/长牙的健康记录
  * 测试目标：
- * 1. 验证 formula + range=7d + limit=1 仅返回 1 条，但 2026-11-23 小计完整汇总跨 UTC 凌晨在内的 2 条共 270ml；range=all + limit=4 跨月命中 05-01 完整小计 150ml。
+ * 1. 验证 formula + range=7d + limit=1 完整汇总当日 270ml、range=30d 排除早期记录、超尾页 offset>=total 返回 [] 与 {}，以及 range=all + limit=4 跨月命中 05-01 完整小计 150ml。
  * 2. 验证 health 逗号筛选 temperature,medicine 与 growth,teeth 严格隔离记录及每日小计。
  * 3. 验证非法或含空白项的健康逗号子类型参数返回 400 中文错误。
  */
@@ -381,7 +529,7 @@ func TestFeedingAndHealthFilteredPaginationSummaries(t *testing.T) {
 	s.AddGrowth(GrowthParams{WeightKg: ptr(7.1), RecordedAt: "2026-11-20T04:00:00Z"})
 	s.AddTooth("下中切牙（第 1 颗）", "2026-11-21T04:00:00Z")
 
-	// 1. 验证喂养 7d 分页与稀疏跨月 range=all 均不截断当日完整小计。
+	// 1. 验证喂养 7d 分页、30d 窗口过滤、稀疏跨月 range=all 与尾页外 offset>=total 空页 JSON 契约（[] 与 {} 非 null）。
 	page1Resp := client.Get(t, feedURL+"?subtype=formula&range=7d&tz=Asia/Shanghai&limit=1&offset=0")
 	page1Resp.RequireStatus(t, http.StatusOK)
 	page1 := DecodeOK[records.ListResult[records.FeedingRecord, records.FeedingDailySummary]](t, page1Resp)
@@ -390,6 +538,26 @@ func TestFeedingAndHealthFilteredPaginationSummaries(t *testing.T) {
 	}
 	if sum := page1.DailySummaries["2026-11-23"]; sum.TotalML != 270 || sum.TotalCount != 2 {
 		t.Fatalf("limit=1 不应截断 2026-11-23 小计，预期 270ml/2次，实际 %+v", sum)
+	}
+
+	// range=30d 应准确排除 2026-05-01 的早期记录，仅返回近 30 天内 3 条配方奶。
+	range30 := DecodeOK[records.ListResult[records.FeedingRecord, records.FeedingDailySummary]](
+		t,
+		client.Get(t, feedURL+"?subtype=formula&range=30d&tz=Asia/Shanghai"),
+	)
+	if range30.Total != 3 || len(range30.Items) != 3 {
+		t.Fatalf("range=30d 应过滤掉 30 天外记录并仅返回 3 条，实际 total=%d len=%d", range30.Total, len(range30.Items))
+	}
+	if _, leaked := range30.DailySummaries["2026-05-01"]; leaked {
+		t.Fatalf("range=30d 不应包含 2026-05-01 的每日小计：%+v", range30.DailySummaries)
+	}
+
+	// offset 超出总数时返回空数组 [] 与空对象 {}（而非 JSON null），has_more=false。
+	beyondResp := client.Get(t, feedURL+"?subtype=formula&range=30d&tz=Asia/Shanghai&limit=20&offset=99")
+	beyond := DecodeOK[records.ListResult[records.FeedingRecord, records.FeedingDailySummary]](t, beyondResp)
+	if beyond.Total != 3 || beyond.HasMore || len(beyond.Items) != 0 || len(beyond.DailySummaries) != 0 ||
+		!strings.Contains(string(beyondResp.Body), `"items":[]`) || !strings.Contains(string(beyondResp.Body), `"daily_summaries":{}`) {
+		t.Fatalf("超尾页 offset>=total 响应异常：body=%s", string(beyondResp.Body))
 	}
 
 	sparseResp := client.Get(t, feedURL+"?subtype=formula&range=all&tz=Asia/Shanghai&limit=4&offset=0")
@@ -670,12 +838,14 @@ func TestRecordsAuthOnboardingAndQueryParamGuards(t *testing.T) {
  * 1. 验证喂养超前未来时间、配方奶缺量/<=0、辅食空名返回 400 且喂养表零行。
  * 2. 验证睡眠结束早于/等于开始、超 24 小时及结束时间超前 5 分钟返回 400 且睡眠表零行。
  * 3. 验证护理缺 diaper_kind 或自定义空标题、健康空生长/空药名/空长牙/越界体温返回 400 且两表均零行。
+ * 4. 验证四类既有记录在 PUT 更新提交未来时间或非法载荷时均返回 400，且 SQLite 原记录保持未被篡改。
  */
 func TestRecordsFutureClockSkewAndInvalidPayloads(t *testing.T) {
 	t.Parallel()
 
 	app := NewTestApp(t)
-	b := app.Scenario().EnsureBaby()
+	s := app.Scenario()
+	b := s.EnsureBaby()
 	client := app.Client()
 
 	// defaultFixedNow 为 2026-11-23T02:00:00Z，+6 分钟即超过 5 分钟未来时钟偏移上限。
@@ -729,5 +899,108 @@ func TestRecordsFutureClockSkewAndInvalidPayloads(t *testing.T) {
 	}
 	if got := CountRows[records.HealthRecord](t, app, ""); got != 0 {
 		t.Fatalf("非法健康请求后 SQLite 应为 0 行，实际 %d", got)
+	}
+
+	// 4. 对四类既有记录发起非法 PUT 更新（未来时间或非法字段）均返回 400 且 SQLite 原值未被破坏。
+	feed := s.AddFormula(120, validTS)
+	sleep := s.AddSleep(records.SleepSubtypeNap, "2026-11-23T00:00:00Z", "2026-11-23T00:45:00Z")
+	care := s.AddDiaper("pee", "", "", validTS)
+	health := s.AddTemperature(36.7, validTS)
+
+	client.Put(t, babyPath(b.ID, fmt.Sprintf("/records/feeding/%d", feed.ID)), records.FeedingInput{
+		Subtype: records.FeedingSubtypeFormula, AmountML: ptr(150), RecordedAt: futureTS,
+	}).RequireError(t, http.StatusBadRequest, "")
+	client.Put(t, babyPath(b.ID, fmt.Sprintf("/records/sleep/%d", sleep.ID)), records.SleepInput{
+		Subtype: records.SleepSubtypeNap, StartedAt: "2026-11-23T00:30:00Z", EndedAt: "2026-11-23T00:10:00Z",
+	}).RequireError(t, http.StatusBadRequest, "")
+	client.Put(t, babyPath(b.ID, fmt.Sprintf("/records/care/%d", care.ID)), records.CareInput{
+		Subtype: records.CareSubtypeOther, CareTitle: ptr(" "), RecordedAt: validTS,
+	}).RequireError(t, http.StatusBadRequest, "")
+	client.Put(t, babyPath(b.ID, fmt.Sprintf("/records/health/%d", health.ID)), records.HealthInput{
+		Subtype: records.HealthSubtypeTemperature, TemperatureC: ptr(45.0), RecordedAt: validTS,
+	}).RequireError(t, http.StatusBadRequest, "")
+
+	if row := FirstRow[records.FeedingRecord](t, app, "id = ?", feed.ID); row.AmountML == nil || *row.AmountML != 120 {
+		t.Fatalf("非法 PUT 后喂养记录被篡改：%+v", row)
+	}
+	if row := FirstRow[records.SleepRecord](t, app, "id = ?", sleep.ID); row.DurationMin != 45 {
+		t.Fatalf("非法 PUT 后睡眠记录被篡改：%+v", row)
+	}
+	if row := FirstRow[records.CareRecord](t, app, "id = ?", care.ID); row.Subtype != records.CareSubtypeDiaper {
+		t.Fatalf("非法 PUT 后护理记录被篡改：%+v", row)
+	}
+	if row := FirstRow[records.HealthRecord](t, app, "id = ?", health.ID); row.TemperatureC == nil || *row.TemperatureC != 36.7 {
+		t.Fatalf("非法 PUT 后健康记录被篡改：%+v", row)
+	}
+}
+
+/*
+ * Spec: daily-records / Atomic batch creation of feeding and care records / Reject empty or oversized batch record payload; Roll back entire batch when any item fails validation; Reject batch record write for unauthenticated or foreign baby scope
+ * 测试场景：验证批量补录接口的鉴权/强制改密/跨宝宝隔离防线，以及空批次、超上限、未知字段与混合非法项时的全事务回滚零脏写。
+ * 业务背景：单次补录可能同时写入喂养与护理两张表，若任一项校验失败或权限不足，必须拒绝整批写入并保持数据库零残留，防止家长重试时产生重复记录。
+ * 前置数据：
+ * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
+ * - 管理员与会话：已登录管理员、待改密普通用户 UserPending 与已就绪普通用户 UserB
+ * - 宝宝档案：管理员名下小汤圆
+ * - 前置业务记录：无
+ * 测试目标：
+ * 1. 验证未认证返回 401、待强制改密用户返回 403、他人或不存在 babyId 返回 404，且两张表零脏写。
+ * 2. 验证空批次（0 条）、超上限批次（21 条）与未知 JSON 字段返回 400 且零脏写。
+ * 3. 验证合法喂养混入非法护理、合法护理混入超前 5 分钟未来喂养均返回 400 且整批回滚（feeding_records 与 care_records 均为 0 行）。
+ */
+func TestRecordsBatchCreateValidationRollbackAndAuthGuards(t *testing.T) {
+	t.Parallel()
+
+	app := NewTestApp(t)
+	anon := app.UnauthenticatedClient()
+	adminClient := app.Client()
+	pendingClient, _ := app.CreateUserViaAdmin("UserPending", "pending-init-secret-123")
+	userBClient, _ := app.CreateReadyUserViaAdmin("UserB", "userb-init-secret-123", "userb-final-secret-456")
+
+	// 前置造数：管理员创建目标宝宝档案。
+	b := app.Scenario().EnsureBaby()
+	batchURL := babyPath(b.ID, "/records/batch")
+	validTS := "2026-11-23T01:00:00Z"
+	futureTS := "2026-11-23T02:06:00Z"
+
+	validPayload := records.BatchCreateInput{
+		Feedings: []records.FeedingInput{{Subtype: records.FeedingSubtypeFormula, AmountML: ptr(90), RecordedAt: validTS}},
+	}
+
+	// 1. 鉴权、强制改密门禁与跨用户/未知宝宝隔离防护：依次断言 401 / 403 / 404 且零落库。
+	anon.Post(t, batchURL, validPayload).RequireError(t, http.StatusUnauthorized, "")
+	pendingClient.Post(t, batchURL, validPayload).RequireError(t, http.StatusForbidden, "初始密码")
+	userBClient.Post(t, batchURL, validPayload).RequireError(t, http.StatusNotFound, "")
+	adminClient.Post(t, babyPath(999999, "/records/batch"), validPayload).RequireError(t, http.StatusNotFound, "")
+
+	// 2. 空批次、超出 20 条上限批次及含未知字段载荷全部返回 400。
+	adminClient.Post(t, batchURL, records.BatchCreateInput{}).RequireError(t, http.StatusBadRequest, "至少填写一项")
+
+	oversized := make([]records.FeedingInput, records.MaxBatchCreateItems+1)
+	for i := range oversized {
+		oversized[i] = records.FeedingInput{Subtype: records.FeedingSubtypeFormula, AmountML: ptr(60), RecordedAt: validTS}
+	}
+	adminClient.Post(t, batchURL, records.BatchCreateInput{Feedings: oversized}).RequireError(t, http.StatusBadRequest, "最多批量提交")
+	adminClient.Post(t, batchURL, map[string]any{
+		"feedings": []records.FeedingInput{{Subtype: records.FeedingSubtypeFormula, AmountML: ptr(60), RecordedAt: validTS}},
+		"unknown":  true,
+	}).RequireError(t, http.StatusBadRequest, "")
+
+	// 3. 混合合法与非法条目（非法护理项、超前 5 分钟未来时间戳）返回 400 且整事务回滚零脏写。
+	adminClient.Post(t, batchURL, records.BatchCreateInput{
+		Feedings: []records.FeedingInput{{Subtype: records.FeedingSubtypeFormula, AmountML: ptr(90), RecordedAt: validTS}},
+		Cares:    []records.CareInput{{Subtype: records.CareSubtypeDiaper, RecordedAt: validTS}},
+	}).RequireError(t, http.StatusBadRequest, "护理记录")
+
+	adminClient.Post(t, batchURL, records.BatchCreateInput{
+		Feedings: []records.FeedingInput{{Subtype: records.FeedingSubtypeFormula, AmountML: ptr(90), RecordedAt: futureTS}},
+		Cares:    []records.CareInput{{Subtype: records.CareSubtypeDiaper, DiaperKind: ptr("pee"), RecordedAt: validTS}},
+	}).RequireError(t, http.StatusBadRequest, "不能晚于当前时间")
+
+	if got := CountRows[records.FeedingRecord](t, app, ""); got != 0 {
+		t.Fatalf("批量校验失败回滚后 feeding_records 应为 0 行，实际 %d", got)
+	}
+	if got := CountRows[records.CareRecord](t, app, ""); got != 0 {
+		t.Fatalf("批量校验失败回滚后 care_records 应为 0 行，实际 %d", got)
 	}
 }

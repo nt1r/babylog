@@ -1,8 +1,11 @@
 import { createFileRoute } from '@tanstack/react-router';
+import { ClipboardList } from 'lucide-react';
 import { RecordListPage, type RecordRowDescriptor } from '@/components/record-list-page';
+import { Button } from '@/components/ui/button';
 import { FEEDING_SUBTYPE_LABELS, RECORD_CATEGORY_META } from '@/lib/categories';
 import { ACCEPTANCE_LABELS, BREAST_SIDE_LABELS, type FeedingDailySummary, type FeedingRecord } from '@/lib/records';
 import { formatLocalDateTimeShort, formatLocalTimeFromISO, getLocalDateKeyFromISO } from '@/lib/time';
+import { useOverlayStore } from '@/stores/overlays';
 
 export const Route = createFileRoute('/_app/feeding')({
   component: FeedingPage,
@@ -58,6 +61,12 @@ function FeedingPage() {
       icon={META.icon}
       badgeClassName={META.softClass}
       createButtonLabel={META.createLabel}
+      secondaryHeaderAction={
+        <Button type="button" variant="outline" size="sm" onClick={() => useOverlayStore.getState().openBatchRecord()}>
+          <ClipboardList className="size-4" />
+          批量补录
+        </Button>
+      }
       subtypeTabs={SUBTYPE_TABS}
       loadErrorFallback="无法加载喂养记录"
       emptyTitle="当前范围内还没有喂养记录"

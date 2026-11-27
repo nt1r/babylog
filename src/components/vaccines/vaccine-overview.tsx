@@ -11,7 +11,7 @@ import {
   Syringe,
   X,
 } from 'lucide-react';
-import { type FormEvent, useEffect, useRef, useState } from 'react';
+import { type FormEvent, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -97,6 +97,10 @@ export function VaccineOverview({
 
   const pendingBirthDoses = doses.filter((d) => summary.birth_pending_dose_ids.includes(d.id));
   const pendingBirthKey = pendingBirthDoses.map((d) => d.id).join(',');
+  const pendingBirthDosesRef = useRef(pendingBirthDoses);
+  useLayoutEffect(() => {
+    pendingBirthDosesRef.current = pendingBirthDoses;
+  });
 
   // 为产院两针各自维护勾选态与默认日期（乙肝默认出生当天、卡介苗默认出生次日）。
   const [birthSelection, setBirthSelection] = useState<Record<number, { checked: boolean; date: string }>>({});
@@ -107,7 +111,7 @@ export function VaccineOverview({
     prevBirthDateRef.current = overview.birth_date;
     setBirthSelection((prev) => {
       const next: Record<number, { checked: boolean; date: string }> = {};
-      for (const dose of pendingBirthDoses) {
+      for (const dose of pendingBirthDosesRef.current) {
         const defaultDate = getDefaultBirthDoseDate(dose, overview.birth_date, today);
         const existing = prev[dose.id];
         // 若用户在设置页修改了宝宝出生日期，保留勾选态但同步刷新默认日期，避免残留旧出生日期。

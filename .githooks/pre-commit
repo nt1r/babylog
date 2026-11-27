@@ -34,7 +34,7 @@ if printf '%s\n' "$staged" | grep -qE '^(src/|scripts/.*\.mjs$|package\.json|tsc
   pnpm check
 fi
 
-# 仅在后端 Go 文件改动时跑 Go 静态检查
-if printf '%s\n' "$staged" | grep -qE '^backend/.*\.go$'; then
+# 仅在后端 Go 文件或 Go 检查脚本改动时跑 Go 静态检查
+if printf '%s\n' "$staged" | grep -qE '^(backend/.*\.go|scripts/lint-go\.sh|scripts/check-go-dead-exports\.go)$'; then
   pnpm lint:go
 fi

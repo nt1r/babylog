@@ -210,7 +210,7 @@ func TestAccumulateSleepAndHealthSummary(t *testing.T) {
 	}
 }
 
-func TestSummarizeSleepByLocalDayAndMedicine(t *testing.T) {
+func TestWindowSnapshotSleepAndMedicineSummary(t *testing.T) {
 	shanghai, err := timeutil.LoadLocation("Asia/Shanghai")
 	if err != nil {
 		t.Fatalf("load shanghai: %v", err)
@@ -233,30 +233,119 @@ func TestSummarizeSleepByLocalDayAndMedicine(t *testing.T) {
 			EndedAt:   "2026-11-23T06:00:00Z",
 		},
 	}
-	byDay := SummarizeSleepByLocalDay(sleeps, shanghai)
-	if got := byDay["2026-11-22"]; got.TotalMin != 120 || got.NightMin != 120 || got.NapCount != 0 {
+	byDay := (&WindowSnapshot{Sleeps: sleeps}).SummarizeByLocalDay(shanghai)
+	if got := byDay["2026-11-22"].Sleep; got.TotalMin != 120 || got.NightMin != 120 || got.NapCount != 0 {
 		t.Fatalf("unexpected 2026-11-22 summary: %+v", got)
 	}
-	if got := byDay["2026-11-23"]; got.TotalMin != 405 || got.NightMin != 360 || got.NapCount != 1 {
+	if got := byDay["2026-11-23"].Sleep; got.TotalMin != 405 || got.NightMin != 360 || got.NapCount != 1 {
 		t.Fatalf("unexpected 2026-11-23 summary: %+v", got)
 	}
 
 	// 同时间戳按较大 ID 决胜，且最新一条药名为 nil 时应清空旧药名。
-	med := SummarizeMedicine([]HealthRecord{
+	med := (&WindowSnapshot{Healths: []HealthRecord{
 		{ID: 1, Subtype: HealthSubtypeTemperature, TemperatureC: floatPtr(37.2), RecordedAt: "2026-11-23T09:00:00Z"},
 		{ID: 2, Subtype: HealthSubtypeMedicine, MedicineName: strPtr("维生素 D3"), RecordedAt: "2026-11-23T08:00:00Z"},
 		{ID: 5, Subtype: HealthSubtypeMedicine, MedicineName: strPtr("布洛芬"), RecordedAt: "2026-11-23T08:00:00Z"},
 		{ID: 3, Subtype: HealthSubtypeMedicine, MedicineName: strPtr("早间钙剂"), RecordedAt: "2026-11-23T07:00:00Z"},
-	})
+	}}).SummarizeMedicine()
 	if med.Count != 3 || med.LatestName == nil || *med.LatestName != "布洛芬" || med.LatestAt == nil || *med.LatestAt != "2026-11-23T08:00:00Z" {
 		t.Fatalf("unexpected medicine summary: %+v", med)
 	}
 
-	medNilLatest := SummarizeMedicine([]HealthRecord{
+	medNilLatest := (&WindowSnapshot{Healths: []HealthRecord{
 		{ID: 1, Subtype: HealthSubtypeMedicine, MedicineName: strPtr("维生素 D3"), RecordedAt: "2026-11-23T08:00:00Z"},
 		{ID: 2, Subtype: HealthSubtypeMedicine, MedicineName: nil, RecordedAt: "2026-11-23T09:00:00Z"},
-	})
+	}}).SummarizeMedicine()
 	if medNilLatest.Count != 2 || medNilLatest.LatestName != nil || medNilLatest.LatestAt == nil || *medNilLatest.LatestAt != "2026-11-23T09:00:00Z" {
 		t.Fatalf("expected nil LatestName when latest medicine has nil name, got %+v", medNilLatest)
+	}
+}
+
+func TestValidateBatchCreate(t *testing.T) {
+	now := time.Date(2026, 11, 23, 10, 0, 0, 0, time.UTC)
+	ts := "2026-11-23T09:30:00Z"
+
+	// 合法混合批次：亲喂 + 瓶喂母乳 + 配方奶 + 合并尿布（含备注裁剪与纯空白归一化）
+	validRes, err := ValidateBatchCreate(BatchCreateInput{
+		Feedings: []FeedingInput{
+			{Subtype: FeedingSubtypeBreast, FeedingMode: strPtr("direct"), BreastSide: strPtr("left"), DurationMin: intPtr(15), RecordedAt: ts, Note: "  月嫂补录  "},
+			{Subtype: FeedingSubtypeBreast, FeedingMode: strPtr("bottle"), AmountML: intPtr(40), RecordedAt: ts, Note: "   "},
+			{Subtype: FeedingSubtypeFormula, AmountML: intPtr(60), RecordedAt: ts, Note: "  月嫂补录  "},
+		},
+		Cares: []CareInput{
+			{Subtype: CareSubtypeDiaper, DiaperKind: strPtr("both"), StoolConsistency: strPtr("soft"), StoolColor: strPtr("yellow"), RecordedAt: ts, Note: "  月嫂补录  "},
+		},
+	}, now)
+	if err != nil {
+		t.Fatalf("合法混合批量校验不应失败：%v", err)
+	}
+	if len(validRes.Feedings) != 3 || len(validRes.Cares) != 1 {
+		t.Fatalf("预期返回 3 条喂养与 1 条护理，实际 feedings=%d cares=%d", len(validRes.Feedings), len(validRes.Cares))
+	}
+	if validRes.Feedings[0].Note != "月嫂补录" || validRes.Feedings[1].Note != "" || validRes.Cares[0].Note != "月嫂补录" {
+		t.Fatalf("批量备注应完成首尾裁剪与纯空白归一化：f0=%q f1=%q care=%q", validRes.Feedings[0].Note, validRes.Feedings[1].Note, validRes.Cares[0].Note)
+	}
+
+	// 构造超出上限的 21 条记录
+	oversizedFeedings := make([]FeedingInput, MaxBatchCreateItems+1)
+	for i := range oversizedFeedings {
+		oversizedFeedings[i] = FeedingInput{Subtype: FeedingSubtypeFormula, AmountML: intPtr(60), RecordedAt: ts}
+	}
+
+	invalidCases := []struct {
+		name       string
+		in         BatchCreateInput
+		wantSubstr string
+	}{
+		{
+			name:       "空批次(nil切片)",
+			in:         BatchCreateInput{},
+			wantSubstr: "至少填写一项",
+		},
+		{
+			name:       "空批次(空切片)",
+			in:         BatchCreateInput{Feedings: []FeedingInput{}, Cares: []CareInput{}},
+			wantSubstr: "至少填写一项",
+		},
+		{
+			name:       "超出单次20条上限",
+			in:         BatchCreateInput{Feedings: oversizedFeedings},
+			wantSubstr: "最多批量提交 20 条",
+		},
+		{
+			name: "含非法喂养奶量",
+			in: BatchCreateInput{
+				Feedings: []FeedingInput{
+					{Subtype: FeedingSubtypeFormula, AmountML: intPtr(90), RecordedAt: ts},
+					{Subtype: FeedingSubtypeFormula, AmountML: intPtr(0), RecordedAt: ts},
+				},
+			},
+			wantSubstr: "第 2 条喂养记录",
+		},
+		{
+			name: "含非法护理项",
+			in: BatchCreateInput{
+				Feedings: []FeedingInput{{Subtype: FeedingSubtypeFormula, AmountML: intPtr(90), RecordedAt: ts}},
+				Cares:    []CareInput{{Subtype: CareSubtypeDiaper, RecordedAt: ts}},
+			},
+			wantSubstr: "第 1 条护理记录",
+		},
+		{
+			name: "含超前5分钟未来时间戳",
+			in: BatchCreateInput{
+				Feedings: []FeedingInput{{Subtype: FeedingSubtypeFormula, AmountML: intPtr(90), RecordedAt: "2026-11-23T10:06:00Z"}},
+			},
+			wantSubstr: "不能晚于当前时间",
+		},
+	}
+
+	for _, tc := range invalidCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ValidateBatchCreate(tc.in, now)
+			assertValidationErr(t, tc.name, err)
+			if err != nil && !strings.Contains(err.Error(), tc.wantSubstr) {
+				t.Errorf("%s: 预期错误包含 %q，实际 %q", tc.name, tc.wantSubstr, err.Error())
+			}
+		})
 	}
 }

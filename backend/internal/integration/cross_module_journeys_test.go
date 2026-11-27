@@ -307,17 +307,19 @@ func TestMultiUserMultiBabyFullIsolationJourney(t *testing.T) {
 	app := NewTestApp(t)
 	adminClient := app.Client()
 
-	// 1. 管理员代建家庭 A、家庭 B，两户各自完成首次改密并建娃录入差异化数据，验证读模型严格隔离。
+	// 1. 管理员代建家庭 A、家庭 B，两户各自完成首次改密并建娃录入差异化数据，验证看板汇总与多日趋势严格隔离。
 	clientA, _ := app.CreateReadyUserViaAdmin("FamilyA", "familya-init-1234", "familya-priv-5678")
 	clientB, userB := app.CreateReadyUserViaAdmin("FamilyB", "familyb-init-1234", "familyb-priv-5678")
 
 	sA := app.ScenarioFor(clientA)
 	a1 := sA.EnsureBaby(BabyParams{Nickname: "A大宝"})
 	sA.ForBaby(a1.ID).AddFormula(180, "2026-11-23T01:00:00Z")
+	sA.ForBaby(a1.ID).AddDirectBreast("left", 15, "2026-11-23T01:05:00Z")
 	sA.ForBaby(a1.ID).SeedVaccines()
 
 	a2 := sA.EnsureBaby(BabyParams{Nickname: "A二宝"})
 	sA.ForBaby(a2.ID).AddFormula(90, "2026-11-23T01:10:00Z")
+	sA.ForBaby(a2.ID).AddDirectBreast("right", 12, "2026-11-23T01:15:00Z")
 
 	sB := app.ScenarioFor(clientB)
 	b1 := sB.EnsureBaby(BabyParams{Nickname: "B宝宝"})
@@ -329,6 +331,15 @@ func TestMultiUserMultiBabyFullIsolationJourney(t *testing.T) {
 	if sumA1.Feeding.TotalML != 180 || sumA2.Feeding.TotalML != 90 || sumB1.Feeding.TotalML != 150 {
 		t.Fatalf("多用户多宝宝看板汇总出现串扰：a1=%d a2=%d b1=%d",
 			sumA1.Feeding.TotalML, sumA2.Feeding.TotalML, sumB1.Feeding.TotalML)
+	}
+
+	trendA1 := DecodeOK[dashboard.TrendsResponse](t, clientA.Get(t, babyPath(a1.ID, "/dashboard/trends?days=7&tz=Asia/Shanghai")))
+	trendA2 := DecodeOK[dashboard.TrendsResponse](t, clientA.Get(t, babyPath(a2.ID, "/dashboard/trends?days=7&tz=Asia/Shanghai")))
+	if len(trendA1.Daily) != 7 || len(trendA2.Daily) != 7 ||
+		trendA1.Daily[6].FeedingML != 180 || trendA2.Daily[6].FeedingML != 90 ||
+		trendA1.PeriodSummary.BreastSide.LeftCount != 1 || trendA1.PeriodSummary.BreastSide.RightCount != 0 ||
+		trendA2.PeriodSummary.BreastSide.LeftCount != 0 || trendA2.PeriodSummary.BreastSide.RightCount != 1 {
+		t.Fatalf("同用户多宝宝 7 日趋势与周期洞察出现串扰：a1=%+v a2=%+v", trendA1.PeriodSummary, trendA2.PeriodSummary)
 	}
 
 	// 2. 唯一管理员与家庭 B 访问家庭 A 的宝宝记录/看板/疫苗全部返回 404（管理员同样严守隐私边界）。
@@ -344,7 +355,7 @@ func TestMultiUserMultiBabyFullIsolationJourney(t *testing.T) {
 		CountRows[vaccines.DoseRecord](t, app, "baby_id = ?", a1.ID) != 0 {
 		t.Fatalf("删除 A 大宝后子表记录未完全级联清零")
 	}
-	if CountRows[records.FeedingRecord](t, app, "baby_id = ?", a2.ID) != 1 ||
+	if CountRows[records.FeedingRecord](t, app, "baby_id = ?", a2.ID) != 2 ||
 		CountRows[records.FeedingRecord](t, app, "baby_id = ?", b1.ID) != 1 {
 		t.Fatalf("删除 A 大宝不应影响 A 二宝与 B 宝宝")
 	}
