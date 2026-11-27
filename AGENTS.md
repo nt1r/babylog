@@ -5,7 +5,7 @@
 ## 文档指针（按需读取）
 
 - **代码审查、前端交互/视觉改动、维护中文注释或 Go 跨模块改动** → 先读 `CODING_STANDARDS.md`
-- **新增/修改测试或制定 OpenSpec `test-plan.md`** → 先读 `docs/testing-guide.md`
+- **新增、修改或审查测试，或制定 OpenSpec `test-plan.md`** → 先读 `docs/testing-guide.md`
 - **架构设计、模块命名、核对业务术语或既有架构权衡** → 先读 `GLOSSARY.md` 与 `docs/adr/`
 - **调整视觉样式、亮暗主题或分类色 Token** → 先读 `docs/design-system.md`
 - **验证前端纯 TS 逻辑、复杂交互链路或做免登录视觉自查（390px 移动 + 桌面亮暗态无头截屏）** → 先读 `docs/temp-verification.md`（常驻测试仅限后端 Go；前端临时验证统一放 `$TMPDIR`、可用 `pnpm verify:ts` 执行并在结束时清理）

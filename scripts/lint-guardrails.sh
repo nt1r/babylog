@@ -121,6 +121,9 @@ node scripts/check-comments.mjs
 # 9.1 发版元数据模块自检（SemVer 2.0.0 校验、版本序比较与 CHANGELOG 切分）
 node scripts/lib/release-meta.mjs --self-test
 
+# 9.2 前后端 API 契约只读审计脚本自检（零磁盘 IO 解析器回归防护）
+node scripts/audit-api-contract.mjs --self-test
+
 # 10. Go 后端跨表直接访问门禁（使用 .Table("...") 须同行标注 `// cross-table:` 说明事务意图，防止静默越界或重复查库）
 if grep -rnE --include='*.go' --exclude='*_test.go' '\.Table\("' backend/internal/ | grep -v '// cross-table:'; then
   echo 'Cross-table GORM .Table("...") access requires an inline // cross-table: justification comment' >&2
@@ -137,6 +140,12 @@ fi
 bad_unit_db=$(find backend/internal -name '*_test.go' ! -name 'store_test.go' ! -path 'backend/internal/integration/*' ! -path 'backend/internal/database/*' -exec grep -l 'database\.Open(' {} + || true)
 if [ -n "$bad_unit_db" ]; then
   printf 'Pure unit test files must not call database.Open (move persistence invariant tests to store_test.go):\n%s\n' "$bad_unit_db" >&2
+  exit 1
+fi
+
+# 10.3 集成测试提取会话 Cookie 时禁止忽略 CookiePair 的 ok 返回值，统一改用 RequireCookiePair 防漏下发掩盖
+if grep -rnE ',[[:space:]]*_[[:space:]]*:?=.*\.CookiePair\(' backend/internal/integration/; then
+  echo 'Use RequireCookiePair(t, ...) instead of discarding the ok flag from CookiePair(...)' >&2
   exit 1
 fi
 
