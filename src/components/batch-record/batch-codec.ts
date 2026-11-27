@@ -1,6 +1,13 @@
 import { addDays, addHours } from 'date-fns';
-import { FEEDING_BOUNDS } from '@/components/quick-record/codecs/feeding';
 import { parseStrictInt } from '@/lib/number';
+import {
+  buildDiaperCareInput,
+  buildDirectBreastInput,
+  buildMilkFeedingInput,
+  FEEDING_BOUNDS,
+  validateNotFutureTimestamp,
+  validateRecordNote,
+} from '@/lib/record-codecs';
 import {
   type BatchCreateRecordsInput,
   type BatchUndoTarget,
@@ -21,8 +28,6 @@ import {
   splitLocalDateTime,
 } from '@/lib/time';
 
-const MAX_FUTURE_SKEW_MS = 5 * 60_000;
-const MAX_NOTE_LENGTH = 500;
 const RELATIVE_HOUR_OFFSETS = [-3, -2, 2, 3] as const;
 
 export interface BatchRecordDraft {
@@ -213,14 +218,16 @@ export function validateAndBuildBatchSubmission(draft: BatchRecordDraft, now: Da
   if (!recordedAt) {
     return { ok: false, error: '请选择有效的记录日期与时间' };
   }
-  if (new Date(recordedAt).getTime() > now.getTime() + MAX_FUTURE_SKEW_MS) {
-    return { ok: false, error: '记录时间不能晚于当前时间' };
+  const timeErr = validateNotFutureTimestamp(recordedAt, now);
+  if (timeErr) {
+    return { ok: false, error: timeErr };
   }
 
-  const note = draft.note.trim();
-  if (Array.from(note).length > MAX_NOTE_LENGTH) {
-    return { ok: false, error: '备注最多 500 个字' };
+  const noteResult = validateRecordNote(draft.note);
+  if (!noteResult.ok) {
+    return noteResult;
   }
+  const { note } = noteResult;
 
   const feedings: FeedingInput[] = [];
   const cares: CareInput[] = [];
@@ -228,70 +235,56 @@ export function validateAndBuildBatchSubmission(draft: BatchRecordDraft, now: Da
   let usedBreastSide: BreastSide | null = null;
 
   if (draft.directBreastSide) {
-    const min = parseStrictInt(draft.directBreastMinText);
-    if (min === null || min < FEEDING_BOUNDS.breastMin || min > FEEDING_BOUNDS.breastMax) {
-      return {
-        ok: false,
-        error: `亲喂时长应在 ${FEEDING_BOUNDS.breastMin} 至 ${FEEDING_BOUNDS.breastMax} 分钟之间`,
-      };
-    }
-    usedBreastSide = draft.directBreastSide;
-    feedings.push({
-      subtype: 'breast',
-      feeding_mode: 'direct',
-      breast_side: draft.directBreastSide,
-      duration_min: min,
-      recorded_at: recordedAt,
+    const built = buildDirectBreastInput({
+      side: draft.directBreastSide,
+      durationText: draft.directBreastMinText,
+      recordedAt,
       note,
+      errorMessage: `亲喂时长应在 ${FEEDING_BOUNDS.breastMin} 至 ${FEEDING_BOUNDS.breastMax} 分钟之间`,
     });
-    summaryParts.push(formatDirectBreastLabel(draft.directBreastSide, min));
+    if (!built.ok) return built;
+    usedBreastSide = draft.directBreastSide;
+    feedings.push(built.payload);
+    summaryParts.push(formatDirectBreastLabel(draft.directBreastSide, built.durationMin));
   }
 
   if (draft.bottleBreastMLText.trim() !== '') {
-    const ml = parseStrictInt(draft.bottleBreastMLText);
-    if (ml === null || ml < FEEDING_BOUNDS.milkMin || ml > FEEDING_BOUNDS.milkMax) {
-      return {
-        ok: false,
-        error: `瓶喂母乳奶量应在 ${FEEDING_BOUNDS.milkMin} 至 ${FEEDING_BOUNDS.milkMax} ml 之间`,
-      };
-    }
-    feedings.push({
-      subtype: 'breast',
-      feeding_mode: 'bottle',
-      amount_ml: ml,
-      recorded_at: recordedAt,
+    const built = buildMilkFeedingInput({
+      kind: 'bottle_breast',
+      amountText: draft.bottleBreastMLText,
+      recordedAt,
       note,
+      errorMessage: `瓶喂母乳奶量应在 ${FEEDING_BOUNDS.milkMin} 至 ${FEEDING_BOUNDS.milkMax} ml 之间`,
     });
-    summaryParts.push(formatMilkLabel('瓶喂母乳', ml));
+    if (!built.ok) return built;
+    feedings.push(built.payload);
+    summaryParts.push(formatMilkLabel('瓶喂母乳', built.amountML));
   }
 
   if (draft.formulaMLText.trim() !== '') {
-    const ml = parseStrictInt(draft.formulaMLText);
-    if (ml === null || ml < FEEDING_BOUNDS.milkMin || ml > FEEDING_BOUNDS.milkMax) {
-      return {
-        ok: false,
-        error: `配方奶奶量应在 ${FEEDING_BOUNDS.milkMin} 至 ${FEEDING_BOUNDS.milkMax} ml 之间`,
-      };
-    }
-    feedings.push({
-      subtype: 'formula',
-      amount_ml: ml,
-      recorded_at: recordedAt,
+    const built = buildMilkFeedingInput({
+      kind: 'formula',
+      amountText: draft.formulaMLText,
+      recordedAt,
       note,
+      errorMessage: `配方奶奶量应在 ${FEEDING_BOUNDS.milkMin} 至 ${FEEDING_BOUNDS.milkMax} ml 之间`,
     });
-    summaryParts.push(formatMilkLabel('配方奶', ml));
+    if (!built.ok) return built;
+    feedings.push(built.payload);
+    summaryParts.push(formatMilkLabel('配方奶', built.amountML));
   }
 
   const diaperKind = resolveDiaperKind(draft.hasPee, draft.hasPoop);
   if (diaperKind) {
-    cares.push({
-      subtype: 'diaper',
-      diaper_kind: diaperKind,
-      stool_consistency: draft.hasPoop ? draft.stoolConsistency || null : null,
-      stool_color: draft.hasPoop ? draft.stoolColor || null : null,
-      recorded_at: recordedAt,
-      note,
-    });
+    cares.push(
+      buildDiaperCareInput({
+        diaperKind,
+        stoolConsistency: draft.stoolConsistency,
+        stoolColor: draft.stoolColor,
+        recordedAt,
+        note,
+      }),
+    );
     summaryParts.push(DIAPER_KIND_LABELS[diaperKind]);
   }
 

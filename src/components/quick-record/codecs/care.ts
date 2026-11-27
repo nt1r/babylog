@@ -1,4 +1,9 @@
-import type { CategoryBuildResult } from '@/components/quick-record/codecs/types';
+import {
+  buildDiaperCareInput,
+  type CategoryBuildResult,
+  validateNotFutureTimestamp,
+  validateRecordNote,
+} from '@/lib/record-codecs';
 import type {
   CareInput,
   CareRecord,
@@ -25,6 +30,7 @@ interface CareBuildContext {
   readonly timeStr: string;
   readonly note: string;
   readonly editId?: number;
+  readonly now?: Date;
 }
 
 /** 合并最近自定义护理标题与默认建议并去重截断至最多 6 项。 */
@@ -63,23 +69,30 @@ export function validateAndBuildCareSubmission(state: CareFormState, ctx: CareBu
   if (!recordedAt) {
     return { ok: false, error: '请选择有效的护理日期与时间' };
   }
+  const timeErr = validateNotFutureTimestamp(recordedAt, ctx.now);
+  if (timeErr) {
+    return { ok: false, error: timeErr };
+  }
+  const noteResult = validateRecordNote(ctx.note);
+  if (!noteResult.ok) {
+    return noteResult;
+  }
   if (state.subtype === 'other' && !state.careTitle.trim()) {
     return { ok: false, error: '请填写护理内容' };
   }
 
   const payload: CareInput =
     state.subtype === 'diaper'
-      ? {
-          subtype: 'diaper',
-          diaper_kind: state.diaperKind,
-          stool_consistency: state.diaperKind === 'pee' ? null : state.stoolConsistency || null,
-          stool_color: state.diaperKind === 'pee' ? null : state.stoolColor || null,
-          recorded_at: recordedAt,
-          note: ctx.note,
-        }
+      ? buildDiaperCareInput({
+          diaperKind: state.diaperKind,
+          stoolConsistency: state.stoolConsistency,
+          stoolColor: state.stoolColor,
+          recordedAt,
+          note: noteResult.note,
+        })
       : state.subtype === 'bath'
-        ? { subtype: 'bath', recorded_at: recordedAt, note: ctx.note }
-        : { subtype: 'other', care_title: state.careTitle.trim(), recorded_at: recordedAt, note: ctx.note };
+        ? { subtype: 'bath', recorded_at: recordedAt, note: noteResult.note }
+        : { subtype: 'other', care_title: state.careTitle.trim(), recorded_at: recordedAt, note: noteResult.note };
 
   return {
     ok: true,

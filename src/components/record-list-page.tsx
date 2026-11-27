@@ -25,7 +25,7 @@ import {
 } from '@/lib/records';
 import { formatDateGroupLabel } from '@/lib/time';
 import { cn } from '@/lib/utils';
-import { useQuickRecordStore } from '@/stores/quick-record';
+import { useOverlayStore } from '@/stores/overlays';
 
 const DEFAULT_RANGE_OPTIONS: ReadonlyArray<RecordRange> = ['today', '7d', '30d', 'all'];
 
@@ -358,7 +358,7 @@ export function RecordListPage<C extends RecordCategory>(props: RecordListPagePr
       onCreate(filter);
       return;
     }
-    useQuickRecordStore.getState().openCreate(category, filter === 'all' ? undefined : filter);
+    useOverlayStore.getState().openQuickCreate(category, filter === 'all' ? undefined : filter);
   }
 
   function handleEdit(rec: RecordOf<C>) {
@@ -366,7 +366,7 @@ export function RecordListPage<C extends RecordCategory>(props: RecordListPagePr
       onEdit(rec);
       return;
     }
-    useQuickRecordStore.getState().openEdit(toEditableRecord(category, rec));
+    useOverlayStore.getState().openQuickEdit(toEditableRecord(category, rec));
   }
 
   async function handleConfirmDelete() {
@@ -396,7 +396,7 @@ export function RecordListPage<C extends RecordCategory>(props: RecordListPagePr
         onEdit={() => handleEdit(rec)}
         onDuplicate={
           enableDuplicate
-            ? () => useQuickRecordStore.getState().openDuplicate(toEditableRecord(category, rec))
+            ? () => useOverlayStore.getState().openQuickDuplicate(toEditableRecord(category, rec))
             : undefined
         }
         onDelete={() => setDeleting(rec)}

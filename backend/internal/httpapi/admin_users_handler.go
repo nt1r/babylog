@@ -14,17 +14,12 @@ import (
 // 严格遵循隐私隔离边界，仅操作 users / sessions 账号元数据，不触碰任何宝宝或育儿业务表。
 type adminUsersHandler struct {
 	store  *auth.Store
-	guard  *auth.LoginGuard
 	logger *slog.Logger
 }
 
-func newAdminUsersHandler(store *auth.Store, guard *auth.LoginGuard, logger *slog.Logger) *adminUsersHandler {
-	if guard == nil {
-		guard = auth.NewLoginGuard()
-	}
+func newAdminUsersHandler(store *auth.Store, logger *slog.Logger) *adminUsersHandler {
 	return &adminUsersHandler{
 		store:  store,
-		guard:  guard,
 		logger: logger,
 	}
 }
@@ -39,6 +34,8 @@ func (h *adminUsersHandler) registerRoutes(group *gin.RouterGroup) {
 func (h *adminUsersHandler) handleErr(c *gin.Context, op string, err error) {
 	var valErr *auth.ValidationError
 	switch {
+	case errors.Is(err, auth.ErrRateLimited):
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
 	case errors.As(err, &valErr):
 		c.JSON(http.StatusBadRequest, gin.H{"error": valErr.Error()})
 	case errors.Is(err, auth.ErrAdminProtected):
@@ -80,13 +77,6 @@ func (h *adminUsersHandler) createUser(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请输入有效的用户名和初始密码"})
 		return
 	}
-
-	release, err := h.guard.AcquireScrypt()
-	if err != nil {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
-		return
-	}
-	defer release()
 
 	created, err := h.store.CreateUser(c.Request.Context(), username, password, true)
 	if err != nil {
@@ -143,13 +133,6 @@ func (h *adminUsersHandler) resetPassword(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请输入有效的新密码"})
 		return
 	}
-
-	release, err := h.guard.AcquireScrypt()
-	if err != nil {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
-		return
-	}
-	defer release()
 
 	updated, err := h.store.ResetUserPasswordByID(c.Request.Context(), id, password, true)
 	if err != nil {

@@ -1,5 +1,5 @@
-import type { CategoryBuildResult } from '@/components/quick-record/codecs/types';
 import { parseOptionalStrictNumber } from '@/lib/number';
+import { type CategoryBuildResult, validateNotFutureTimestamp, validateRecordNote } from '@/lib/record-codecs';
 import type { HealthInput, HealthRecord, MedicinePreset, SmartDefaults } from '@/lib/records';
 import { combineLocalDateTimeToISO } from '@/lib/time';
 
@@ -30,6 +30,7 @@ interface HealthBuildContext {
   readonly timeStr: string;
   readonly note: string;
   readonly editId?: number;
+  readonly now?: Date;
 }
 
 /** 解析常用药品与营养剂建议（有历史时优先使用最近用药，否则回退默认维 D 建议）。 */
@@ -68,6 +69,14 @@ export function validateAndBuildHealthSubmission(state: HealthFormState, ctx: He
   if (!recordedAt) {
     return { ok: false, error: '请选择有效的记录日期与时间' };
   }
+  const timeErr = validateNotFutureTimestamp(recordedAt, ctx.now);
+  if (timeErr) {
+    return { ok: false, error: timeErr };
+  }
+  const noteResult = validateRecordNote(ctx.note);
+  if (!noteResult.ok) {
+    return noteResult;
+  }
 
   const parsedTemp = parseOptionalStrictNumber(state.temperatureText);
   if (
@@ -92,14 +101,14 @@ export function validateAndBuildHealthSubmission(state: HealthFormState, ctx: He
           subtype: 'temperature',
           temperature_c: parsedTemp === 'invalid' ? null : parsedTemp,
           recorded_at: recordedAt,
-          note: ctx.note,
+          note: noteResult.note,
         }
       : {
           subtype: 'medicine',
           medicine_name: state.medicineName.trim(),
           medicine_dosage: state.medicineDosage.trim() || null,
           recorded_at: recordedAt,
-          note: ctx.note,
+          note: noteResult.note,
         };
 
   return {

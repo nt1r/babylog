@@ -1,5 +1,5 @@
 import { parseISO, subMinutes } from 'date-fns';
-import type { CategoryBuildResult } from '@/components/quick-record/codecs/types';
+import { type CategoryBuildResult, validateNotFutureTimestamp, validateRecordNote } from '@/lib/record-codecs';
 import type { SleepInput, SleepRecord, SleepSubtype, SmartDefaults } from '@/lib/records';
 import { combineLocalDateTimeToISO, formatDurationMin, guessSleepSubtype, splitLocalDateTime } from '@/lib/time';
 
@@ -21,6 +21,7 @@ export interface SleepFormState {
 interface SleepBuildContext {
   readonly note: string;
   readonly editId?: number;
+  readonly now?: Date;
 }
 
 /** 统一计算睡眠草稿的分钟数，作为界面预览与提交校验的单一事实来源。 */
@@ -83,6 +84,18 @@ export function validateAndBuildSleepSubmission(state: SleepFormState, ctx: Slee
   if (!startedAt || !endedAt) {
     return { ok: false, error: '请选择有效的入睡与醒来时间' };
   }
+  const startErr = validateNotFutureTimestamp(startedAt, ctx.now, '入睡时间不能晚于当前时间');
+  if (startErr) {
+    return { ok: false, error: startErr };
+  }
+  const endErr = validateNotFutureTimestamp(endedAt, ctx.now, '醒来时间不能晚于当前时间');
+  if (endErr) {
+    return { ok: false, error: endErr };
+  }
+  const noteResult = validateRecordNote(ctx.note);
+  if (!noteResult.ok) {
+    return noteResult;
+  }
 
   const durationMin = computeSleepDurationMin(state);
   if (durationMin < SLEEP_BOUNDS.minMin) {
@@ -96,7 +109,7 @@ export function validateAndBuildSleepSubmission(state: SleepFormState, ctx: Slee
     subtype: state.subtype,
     started_at: startedAt,
     ended_at: endedAt,
-    note: ctx.note,
+    note: noteResult.note,
   };
 
   if (ctx.editId !== undefined) {

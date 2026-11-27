@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { FEEDING_SUBTYPE_LABELS, RECORD_CATEGORY_META } from '@/lib/categories';
 import { ACCEPTANCE_LABELS, BREAST_SIDE_LABELS, type FeedingDailySummary, type FeedingRecord } from '@/lib/records';
 import { formatLocalDateTimeShort, formatLocalTimeFromISO, getLocalDateKeyFromISO } from '@/lib/time';
-import { useBatchRecordStore } from '@/stores/batch-record';
+import { useOverlayStore } from '@/stores/overlays';
 
 export const Route = createFileRoute('/_app/feeding')({
   component: FeedingPage,
@@ -62,7 +62,7 @@ function FeedingPage() {
       badgeClassName={META.softClass}
       createButtonLabel={META.createLabel}
       secondaryHeaderAction={
-        <Button type="button" variant="outline" size="sm" onClick={() => useBatchRecordStore.getState().openBatch()}>
+        <Button type="button" variant="outline" size="sm" onClick={() => useOverlayStore.getState().openBatchRecord()}>
           <ClipboardList className="size-4" />
           批量补录
         </Button>

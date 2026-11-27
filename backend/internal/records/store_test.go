@@ -103,8 +103,23 @@ func TestReadWindowBoundariesAndOverlap(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create health: %v", err)
 	}
+	// 同日写入 2 条无序生长记录（时间晚的先写），验证 ReadWindow 内部按 (recorded_at ASC, id ASC) 有序返回并与 Health 分离。
+	if _, err := store.CreateHealth(ctx, babyID, records.HealthInput{
+		Subtype:    records.HealthSubtypeGrowth,
+		WeightKg:   floatPtr(6.4),
+		RecordedAt: "2026-11-23T11:00:00+08:00",
+	}); err != nil {
+		t.Fatalf("create later growth: %v", err)
+	}
+	if _, err := store.CreateHealth(ctx, babyID, records.HealthInput{
+		Subtype:    records.HealthSubtypeGrowth,
+		HeightCm:   floatPtr(62.5),
+		RecordedAt: "2026-11-23T08:30:00+08:00",
+	}); err != nil {
+		t.Fatalf("create earlier growth: %v", err)
+	}
 
-	snap, err := store.ReadWindow(ctx, babyID, dayStart, dayEnd)
+	snap, err := store.ReadWindow(ctx, babyID, records.WindowQuery{Start: dayStart, End: dayEnd})
 	if err != nil {
 		t.Fatalf("ReadWindow: %v", err)
 	}
@@ -114,23 +129,60 @@ func TestReadWindowBoundariesAndOverlap(t *testing.T) {
 	if len(snap.Sleeps) != 1 || snap.Sleeps[0].Subtype != records.SleepSubtypeNight {
 		t.Fatalf("expected 1 overlapping night sleep, got %#v", snap.Sleeps)
 	}
-	if len(snap.Cares) != 1 || len(snap.Healths) != 1 {
-		t.Fatalf("expected 1 care & 1 health, got cares=%d healths=%d", len(snap.Cares), len(snap.Healths))
+	if len(snap.Cares) != 1 || len(snap.Healths) != 1 || len(snap.Growths) != 2 {
+		t.Fatalf("expected 1 care, 1 clinical health & 2 growths, got cares=%d healths=%d growths=%d", len(snap.Cares), len(snap.Healths), len(snap.Growths))
+	}
+	if snap.Growths[0].RecordedAt >= snap.Growths[1].RecordedAt {
+		t.Fatalf("expected growths ordered ascending by recorded_at, got %q then %q", snap.Growths[0].RecordedAt, snap.Growths[1].RecordedAt)
+	}
+
+	// 按需分类筛选：仅请求 Growth 时不加载 Feeding/Sleep/Care/Healths，仅请求 Health 时不混入 Growths。
+	growthOnly, err := store.ReadWindow(ctx, babyID, records.WindowQuery{
+		Start:      dayStart,
+		End:        dayEnd,
+		Categories: []records.WindowCategory{records.WindowCategoryGrowth},
+	})
+	if err != nil {
+		t.Fatalf("ReadWindow growth only: %v", err)
+	}
+	if len(growthOnly.Feedings) != 0 || len(growthOnly.Sleeps) != 0 || len(growthOnly.Cares) != 0 || len(growthOnly.Healths) != 0 || len(growthOnly.Growths) != 2 {
+		t.Fatalf("expected only 2 growths for growth-scoped query, got %#v", growthOnly)
+	}
+	healthOnly, err := store.ReadWindow(ctx, babyID, records.WindowQuery{
+		Start:      dayStart,
+		End:        dayEnd,
+		Categories: []records.WindowCategory{records.WindowCategoryHealth},
+	})
+	if err != nil {
+		t.Fatalf("ReadWindow health only: %v", err)
+	}
+	if len(healthOnly.Healths) != 1 || len(healthOnly.Growths) != 0 {
+		t.Fatalf("expected 1 clinical health and 0 growths for health-scoped query, got healths=%d growths=%d", len(healthOnly.Healths), len(healthOnly.Growths))
+	}
+
+	// 未知分类应显式返回校验错误，防止调用方拼写错误导致静默空返。
+	var valErr *records.ValidationError
+	if _, err := store.ReadWindow(ctx, babyID, records.WindowQuery{
+		Start:      dayStart,
+		End:        dayEnd,
+		Categories: []records.WindowCategory{"unknown"},
+	}); !errors.As(err, &valErr) {
+		t.Fatalf("expected ValidationError for unknown window category, got %v", err)
 	}
 
 	// 空/反向窗口与无关 babyID 均应返回空快照
-	emptySnap, err := store.ReadWindow(ctx, babyID, dayEnd, dayStart)
+	emptySnap, err := store.ReadWindow(ctx, babyID, records.WindowQuery{Start: dayEnd, End: dayStart})
 	if err != nil {
 		t.Fatalf("ReadWindow reversed: %v", err)
 	}
-	if len(emptySnap.Feedings) != 0 || len(emptySnap.Sleeps) != 0 || len(emptySnap.Cares) != 0 || len(emptySnap.Healths) != 0 {
+	if len(emptySnap.Feedings) != 0 || len(emptySnap.Sleeps) != 0 || len(emptySnap.Cares) != 0 || len(emptySnap.Healths) != 0 || len(emptySnap.Growths) != 0 {
 		t.Fatalf("expected empty snapshot for reversed window, got %#v", emptySnap)
 	}
-	otherSnap, err := store.ReadWindow(ctx, babyID+999, dayStart, dayEnd)
+	otherSnap, err := store.ReadWindow(ctx, babyID+999, records.WindowQuery{Start: dayStart, End: dayEnd})
 	if err != nil {
 		t.Fatalf("ReadWindow other baby: %v", err)
 	}
-	if len(otherSnap.Feedings) != 0 || len(otherSnap.Sleeps) != 0 || len(otherSnap.Cares) != 0 || len(otherSnap.Healths) != 0 {
+	if len(otherSnap.Feedings) != 0 || len(otherSnap.Sleeps) != 0 || len(otherSnap.Cares) != 0 || len(otherSnap.Healths) != 0 || len(otherSnap.Growths) != 0 {
 		t.Fatalf("expected empty snapshot for other baby, got %#v", otherSnap)
 	}
 }

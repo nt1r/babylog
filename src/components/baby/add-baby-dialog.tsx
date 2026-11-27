@@ -20,18 +20,18 @@ import {
   useCreateBabyMutation,
   validateBabyProfileForm,
 } from '@/lib/baby';
-import { useBabyStore } from '@/stores/baby';
+import { useOverlayStore } from '@/stores/overlays';
 
 const GENDER_OPTIONS: ReadonlyArray<BabyGender> = ['male', 'female', 'unknown'];
 
 /**
- * 全局新增宝宝档案弹窗：挂载在 AppShell 顶层并由 useBabyStore 驱动，
+ * 全局新增宝宝档案弹窗：挂载在 AppShell 顶层并由 useOverlayStore 驱动，
  * 避免移动端侧边栏 Drawer 收起卸载子树时把已打开的弹窗一并卸载。
  */
 export function AddBabyDialog() {
   const navigate = useNavigate();
-  const open = useBabyStore((state) => state.addDialogOpen);
-  const setOpen = useBabyStore((state) => state.setAddDialogOpen);
+  const open = useOverlayStore((state) => state.active === 'add-baby');
+  const closeOverlay = useOverlayStore((state) => state.close);
   const { babies } = useActiveBaby();
   const createBaby = useCreateBabyMutation();
   const currentCount = babies.length;
@@ -97,14 +97,20 @@ export function AddBabyDialog() {
       } else {
         toast.success(`已添加 ${created.nickname}`, '已自动切换至新宝宝档案。');
       }
-      setOpen(false);
+      closeOverlay('add-baby');
     } catch (cause) {
       setSubmitError(cause instanceof Error ? cause.message : '添加宝宝失败，请稍后重试。');
     }
   }
 
   return (
-    <Dialog open={open} pending={createBaby.isPending} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      pending={createBaby.isPending}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && !createBaby.isPending) closeOverlay('add-baby');
+      }}
+    >
       <DialogContent className="max-w-md">
         <DialogHeader>
           <div className="flex items-center gap-2.5">
@@ -256,7 +262,12 @@ export function AddBabyDialog() {
             ) : null}
 
             <div className="flex items-center justify-end gap-2 pt-1">
-              <Button type="button" variant="outline" disabled={createBaby.isPending} onClick={() => setOpen(false)}>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={createBaby.isPending}
+                onClick={() => closeOverlay('add-baby')}
+              >
                 取消
               </Button>
               <Button type="submit" disabled={createBaby.isPending}>

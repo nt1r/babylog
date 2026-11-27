@@ -16,7 +16,6 @@ import { BatchFeedingSection } from '@/components/batch-record/batch-feeding-sec
 import { BatchSessionStrip } from '@/components/batch-record/batch-session-strip';
 import { BatchTimeSection } from '@/components/batch-record/batch-time-section';
 import { EntityDrawer } from '@/components/entity-drawer';
-import { FEEDING_BOUNDS, resolveFeedingPresets } from '@/components/quick-record/codecs/feeding';
 import { StoolObservationPanel } from '@/components/quick-record/stool-observation-panel';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -27,6 +26,7 @@ import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { toast } from '@/components/ui/toast';
 import { useActiveBaby } from '@/lib/baby';
+import { FEEDING_BOUNDS, resolveFeedingPresets } from '@/lib/record-codecs';
 import {
   type BatchUndoTarget,
   type BreastSide,
@@ -35,7 +35,7 @@ import {
   useUndoBatchRecordsMutation,
 } from '@/lib/records';
 import { formatLocalDateKey, formatShortCnDate } from '@/lib/time';
-import { useBatchRecordStore } from '@/stores/batch-record';
+import { useOverlayStore } from '@/stores/overlays';
 
 function hasNestedOverlayOpen(): boolean {
   if (
@@ -54,9 +54,9 @@ function hasNestedOverlayOpen(): boolean {
  * 配备同步防重入提交/撤销锁与派生会话状态，确保快速连点不重提且撤销后换侧/跳时建议即时回退。
  */
 export function BatchRecordDrawer() {
-  const open = useBatchRecordStore((state) => state.open);
-  const setOpen = useBatchRecordStore((state) => state.setOpen);
-  const { babies, activeBaby, activeBabyId } = useActiveBaby();
+  const open = useOverlayStore((state) => state.active === 'batch-record');
+  const closeOverlay = useOverlayStore((state) => state.close);
+  const { babies, activeBaby } = useActiveBaby();
 
   const defaultsQuery = useSmartDefaultsQuery(open);
   const batchMutation = useBatchCreateRecordsMutation();
@@ -73,7 +73,6 @@ export function BatchRecordDrawer() {
   const topAnchorRef = useRef<HTMLDivElement>(null);
   const submitLockRef = useRef(false);
   const undoLockRef = useRef(false);
-  const prevBabyIdRef = useRef<number | null>(activeBabyId);
 
   const defaultsRef = useRef(defaultsQuery.data);
   useLayoutEffect(() => {
@@ -81,6 +80,7 @@ export function BatchRecordDrawer() {
   }, [defaultsQuery.data]);
 
   // 每次打开抽屉开启全新补录会话并校准本地时钟，打开期间每分钟刷新一次以保持相对跳时胶囊准确。
+  // 切换宝宝时由 useOverlayStore.resetBabyScoped 自动关闭抽屉，下次打开即重新开启空白会话。
   useEffect(() => {
     if (!open) return;
     const current = new Date();
@@ -96,15 +96,6 @@ export function BatchRecordDrawer() {
     const timer = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(timer);
   }, [open]);
-
-  // 切换当前宝宝时关闭抽屉并清空会话，防止跨宝宝补录或误撤销。
-  useEffect(() => {
-    if (prevBabyIdRef.current !== activeBabyId) {
-      prevBabyIdRef.current = activeBabyId;
-      if (open) setOpen(false);
-      setSessionEntries([]);
-    }
-  }, [activeBabyId, open, setOpen]);
 
   const todayMaxDate = formatLocalDateKey(now);
   const yesterdayDate = formatLocalDateKey(subDays(now, 1));
@@ -190,7 +181,7 @@ export function BatchRecordDrawer() {
       toast.success(`已补录 ${shortDate} ${draft.timeStr}（${targets.length} 条）`, built.summaryLabel);
 
       if (mode === 'close') {
-        setOpen(false);
+        closeOverlay('batch-record');
         return;
       }
 
@@ -269,7 +260,7 @@ export function BatchRecordDrawer() {
       open={open}
       pending={isBusy}
       onOpenChange={(next) => {
-        if (!isBusy) setOpen(next);
+        if (!next && !isBusy) closeOverlay('batch-record');
       }}
       title="批量补录"
       description="同一时间一次记齐喂奶与嘘嘘便便，没发生的可留空"

@@ -1,8 +1,8 @@
-import type { CategoryBuildResult } from '@/components/quick-record/codecs/types';
 import { parseOptionalStrictNumber } from '@/lib/number';
+import { type CategoryBuildResult, validateRecordNote } from '@/lib/record-codecs';
 import type { HealthInput } from '@/lib/records';
 import { combineLocalDateTimeToISO, formatLocalDateKey, getLocalDateKeyFromISO, parseLocalDateKey } from '@/lib/time';
-import type { GrowthEntrySubtype, GrowthRecordIntent } from '@/stores/growth-record';
+import type { GrowthEntrySubtype, GrowthRecordIntent } from '@/stores/overlays';
 
 const GROWTH_BOUNDS = {
   weightMin: 0.3,
@@ -144,6 +144,10 @@ export function validateAndBuildGrowthSubmission(
   if (!recordedAt) {
     return { ok: false, error: '请选择有效的记录日期' };
   }
+  const noteResult = validateRecordNote(state.note);
+  if (!noteResult.ok) {
+    return noteResult;
+  }
 
   const editId = intent.mode === 'edit' ? intent.record.id : undefined;
 
@@ -155,7 +159,7 @@ export function validateAndBuildGrowthSubmission(
       subtype: 'teeth',
       tooth_note: state.toothNote.trim(),
       recorded_at: recordedAt,
-      note: state.note.trim(),
+      note: noteResult.note,
     };
     return {
       ok: true,
@@ -196,7 +200,7 @@ export function validateAndBuildGrowthSubmission(
     height_cm: parsedHeight,
     head_cm: parsedHead,
     recorded_at: recordedAt,
-    note: state.note.trim(),
+    note: noteResult.note,
   };
 
   return {

@@ -4,6 +4,8 @@
  * 在零云端推送的前提下提供可靠闹钟提醒。
  */
 
+import { triggerBlobDownload } from '@/lib/http';
+
 interface VaccineCalendarEventInput {
   readonly uidSeed: string;
   readonly summary: string;
@@ -225,12 +227,5 @@ function buildVaccineVisitIcsFromDoses(params: ExportVaccineVisitParams, now: Da
 export function exportVaccineVisitIcs(params: ExportVaccineVisitParams): void {
   const content = buildVaccineVisitIcsFromDoses(params);
   const blob = new Blob([content], { type: 'text/calendar;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `babylog-vaccine-${params.date}.ics`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  triggerBlobDownload(blob, `babylog-vaccine-${params.date}.ics`);
 }

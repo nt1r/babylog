@@ -1,4 +1,4 @@
-import { FEEDING_BOUNDS, type FeedingFormState } from '@/components/quick-record/codecs/feeding';
+import type { FeedingFormState } from '@/components/quick-record/codecs/feeding';
 import { MilkAmountControl } from '@/components/quick-record/milk-amount-control';
 import { NumberStepperCard } from '@/components/quick-record/record-controls';
 import { ChoiceCardButton, QuickChip, SegmentedControl } from '@/components/ui/choice-controls';
@@ -6,6 +6,7 @@ import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { FEEDING_SUBTYPE_OPTIONS } from '@/lib/categories';
 import { parseStrictInt } from '@/lib/number';
+import { BREAST_DURATION_PRESETS, FEEDING_BOUNDS } from '@/lib/record-codecs';
 import { ACCEPTANCE_LABELS, BREAST_SIDE_LABELS, type BreastSide, type SolidFoodPreset } from '@/lib/records';
 
 const BREAST_MODE_OPTIONS = [
@@ -13,7 +14,6 @@ const BREAST_MODE_OPTIONS = [
   { value: 'bottle', label: '瓶喂母乳' },
 ] as const;
 
-const BREAST_DURATION_PRESETS = [10, 15, 20, 30] as const;
 const SOLID_AMOUNT_PRESETS = ['几口', '半碗', '一碗'] as const;
 
 interface FeedingFieldsProps {

@@ -21,7 +21,8 @@ import {
   validateExportSelection,
 } from '@/lib/export';
 import { formatLocalDateKey, parseLocalDateKey } from '@/lib/time';
-import { useExportDrawerStore } from '@/stores/export-drawer';
+import { useBabyStore } from '@/stores/baby';
+import { useOverlayStore } from '@/stores/overlays';
 
 const PRESET_OPTIONS: ReadonlyArray<{ readonly value: ExportRangePreset; readonly label: string }> = [
   { value: '7', label: '近 7 天' },
@@ -36,9 +37,10 @@ const PRESET_OPTIONS: ReadonlyArray<{ readonly value: ExportRangePreset; readonl
  * 导出包含「按日汇总」与各分类明细的多表 Excel 表格。
  */
 export function ExportExcelDrawer() {
-  const open = useExportDrawerStore((s) => s.open);
-  const initialPreset = useExportDrawerStore((s) => s.initialPreset);
-  const close = useExportDrawerStore((s) => s.close);
+  const open = useOverlayStore((s) => s.active === 'export');
+  const initialPreset = useOverlayStore((s) => s.exportPreset);
+  const closeOverlay = useOverlayStore((s) => s.close);
+  const setLocked = useOverlayStore((s) => s.setLocked);
   const { activeBaby } = useActiveBaby();
   const activeBabyId = activeBaby?.id ?? null;
 
@@ -50,9 +52,9 @@ export function ExportExcelDrawer() {
   const [pending, setPending] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const submittingRef = useRef(false);
-  const prevBabyIdRef = useRef(activeBabyId);
 
   // 每次打开抽屉时按当前本地日期刷新默认起止日期、恢复全选并同步默认预设，避免跨零点或换娃残留旧筛选。
+  // 空闲态切娃由 useOverlayStore.resetBabyScoped 自动关闭；导出进行中通过 setLocked('export', true) 防止打断下载流。
   useEffect(() => {
     if (!open) return;
     const now = new Date();
@@ -65,15 +67,8 @@ export function ExportExcelDrawer() {
     setSubmitError(null);
   }, [open, initialPreset]);
 
-  // 切换宝宝时自动关闭抽屉，防止跨宝宝误导。
-  useEffect(() => {
-    if (prevBabyIdRef.current !== activeBabyId) {
-      prevBabyIdRef.current = activeBabyId;
-      if (open && !submittingRef.current) {
-        close();
-      }
-    }
-  }, [activeBabyId, open, close]);
+  // 抽屉因跳转 /onboarding 等原因卸载时兜底释放导出锁，防止全局 Store 残留孤儿锁阻塞后续交互。
+  useEffect(() => () => setLocked('export', false), [setLocked]);
 
   const validationError = useMemo(
     () => validateExportSelection({ preset, startDate, endDate, categories }),
@@ -112,25 +107,35 @@ export function ExportExcelDrawer() {
       return;
     }
 
+    const targetBabyId = activeBabyId;
     submittingRef.current = true;
     setPending(true);
+    setLocked('export', true);
     setSubmitError(null);
     try {
-      await downloadExportXlsx(activeBabyId, {
+      await downloadExportXlsx(targetBabyId, {
         preset,
         startDate,
         endDate,
         categories,
       });
       toast.success('表格已开始下载');
-      close();
+      setLocked('export', false);
+      closeOverlay('export');
     } catch (err) {
       const msg = err instanceof Error ? err.message : '导出失败，请稍后重试';
-      setSubmitError(msg);
       toast.error(msg);
+      setLocked('export', false);
+      // 若导出进行期间后台已切换至其他宝宝，失败后直接收起抽屉，避免界面混显新宝宝昵称与旧宝宝报错。
+      if (useBabyStore.getState().activeBabyId !== targetBabyId) {
+        closeOverlay('export');
+      } else {
+        setSubmitError(msg);
+      }
     } finally {
       submittingRef.current = false;
       setPending(false);
+      setLocked('export', false);
     }
   }
 
@@ -140,7 +145,7 @@ export function ExportExcelDrawer() {
     <EntityDrawer
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen) close();
+        if (!nextOpen && !pending) closeOverlay('export');
       }}
       pending={pending}
       title="导出照护数据表格"
@@ -152,7 +157,7 @@ export function ExportExcelDrawer() {
       icon={<FileSpreadsheet className="size-4.5" strokeWidth={1.8} />}
       footer={
         <div className="flex w-full items-center justify-end gap-2">
-          <Button type="button" variant="outline" disabled={pending} onClick={close}>
+          <Button type="button" variant="outline" disabled={pending} onClick={() => closeOverlay('export')}>
             取消
           </Button>
           <Button

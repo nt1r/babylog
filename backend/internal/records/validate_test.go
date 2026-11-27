@@ -210,7 +210,7 @@ func TestAccumulateSleepAndHealthSummary(t *testing.T) {
 	}
 }
 
-func TestSummarizeSleepByLocalDayAndMedicine(t *testing.T) {
+func TestWindowSnapshotSleepAndMedicineSummary(t *testing.T) {
 	shanghai, err := timeutil.LoadLocation("Asia/Shanghai")
 	if err != nil {
 		t.Fatalf("load shanghai: %v", err)
@@ -233,29 +233,29 @@ func TestSummarizeSleepByLocalDayAndMedicine(t *testing.T) {
 			EndedAt:   "2026-11-23T06:00:00Z",
 		},
 	}
-	byDay := SummarizeSleepByLocalDay(sleeps, shanghai)
-	if got := byDay["2026-11-22"]; got.TotalMin != 120 || got.NightMin != 120 || got.NapCount != 0 {
+	byDay := (&WindowSnapshot{Sleeps: sleeps}).SummarizeByLocalDay(shanghai)
+	if got := byDay["2026-11-22"].Sleep; got.TotalMin != 120 || got.NightMin != 120 || got.NapCount != 0 {
 		t.Fatalf("unexpected 2026-11-22 summary: %+v", got)
 	}
-	if got := byDay["2026-11-23"]; got.TotalMin != 405 || got.NightMin != 360 || got.NapCount != 1 {
+	if got := byDay["2026-11-23"].Sleep; got.TotalMin != 405 || got.NightMin != 360 || got.NapCount != 1 {
 		t.Fatalf("unexpected 2026-11-23 summary: %+v", got)
 	}
 
 	// 同时间戳按较大 ID 决胜，且最新一条药名为 nil 时应清空旧药名。
-	med := SummarizeMedicine([]HealthRecord{
+	med := (&WindowSnapshot{Healths: []HealthRecord{
 		{ID: 1, Subtype: HealthSubtypeTemperature, TemperatureC: floatPtr(37.2), RecordedAt: "2026-11-23T09:00:00Z"},
 		{ID: 2, Subtype: HealthSubtypeMedicine, MedicineName: strPtr("维生素 D3"), RecordedAt: "2026-11-23T08:00:00Z"},
 		{ID: 5, Subtype: HealthSubtypeMedicine, MedicineName: strPtr("布洛芬"), RecordedAt: "2026-11-23T08:00:00Z"},
 		{ID: 3, Subtype: HealthSubtypeMedicine, MedicineName: strPtr("早间钙剂"), RecordedAt: "2026-11-23T07:00:00Z"},
-	})
+	}}).SummarizeMedicine()
 	if med.Count != 3 || med.LatestName == nil || *med.LatestName != "布洛芬" || med.LatestAt == nil || *med.LatestAt != "2026-11-23T08:00:00Z" {
 		t.Fatalf("unexpected medicine summary: %+v", med)
 	}
 
-	medNilLatest := SummarizeMedicine([]HealthRecord{
+	medNilLatest := (&WindowSnapshot{Healths: []HealthRecord{
 		{ID: 1, Subtype: HealthSubtypeMedicine, MedicineName: strPtr("维生素 D3"), RecordedAt: "2026-11-23T08:00:00Z"},
 		{ID: 2, Subtype: HealthSubtypeMedicine, MedicineName: nil, RecordedAt: "2026-11-23T09:00:00Z"},
-	})
+	}}).SummarizeMedicine()
 	if medNilLatest.Count != 2 || medNilLatest.LatestName != nil || medNilLatest.LatestAt == nil || *medNilLatest.LatestAt != "2026-11-23T09:00:00Z" {
 		t.Fatalf("expected nil LatestName when latest medicine has nil name, got %+v", medNilLatest)
 	}

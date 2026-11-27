@@ -11,7 +11,7 @@ import {
   STOOL_CONSISTENCY_LABELS,
 } from '@/lib/records';
 import { formatLocalDateTimeShort, formatLocalTimeFromISO, getLocalDateKeyFromISO } from '@/lib/time';
-import { useBatchRecordStore } from '@/stores/batch-record';
+import { useOverlayStore } from '@/stores/overlays';
 
 export const Route = createFileRoute('/_app/care')({
   component: CarePage,
@@ -60,7 +60,7 @@ function CarePage() {
       badgeClassName={META.softClass}
       createButtonLabel={META.createLabel}
       secondaryHeaderAction={
-        <Button type="button" variant="outline" size="sm" onClick={() => useBatchRecordStore.getState().openBatch()}>
+        <Button type="button" variant="outline" size="sm" onClick={() => useOverlayStore.getState().openBatchRecord()}>
           <ClipboardList className="size-4" />
           批量补录
         </Button>

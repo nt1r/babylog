@@ -2,8 +2,7 @@ import type { LucideIcon } from 'lucide-react';
 import { BarChart3, BellRing, LayoutDashboard, Ruler, Settings2, Syringe, Users } from 'lucide-react';
 import type { UserRole } from '@/lib/auth';
 import { RECORD_CATEGORY_META, type RecordCategory } from '@/lib/categories';
-import { useGrowthRecordStore } from '@/stores/growth-record';
-import { useQuickRecordStore } from '@/stores/quick-record';
+import { useOverlayStore } from '@/stores/overlays';
 
 interface NavItem {
   readonly id: string;
@@ -185,13 +184,14 @@ export function getContextualCreateAriaLabel(pathname: string): string {
 
 /**
  * 按当前路由上下文直接打开对应录入抽屉（生长发育抽屉或日常快捷录入抽屉），
- * 向应用外壳隐藏双 Store 派发分支，避免头部、底部栏与快捷键三处重复判断。
+ * 避免头部、底部栏与快捷键三处重复判断当前路由目标。
  */
 export function openContextualCreate(pathname: string): void {
   const action = resolveContextualCreateTarget(pathname);
+  const overlays = useOverlayStore.getState();
   if (action.target === 'growth') {
-    useGrowthRecordStore.getState().openCreate('growth');
+    overlays.openGrowthCreate('growth');
     return;
   }
-  useQuickRecordStore.getState().openCreate(action.category, action.subtype);
+  overlays.openQuickCreate(action.category, action.subtype);
 }

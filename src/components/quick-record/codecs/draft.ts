@@ -23,11 +23,11 @@ import {
   sleepFormFromRecord,
   validateAndBuildSleepSubmission,
 } from '@/components/quick-record/codecs/sleep';
-import type { CategoryBuildResult } from '@/components/quick-record/codecs/types';
 import type { RecordCategory } from '@/lib/categories';
+import type { CategoryBuildResult } from '@/lib/record-codecs';
 import type { SmartDefaults } from '@/lib/records';
 import { splitLocalDateTime } from '@/lib/time';
-import type { QuickRecordIntent } from '@/stores/quick-record';
+import type { QuickRecordIntent } from '@/stores/overlays';
 
 export interface QuickRecordDraft {
   readonly category: RecordCategory;
@@ -183,7 +183,11 @@ export function applySmartDefaultsToDraft(
 }
 
 /** 对当前激活分类的草稿执行纯前端校验，并生成供外层 mutation 消费的保存请求与提示文案。 */
-export function buildQuickRecordSubmission(draft: QuickRecordDraft, intent: QuickRecordIntent): CategoryBuildResult {
+export function buildQuickRecordSubmission(
+  draft: QuickRecordDraft,
+  intent: QuickRecordIntent,
+  now: Date = new Date(),
+): CategoryBuildResult {
   const editId =
     intent.mode === 'edit' && intent.target.category === draft.category ? intent.target.record.id : undefined;
 
@@ -193,12 +197,14 @@ export function buildQuickRecordSubmission(draft: QuickRecordDraft, intent: Quic
       timeStr: draft.timeStr,
       note: draft.note,
       editId,
+      now,
     });
   }
   if (draft.category === 'sleep') {
     return validateAndBuildSleepSubmission(draft.sleep, {
       note: draft.note,
       editId,
+      now,
     });
   }
   if (draft.category === 'care') {
@@ -207,6 +213,7 @@ export function buildQuickRecordSubmission(draft: QuickRecordDraft, intent: Quic
       timeStr: draft.timeStr,
       note: draft.note,
       editId,
+      now,
     });
   }
   return validateAndBuildHealthSubmission(draft.health, {
@@ -214,5 +221,6 @@ export function buildQuickRecordSubmission(draft: QuickRecordDraft, intent: Quic
     timeStr: draft.timeStr,
     note: draft.note,
     editId,
+    now,
   });
 }
