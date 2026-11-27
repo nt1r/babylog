@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -98,11 +99,12 @@ func decodeXLSXSheets(t *testing.T, raw []byte) ([]string, map[string]string) {
  * 前置数据：
  * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
  * - 管理员与会话：已初始化并登录管理员
- * - 宝宝档案：目标宝宝小汤圆与同账号下的另一个宝宝小团子（用于验证多宝宝数据隔离）
+ * - 宝宝档案：目标宝宝小汤圆与同账号下的另一个宝宝小团子（步骤 3 另建空记录且昵称含特殊字符的宝宝）
  * - 前置业务记录：小汤圆在 11-21 至 11-23 写入含危险公式备注的配方奶、瓶喂母乳、亲喂、跨夜睡眠、尿布与洗澡、体温与用药、生长测量与长牙记录；小团子写入特征备注喂养记录
  * 测试目标：
  * 1. 验证自定义区间全五类导出返回合法 .xlsx 响应头、6 个有序工作表、跨夜睡眠按日切分汇总与多宝宝严格隔离。
  * 2. 验证仅选 feeding,care 的子集导出仅包含按日汇总与对应两张明细表，且危险公式前缀备注已被安全中和为纯文本。
+ * 3. 验证空记录特殊字符昵称宝宝的默认参数导出（30 天全 5 类 + Content-Disposition 防头注入清洗）与恰好 366 天上限边界导出均返回合法 .xlsx。
  */
 func TestDataExportMultiSheetXLSXAndSanitization(t *testing.T) {
 	t.Parallel()
@@ -196,6 +198,33 @@ func TestDataExportMultiSheetXLSXAndSanitization(t *testing.T) {
 	}
 	if !strings.Contains(subSheets["喂养明细"], "&#39;=SUM(A1:A2)") {
 		t.Errorf("喂养明细未对危险公式前缀备注进行单引号中和：%s", subSheets["喂养明细"])
+	}
+
+	// 3. 空记录特殊字符昵称宝宝：验证默认参数导出（30 天全 5 类 + 防 Content-Disposition 头注入）与恰好 366 天上限边界。
+	emptyBaby := s.EnsureBaby(BabyParams{Nickname: `小"汤;圆/宝`})
+	defaultResp := app.Client().Get(t, babyPath(emptyBaby.ID, "/export/xlsx"))
+	defaultResp.RequireStatus(t, http.StatusOK)
+	cd := defaultResp.Header.Get("Content-Disposition")
+	if strings.Contains(cd, "%22") || strings.Contains(cd, "%3B") || strings.Contains(cd, "%2F") ||
+		!strings.Contains(cd, "filename*=UTF-8''"+url.PathEscape("小汤圆宝-照护记录-")) {
+		t.Fatalf("Content-Disposition 未按预期清洗危险字符并保留合法中文昵称：%q", cd)
+	}
+	defNames, defSheets := decodeXLSXSheets(t, defaultResp.Body)
+	if strings.Join(defNames, ",") != strings.Join(wantNames, ",") {
+		t.Fatalf("默认参数导出应包含全 6 张 Sheet，实际 %v", defNames)
+	}
+	if defSummary := extractRowValues(t, defSheets["按日汇总"]); len(defSummary) != 31 {
+		t.Fatalf("默认 30 天导出按日汇总预期 31 行（1 表头 + 30 天），实际 %d", len(defSummary))
+	}
+	if defFeed := extractRowValues(t, defSheets["喂养明细"]); len(defFeed) != 1 {
+		t.Fatalf("空记录宝宝喂养明细预期仅含 1 行表头，实际 %d", len(defFeed))
+	}
+
+	maxSpanResp := app.Client().Get(t, babyPath(emptyBaby.ID, "/export/xlsx?start=2025-11-23&end=2026-11-23&categories=feeding&tz=Asia/Shanghai"))
+	maxSpanResp.RequireStatus(t, http.StatusOK)
+	_, maxSheets := decodeXLSXSheets(t, maxSpanResp.Body)
+	if maxSummary := extractRowValues(t, maxSheets["按日汇总"]); len(maxSummary) != 367 {
+		t.Fatalf("恰好 366 天上限导出按日汇总预期 367 行（1 表头 + 366 天），实际 %d", len(maxSummary))
 	}
 }
 

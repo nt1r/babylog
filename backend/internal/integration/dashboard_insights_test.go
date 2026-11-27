@@ -95,7 +95,7 @@ func TestDashboardSummaryTimezoneSplitAndMedicine(t *testing.T) {
  * 1. 验证返回连续 7 个有序日桶且前 5 个空日全零填充。
  * 2. 验证跨夜睡眠拆分为 11-22 的 2.0h 与 11-23 的 6.0h；配方奶+瓶喂母乳合计 220ml 计入 feeding_ml，亲喂 30min/2次独立统计不混入奶量。
  * 3. 验证 5 个有序照护节律时段（清晨/上午/下午/傍晚/夜间）全部命中且计数准确。
- * 4. 验证跨 7 天窗口起点的睡眠仅切分落入首日的 6.0h 且不计入时段频次；省略 days 默认 7 天、days=14 返回 11/23 标签，非法 days 返回 400。
+ * 4. 验证跨 7 天窗口起点的睡眠仅切分落入首日的 6.0h 且不计入时段频次；省略 days 默认 7 天、days=1/14/90 合法边界正确，非法 days 返回 400。
  */
 func TestDashboardSevenDayTrendsAndCareRhythm(t *testing.T) {
 	t.Parallel()
@@ -184,6 +184,16 @@ func TestDashboardSevenDayTrendsAndCareRhythm(t *testing.T) {
 	}
 	if t14.Daily[13].Label != "11/23" {
 		t.Errorf("14 天趋势预期末日标签 11/23，实际 %+v", t14.Daily[13])
+	}
+
+	// 验证合法天数上下限边界：days=1 返回单日 2026-11-23，days=90 返回 90 个日桶且末日标签 11/23。
+	t1 := DecodeOK[dashboard.TrendsResponse](t, app.Client().Get(t, trendsBase+"?days=1&tz=Asia/Shanghai"))
+	if len(t1.Daily) != 1 || t1.Daily[0].Date != "2026-11-23" {
+		t.Fatalf("days=1 边界预期返回 1 个日桶（2026-11-23），实际 %+v", t1.Daily)
+	}
+	t90 := DecodeOK[dashboard.TrendsResponse](t, app.Client().Get(t, trendsBase+"?days=90&tz=Asia/Shanghai"))
+	if len(t90.Daily) != 90 || t90.Daily[89].Label != "11/23" {
+		t.Fatalf("days=90 边界预期返回 90 个日桶且末日标签 11/23，实际 len=%d", len(t90.Daily))
 	}
 
 	for _, badDays := range []string{"0", "91", "abc"} {
@@ -410,11 +420,11 @@ func TestDashboardGrowthPartialResolutionAndColdStart(t *testing.T) {
  * 业务背景：看板聚合严格绑定归属宝宝与合法 IANA 时区，未登录、不存在或他人宝宝 ID 与非法时区均须在入口层明确拦截。
  * 前置数据：
  * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
- * - 管理员与会话：用户 A（admin）、普通用户 B（已完成改密）及匿名客户端
+ * - 管理员与会话：用户 A（admin）、待强制改密用户 DashPending、普通用户 B（已完成改密）及匿名客户端
  * - 宝宝档案：步骤 1–2 用户 A 未建档；步骤 3 用户 A 建档后验证跨用户 404 与非法时区 400
  * - 前置业务记录：无
  * 测试目标：
- * 1. 验证匿名请求 /api/babies/1/dashboard/summary 与 trends 均返回 401。
+ * 1. 验证匿名请求 /api/babies/1/dashboard/summary 与 trends 均返回 401，待强制改密用户返回 403 PASSWORD_CHANGE_REQUIRED。
  * 2. 验证已登录但未拥有目标宝宝时请求两接口均返回 404。
  * 3. 验证建档后用户 B 访问用户 A 的宝宝看板返回 404，且携带非法 tz=Invalid/Zone 返回 400 中文错误。
  */
@@ -424,11 +434,20 @@ func TestDashboardAuthOnboardingAndTimezoneGuards(t *testing.T) {
 	app := NewTestApp(t)
 	anon := app.UnauthenticatedClient()
 	clientA := app.Client()
+	clientPending, _ := app.CreateUserViaAdmin("DashPending", "pending-init-secret-123")
 	clientB, _ := app.CreateReadyUserViaAdmin("UserB", "userb-init-secret-123", "userb-final-secret-456")
 
-	// 1. 未认证返回 401。
+	// 1. 未认证返回 401，待强制改密用户返回 403 PASSWORD_CHANGE_REQUIRED。
 	anon.Get(t, babyPath(1, "/dashboard/summary")).RequireError(t, http.StatusUnauthorized, "")
 	anon.Get(t, babyPath(1, "/dashboard/trends")).RequireError(t, http.StatusUnauthorized, "")
+	for _, suffix := range []string{"/dashboard/summary", "/dashboard/trends"} {
+		payload := DecodeStatus[struct {
+			Code string `json:"code"`
+		}](t, clientPending.Get(t, babyPath(1, suffix)), http.StatusForbidden)
+		if payload.Code != "PASSWORD_CHANGE_REQUIRED" {
+			t.Fatalf("待改密用户访问 %s 预期 PASSWORD_CHANGE_REQUIRED，实际 %+v", suffix, payload)
+		}
+	}
 
 	// 2. 已认证但无对应归属宝宝返回 404。
 	clientA.Get(t, babyPath(999, "/dashboard/summary")).RequireError(t, http.StatusNotFound, "")
