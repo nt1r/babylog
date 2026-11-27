@@ -20,6 +20,7 @@ const repoRoot = process.cwd();
 const CJK_RE = /[\u4e00-\u9fff]/;
 const ENGLISH_WORD_RE = /[A-Za-z]{3,}/;
 const ENGLISH_BANNER_RE = /^[=\-*#]{3,}.*[A-Za-z]{2,}/;
+const PROCESS_TENSE_RE = /(?:重构后|改造后|拆分后|第\s*[0-9一二三四五六七八九十]+\s*期)/;
 const TOOL_DIRECTIVE_RE = /^(?:biome-ignore|@ts-|eslint-)/;
 const TS_EXPORT_DECL_RE =
   /^export\s+(?:default\s+)?(?:abstract\s+)?(?:async\s+)?(?:function|const|type|interface|class|enum)\b/;
@@ -43,24 +44,26 @@ function walkFiles(dir, predicate) {
   return out.sort();
 }
 
-/** 判断一行注释正文是否为允许的非中文工具指令、JSDoc 类型标注或纯代码/URL 标记。 */
-function isAllowedNonCjkComment(commentText) {
+/** 判断一行注释正文是否为工具指令或 URL 标记（不参与自然语言规则检查）。 */
+function isDirectiveOrUrlComment(commentText) {
   const s = commentText.trim();
   if (!s) return true;
-  if (
-    /^(?:go:|nolint|cross-table:|Spec:|biome-ignore|@ts-|eslint-|shellcheck|@type\b|@returns\b|@param\b|https?:\/\/)/.test(
-      s,
-    )
-  ) {
-    return true;
-  }
-  return !ENGLISH_WORD_RE.test(s);
+  return /^(?:go:|nolint|cross-table:|Spec:|biome-ignore|@ts-|eslint-|shellcheck|@type\b|@returns\b|@param\b|https?:\/\/)/.test(
+    s,
+  );
+}
+
+/** 判断一行注释正文是否为允许的非中文工具指令、JSDoc 类型标注或纯代码/URL 标记。 */
+function isAllowedNonCjkComment(commentText) {
+  if (isDirectiveOrUrlComment(commentText)) return true;
+  return !ENGLISH_WORD_RE.test(commentText.trim());
 }
 
 /**
  * 校验连续单行 // 注释块与独立块注释：
  * - 英文分隔栏（如 `// === UI ===`）逐行拦截；
- * - 非指令注释按连续块整体判断是否含中文，避免多行中文注释中的单行代码/枚举示例误报。
+ * - 非指令注释按连续块整体判断是否含中文，避免多行中文注释中的单行代码/枚举示例误报；
+ * - 拦截高置信度过程时态词，确保注释保持静态事实描述。
  */
 function checkCommentBlocks(rel, classified, errors) {
   for (let i = 0; i < classified.length; i++) {
@@ -75,6 +78,11 @@ function checkCommentBlocks(rel, classified, errors) {
       const prose = innerLines.filter((l) => !isAllowedNonCjkComment(l));
       if (prose.length > 0 && !CJK_RE.test(prose.join(' '))) {
         errors.push(`${rel}:${cur.lineNo} - 检测到纯英文块注释，请统一使用中文说明意图`);
+      }
+      const naturalLines = innerLines.filter((l) => !isDirectiveOrUrlComment(l));
+      const tenseMatch = naturalLines.join(' ').match(PROCESS_TENSE_RE);
+      if (tenseMatch) {
+        errors.push(`${rel}:${cur.lineNo} - 注释请使用静态事实描述，避免残留过程时态词（命中 "${tenseMatch[0]}"）`);
       }
       continue;
     }
@@ -92,6 +100,14 @@ function checkCommentBlocks(rel, classified, errors) {
       if (ENGLISH_BANNER_RE.test(commentText) && !CJK_RE.test(commentText)) {
         errors.push(`${rel}:${classified[k].lineNo} - 禁止使用英文分隔栏注释，请改为中文`);
         continue;
+      }
+      if (!isDirectiveOrUrlComment(commentText)) {
+        const tenseMatch = commentText.match(PROCESS_TENSE_RE);
+        if (tenseMatch) {
+          errors.push(
+            `${rel}:${classified[k].lineNo} - 注释请使用静态事实描述，避免残留过程时态词（命中 "${tenseMatch[0]}"）`,
+          );
+        }
       }
       if (!isAllowedNonCjkComment(commentText)) {
         proseTexts.push(commentText);
@@ -329,9 +345,13 @@ function runSelfTest() {
   );
   inspectTsContent(
     'src/bad.ts',
-    ['// 误用行注释', '// biome-ignore lint/suspicious/noExplicitAny: test', 'export default function Foo() {}'].join(
-      '\n',
-    ),
+    [
+      '// 误用行注释',
+      '// biome-ignore lint/suspicious/noExplicitAny: test',
+      'export default function Foo() {}',
+      '/** 重构后的旧注释残留。 */',
+      'export const bar = 1;',
+    ].join('\n'),
     failErrors,
   );
   const joined = failErrors.join('\n');
@@ -339,7 +359,8 @@ function runSelfTest() {
     !joined.includes('英文分隔栏') ||
     !joined.includes('MissingDoc') ||
     !joined.includes('纯英文行注释') ||
-    !joined.includes('JSDoc')
+    !joined.includes('JSDoc') ||
+    !joined.includes('过程时态词')
   ) {
     console.error('check-comments --self-test 负向边界用例漏检：', failErrors);
     process.exit(1);
