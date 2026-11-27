@@ -209,7 +209,16 @@ func (s *Service) GetSummary(ctx context.Context, babyID int64, loc *time.Locati
 	dayStart, dayEnd := timeutil.LocalDayBounds(now, loc)
 	todayKey := dayStart.Format(timeutil.DateLayout)
 
-	snap, err := s.store.ReadWindow(ctx, babyID, dayStart, dayEnd)
+	snap, err := s.store.ReadWindow(ctx, babyID, records.WindowQuery{
+		Start: dayStart,
+		End:   dayEnd,
+		Categories: []records.WindowCategory{
+			records.WindowCategoryFeeding,
+			records.WindowCategorySleep,
+			records.WindowCategoryCare,
+			records.WindowCategoryHealth,
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -245,13 +254,15 @@ func (s *Service) GetSummary(ctx context.Context, babyID int64, loc *time.Locati
 		}
 	}
 
-	med := records.SummarizeMedicine(snap.Healths)
+	todaySum := snap.SummarizeByLocalDay(loc)[todayKey]
+	med := snap.SummarizeMedicine()
 	resp := &SummaryResponse{
 		Date: todayKey,
 		Feeding: FeedingSummary{
-			LastFeedingAt: highlights.LastFeedingAt,
+			FeedingDailySummary: todaySum.Feeding,
+			LastFeedingAt:       highlights.LastFeedingAt,
 		},
-		Sleep: records.SummarizeSleepByLocalDay(snap.Sleeps, loc)[todayKey],
+		Sleep: todaySum.Sleep,
 		Health: HealthSummary{
 			LatestTempC:        highlights.LatestTempC,
 			LatestTempAt:       highlights.LatestTempAt,
@@ -261,16 +272,9 @@ func (s *Service) GetSummary(ctx context.Context, babyID int64, loc *time.Locati
 		},
 		Growth: growth,
 		Care: CareSummary{
-			LastDiaperAt: highlights.LastDiaperAt,
+			CareDailySummary: todaySum.Care,
+			LastDiaperAt:     highlights.LastDiaperAt,
 		},
-	}
-
-	// 今日喂养与护理汇总复用 records 共享累加器。
-	for _, r := range snap.Feedings {
-		records.AccumulateFeedingSummary(&resp.Feeding.FeedingDailySummary, r)
-	}
-	for _, r := range snap.Cares {
-		records.AccumulateCareSummary(&resp.Care.CareDailySummary, r)
 	}
 
 	return resp, nil
@@ -292,17 +296,17 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 	todayStart, todayEnd := timeutil.LocalDayBounds(now, loc)
 	windowStart := todayStart.AddDate(0, 0, -(days - 1))
 
-	snap, err := s.store.ReadWindow(ctx, babyID, windowStart, todayEnd)
+	snap, err := s.store.ReadWindow(ctx, babyID, records.WindowQuery{
+		Start: windowStart,
+		End:   todayEnd,
+	})
 	if err != nil {
 		return nil, err
 	}
 
 	keys := timeutil.RecentLocalDateKeys(now, days, loc)
-	// 复用 records 共享按日聚合函数，保证多日趋势与 Excel 导出统计口径一致。
-	feedingByDay := records.SummarizeFeedingByLocalDay(snap.Feedings, loc)
-	sleepByDay := records.SummarizeSleepByLocalDay(snap.Sleeps, loc)
-	careByDay := records.SummarizeCareByLocalDay(snap.Cares, loc)
-	healthByDay := records.SummarizeClinicalHealthByLocalDay(snap.Healths, loc)
+	// 复用 records 统一按日聚合，保证首页看板、多日趋势与 Excel 导出统计口径一致。
+	byDay := snap.SummarizeByLocalDay(loc)
 	slotCounts := make(map[string]int, len(daySlots))
 	var periodSummary PeriodTrendSummary
 	var napDurationSum, napSessionCount int
@@ -317,14 +321,14 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 
 		switch r.Subtype {
 		case records.FeedingSubtypeBreast:
-			if r.FeedingMode == nil || *r.FeedingMode != "bottle" {
+			if r.FeedingMode == nil || *r.FeedingMode != records.FeedingModeBottle {
 				if r.BreastSide != nil {
 					switch *r.BreastSide {
-					case "left":
+					case records.BreastSideLeft:
 						periodSummary.BreastSide.LeftCount++
-					case "right":
+					case records.BreastSideRight:
 						periodSummary.BreastSide.RightCount++
-					case "both":
+					case records.BreastSideBoth:
 						periodSummary.BreastSide.BothCount++
 					}
 				}
@@ -332,18 +336,18 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 		case records.FeedingSubtypeSolid:
 			if r.Acceptance != nil {
 				switch *r.Acceptance {
-				case "like":
+				case records.AcceptanceLike:
 					periodSummary.SolidAcceptance.LikeCount++
-				case "neutral":
+				case records.AcceptanceNeutral:
 					periodSummary.SolidAcceptance.NeutralCount++
-				case "dislike":
+				case records.AcceptanceDislike:
 					periodSummary.SolidAcceptance.DislikeCount++
 				}
 			}
 		}
 	}
 
-	// 2. 睡眠入睡时段计数与连续性指标（跨夜睡眠时长切分已由 records.SummarizeSleepByLocalDay 统一完成）
+	// 2. 睡眠入睡时段计数与连续性指标（跨夜睡眠时长切分已由 WindowSnapshot.SummarizeByLocalDay 统一完成）
 	for _, r := range snap.Sleeps {
 		st, parseErr := timeutil.ParseTimestamp(r.StartedAt)
 		if parseErr != nil {
@@ -367,7 +371,7 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 		periodSummary.Sleep.AvgNapMin = int(math.Round(float64(napDurationSum) / float64(napSessionCount)))
 	}
 
-	// 3. 便便性状/颜色观察统计与护理/健康全天照护节律时段计数
+	// 3. 便便性状/颜色观察统计与护理/健康/生长全天照护节律时段计数
 	for _, r := range snap.Cares {
 		ts, parseErr := timeutil.ParseTimestamp(r.RecordedAt)
 		if parseErr != nil {
@@ -375,22 +379,27 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 		}
 		slotCounts[daySlotLabel(ts, loc)]++
 
-		if r.Subtype == records.CareSubtypeDiaper && r.DiaperKind != nil && (*r.DiaperKind == "poop" || *r.DiaperKind == "both") {
+		if r.Subtype == records.CareSubtypeDiaper && r.DiaperKind != nil && (*r.DiaperKind == records.DiaperKindPoop || *r.DiaperKind == records.DiaperKindBoth) {
 			periodSummary.Stool.TotalPoopCount++
 			if r.StoolConsistency != nil {
 				switch *r.StoolConsistency {
-				case "watery":
+				case records.StoolConsistencyWatery:
 					periodSummary.Stool.WateryCount++
-				case "hard":
+				case records.StoolConsistencyHard:
 					periodSummary.Stool.HardCount++
 				}
 			}
-			if r.StoolColor != nil && *r.StoolColor == "abnormal" {
+			if r.StoolColor != nil && *r.StoolColor == records.StoolColorAbnormal {
 				periodSummary.Stool.AbnormalColorCount++
 			}
 		}
 	}
 	for _, r := range snap.Healths {
+		if ts, parseErr := timeutil.ParseTimestamp(r.RecordedAt); parseErr == nil {
+			slotCounts[daySlotLabel(ts, loc)]++
+		}
+	}
+	for _, r := range snap.Growths {
 		if ts, parseErr := timeutil.ParseTimestamp(r.RecordedAt); parseErr == nil {
 			slotCounts[daySlotLabel(ts, loc)]++
 		}
@@ -405,14 +414,11 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 		if days <= 7 {
 			label = weekdayLabels[dayTime.Weekday()]
 		}
-		feedDay := feedingByDay[key]
-		sleepDay := sleepByDay[key]
-		careDay := careByDay[key]
-		healthDay := healthByDay[key]
-		napMin := max(sleepDay.TotalMin-sleepDay.NightMin, 0)
-		totalHours := math.Round(float64(sleepDay.TotalMin)/60.0*10) / 10
-		napHours := math.Round(float64(napMin)/60.0*10) / 10
-		nightHours := math.Round(float64(sleepDay.NightMin)/60.0*10) / 10
+		daySum := byDay[key]
+		feedDay := daySum.Feeding
+		sleepDay := daySum.Sleep
+		careDay := daySum.Care
+		healthDay := daySum.Health
 
 		point := DailyTrendPoint{
 			Date:              key,
@@ -426,9 +432,9 @@ func (s *Service) GetTrends(ctx context.Context, babyID int64, days int, loc *ti
 			DirectBreastCount: feedDay.DirectBreastCount,
 			SolidCount:        feedDay.SolidCount,
 			FeedingCount:      feedDay.TotalCount,
-			SleepHours:        totalHours,
-			NapHours:          napHours,
-			NightHours:        nightHours,
+			SleepHours:        sleepDay.TotalHours(),
+			NapHours:          sleepDay.NapHours(),
+			NightHours:        sleepDay.NightHours(),
 			NapCount:          sleepDay.NapCount,
 			PeeCount:          careDay.PeeCount,
 			PoopCount:         careDay.PoopCount,

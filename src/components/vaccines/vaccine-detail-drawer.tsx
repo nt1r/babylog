@@ -38,7 +38,7 @@ import {
   type VaccineDose,
   type VaccineStatus,
 } from '@/lib/vaccines';
-import { useQuickRecordStore } from '@/stores/quick-record';
+import { useOverlayStore } from '@/stores/overlays';
 
 interface VaccineDetailDrawerProps {
   readonly open: boolean;
@@ -71,7 +71,7 @@ export function VaccineDetailDrawer({
   const updateMutation = useUpdateVaccineDoseMutation();
   const deleteMutation = useDeleteVaccineDoseMutation();
   const deleteTemplateMutation = useDeleteVaccineTemplateMutation();
-  const openHealthQuickCreate = useQuickRecordStore((state) => state.openCreate);
+  const openHealthQuickCreate = useOverlayStore((state) => state.openQuickCreate);
 
   // 关闭动画期间保留上一个 dose 引用，防止抽屉滑出瞬间内容闪烁。
   const [renderedDose, setRenderedDose] = useState<VaccineDose | null>(dose);

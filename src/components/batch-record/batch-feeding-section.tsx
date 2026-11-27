@@ -2,10 +2,9 @@ import { useId } from 'react';
 import { QuickChip } from '@/components/ui/choice-controls';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { parseStrictInt } from '@/lib/number';
+import { BREAST_DURATION_PRESETS } from '@/lib/record-codecs';
 import { BREAST_SIDE_LABELS, type BreastSide } from '@/lib/records';
 import { cn } from '@/lib/utils';
-
-const BREAST_DURATION_PRESETS = [10, 15, 20, 30] as const;
 
 function ClearButton({ disabled, onClick }: { readonly disabled: boolean; readonly onClick: () => void }) {
   return (

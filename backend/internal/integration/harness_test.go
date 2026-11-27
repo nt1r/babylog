@@ -21,14 +21,9 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/nt1r/babylog/backend/internal/auth"
-	"github.com/nt1r/babylog/backend/internal/baby"
-	"github.com/nt1r/babylog/backend/internal/dashboard"
 	"github.com/nt1r/babylog/backend/internal/database"
-	"github.com/nt1r/babylog/backend/internal/export"
 	"github.com/nt1r/babylog/backend/internal/httpapi"
-	"github.com/nt1r/babylog/backend/internal/records"
 	"github.com/nt1r/babylog/backend/internal/timeutil"
-	"github.com/nt1r/babylog/backend/internal/vaccines"
 )
 
 const (
@@ -233,22 +228,10 @@ func NewTestApp(t *testing.T, opts ...AppOption) *TestApp {
 		adminUserID = admin.ID
 	}
 
-	loginGuard := auth.NewLoginGuard().WithClock(clock.Now)
-	babyStore := baby.NewStore(db.Gorm()).WithClock(clock.Now)
-	recordStore := records.NewStore(db.Gorm()).WithClock(clock.Now)
-	dashSvc := dashboard.NewService(recordStore).WithClock(clock.Now)
-	exportSvc := export.NewService(recordStore).WithClock(clock.Now)
-	vaccineStore := vaccines.NewStore(db.Gorm()).WithClock(clock.Now)
-
 	router := httpapi.NewRouter(httpapi.Options{
-		Store:        authStore,
-		LoginGuard:   loginGuard,
+		DB:           db,
+		Clock:        clock.Now,
 		CookieSecure: cfg.cookieSecure,
-		BabyStore:    babyStore,
-		RecordStore:  recordStore,
-		DashboardSvc: dashSvc,
-		ExportSvc:    exportSvc,
-		VaccineStore: vaccineStore,
 		DistDir:      distDir,
 	})
 	ts := httptest.NewServer(router)

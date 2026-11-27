@@ -3,7 +3,8 @@ import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import { AlertCircle, ArrowUpRight, ClipboardList, PlusIcon, RotateCw, Zap } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts';
+import { CareRhythmBarChart, ChartCard, ChartTooltipCard, ChartTooltipRow } from '@/components/chart-card';
 import { DashboardHero } from '@/components/dashboard/dashboard-hero';
 import {
   DashboardGrowthCard,
@@ -12,8 +13,8 @@ import {
   PostVaccineTempCueBar,
 } from '@/components/dashboard/growth-immunity-section';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { type ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
+import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
+import { type ChartConfig, ChartContainer, ChartTooltip } from '@/components/ui/chart';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -35,9 +36,7 @@ import { useSmartDefaultsQuery } from '@/lib/records';
 import { formatDurationMin } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import { useVaccinesOverviewQuery, VACCINE_OVERVIEW_STALE_MS } from '@/lib/vaccines';
-import { useBatchRecordStore } from '@/stores/batch-record';
-import { useGrowthRecordStore } from '@/stores/growth-record';
-import { useQuickRecordStore } from '@/stores/quick-record';
+import { useOverlayStore } from '@/stores/overlays';
 
 export const Route = createFileRoute('/_app/dashboard')({
   component: DashboardPage,
@@ -60,13 +59,6 @@ const trendChartConfig: ChartConfig = {
   },
 };
 
-const slotChartConfig: ChartConfig = {
-  count: {
-    label: '照护次数',
-    color: 'var(--sleep)',
-  },
-};
-
 interface TrendTooltipProps {
   readonly active?: boolean;
   readonly label?: string | number;
@@ -81,61 +73,37 @@ function DashboardTrendTooltip({ active, label, payload, tab, isDirectBreastMode
   if (!active || !point) return null;
 
   return (
-    <div className="grid min-w-40 gap-1.5 rounded-xl border border-border/80 bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md">
-      <div className="font-medium text-foreground">
-        {label}（{point.date.slice(5)}）
-      </div>
+    <ChartTooltipCard title={`${label}（${point.date.slice(5)}）`}>
       {tab === 'sleep' ? (
-        <div className="flex items-center justify-between gap-4">
-          <span className="flex items-center gap-1.5 text-muted-foreground">
-            <span className="size-2 shrink-0 rounded-full bg-sleep" />
-            每日睡眠
-          </span>
-          <span className="font-medium text-foreground tabular-nums">{point.sleep_hours} 小时</span>
-        </div>
+        <ChartTooltipRow label="每日睡眠" value={`${point.sleep_hours} 小时`} swatchClass="bg-sleep" />
       ) : isDirectBreastMode ? (
-        <div className="grid gap-1">
-          <div className="flex items-center justify-between gap-4">
-            <span className="flex items-center gap-1.5 text-muted-foreground">
-              <span className="size-2 shrink-0 rounded-full bg-feeding" />
-              亲喂时长
-            </span>
-            <span className="font-medium text-foreground tabular-nums">
-              {formatDurationMin(point.direct_breast_min)}
-            </span>
-          </div>
-          <div className="flex items-center justify-between gap-4 text-muted-foreground">
-            <span>亲喂次数</span>
-            <span className="font-medium text-foreground tabular-nums">{point.direct_breast_count} 次</span>
-          </div>
-        </div>
+        <>
+          <ChartTooltipRow
+            label="亲喂时长"
+            value={formatDurationMin(point.direct_breast_min)}
+            swatchClass="bg-feeding"
+          />
+          <ChartTooltipRow label="亲喂次数" value={`${point.direct_breast_count} 次`} />
+        </>
       ) : (
-        <div className="grid gap-1">
-          <div className="flex items-center justify-between gap-4">
-            <span className="flex items-center gap-1.5 text-muted-foreground">
-              <span className="size-2 shrink-0 rounded-full bg-feeding" />
-              每日奶量
-            </span>
-            <span className="font-medium text-foreground tabular-nums">{point.feeding_ml} ml</span>
-          </div>
+        <>
+          <ChartTooltipRow label="每日奶量" value={`${point.feeding_ml} ml`} swatchClass="bg-feeding" />
           {point.direct_breast_count > 0 ? (
-            <div className="flex items-center justify-between gap-4 text-muted-foreground">
-              <span>亲喂补充</span>
-              <span className="font-medium text-foreground tabular-nums">
-                {point.direct_breast_count} 次 · {formatDurationMin(point.direct_breast_min)}
-              </span>
-            </div>
+            <ChartTooltipRow
+              label="亲喂补充"
+              value={`${point.direct_breast_count} 次 · ${formatDurationMin(point.direct_breast_min)}`}
+            />
           ) : null}
-        </div>
+        </>
       )}
-    </div>
+    </ChartTooltipCard>
   );
 }
 
 function DashboardPage() {
-  const openCreate = useQuickRecordStore((state) => state.openCreate);
-  const openBatch = useBatchRecordStore((state) => state.openBatch);
-  const openGrowthCreate = useGrowthRecordStore((state) => state.openCreate);
+  const openCreate = useOverlayStore((state) => state.openQuickCreate);
+  const openBatch = useOverlayStore((state) => state.openBatchRecord);
+  const openGrowthCreate = useOverlayStore((state) => state.openGrowthCreate);
   const { busyKey: quickBusyKey, trigger: triggerOneTap } = useOneTapRecord();
   const [trendTab, setTrendTab] = useState<DashboardTrendTab>('feeding');
   const [trendDays, setTrendDays] = useState<7 | 30>(7);
@@ -310,22 +278,21 @@ function DashboardPage() {
 
       {/* 2:1 喂养/睡眠趋势与时段分布图 */}
       <div className="grid grid-cols-1 items-stretch gap-4 @4xl/main:grid-cols-3">
-        <Card className="@4xl/main:col-span-2">
-          <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="space-y-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <CardTitle>近 {trendDays} 日照护趋势</CardTitle>
-                <Link
-                  to="/insights"
-                  className="inline-flex items-center gap-0.5 text-xs font-medium text-primary hover:underline"
-                >
-                  详细分析
-                  <ArrowUpRight className="size-3.5" />
-                </Link>
-              </div>
-              <CardDescription>{trendView.description}</CardDescription>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
+        <ChartCard
+          className="@4xl/main:col-span-2"
+          title={`近 ${trendDays} 日照护趋势`}
+          description={trendView.description}
+          titleExtra={
+            <Link
+              to="/insights"
+              className="inline-flex items-center gap-0.5 text-xs font-medium text-primary hover:underline"
+            >
+              详细分析
+              <ArrowUpRight className="size-3.5" />
+            </Link>
+          }
+          headerExtra={
+            <>
               <Tabs value={`${trendDays}`} onValueChange={(value) => setTrendDays(value === '30' ? 30 : 7)}>
                 <TabsList>
                   <TabsTrigger value="7">近 7 天</TabsTrigger>
@@ -338,114 +305,82 @@ function DashboardPage() {
                   <TabsTrigger value="sleep">睡眠</TabsTrigger>
                 </TabsList>
               </Tabs>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {trendsQuery.isLoading ? (
-              <Skeleton className="h-60 w-full rounded-xl" />
-            ) : trendsQuery.isError ? (
-              <div className="flex h-60 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border/80 bg-muted/20 p-6 text-center">
-                <p className="text-sm text-muted-foreground">
-                  {trendsQuery.error instanceof Error ? trendsQuery.error.message : '趋势数据加载失败'}
-                </p>
-                <Button variant="outline" size="sm" onClick={() => void trendsQuery.refetch()}>
-                  <RotateCw className="size-3.5" />
-                  重新加载
-                </Button>
-              </div>
-            ) : !trendView.hasCurrentTrendData ? (
-              <div className="flex h-60 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border/80 bg-muted/20 p-6 text-center">
-                <p className="text-sm font-medium text-foreground">
-                  {trendTab === 'sleep' ? `近 ${trendDays} 日还没有睡眠记录` : `近 ${trendDays} 日还没有喂养记录`}
-                </p>
-                <Button size="sm" variant="outline" onClick={() => openCreate(trendTab)}>
-                  <PlusIcon className="size-3.5" />
-                  {RECORD_CATEGORY_META[trendTab].createLabel}
-                </Button>
-              </div>
-            ) : (
-              <ChartContainer config={trendChartConfig} className="aspect-auto h-60 w-full">
-                <AreaChart data={trendView.daily} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="trendMetricFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop
-                        offset="5%"
-                        stopColor={trendTab === 'feeding' ? 'var(--feeding)' : 'var(--sleep)'}
-                        stopOpacity={0.32}
-                      />
-                      <stop
-                        offset="95%"
-                        stopColor={trendTab === 'feeding' ? 'var(--feeding)' : 'var(--sleep)'}
-                        stopOpacity={0.02}
-                      />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid vertical={false} strokeDasharray="3 3" />
-                  <XAxis
-                    dataKey="label"
-                    tickLine={false}
-                    axisLine={false}
-                    tickMargin={8}
-                    minTickGap={trendDays > 7 ? 24 : 8}
+            </>
+          }
+          status={{
+            isLoading: trendsQuery.isLoading,
+            isError: trendsQuery.isError,
+            errorMessage: trendsQuery.error instanceof Error ? trendsQuery.error.message : '趋势数据加载失败',
+            onRetry: () => void trendsQuery.refetch(),
+          }}
+          empty={{
+            isEmpty: !trendView.hasCurrentTrendData,
+            title: trendTab === 'sleep' ? `近 ${trendDays} 日还没有睡眠记录` : `近 ${trendDays} 日还没有喂养记录`,
+            action: (
+              <Button size="sm" variant="outline" onClick={() => openCreate(trendTab)}>
+                <PlusIcon className="size-3.5" />
+                {RECORD_CATEGORY_META[trendTab].createLabel}
+              </Button>
+            ),
+          }}
+        >
+          <ChartContainer config={trendChartConfig} className="aspect-auto h-60 w-full">
+            <AreaChart data={trendView.daily} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+              <defs>
+                <linearGradient id="trendMetricFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop
+                    offset="5%"
+                    stopColor={trendTab === 'feeding' ? 'var(--feeding)' : 'var(--sleep)'}
+                    stopOpacity={0.32}
                   />
-                  <YAxis tickLine={false} axisLine={false} tickMargin={8} />
-                  <ChartTooltip
-                    content={<DashboardTrendTooltip tab={trendTab} isDirectBreastMode={trendView.isDirectBreastMode} />}
+                  <stop
+                    offset="95%"
+                    stopColor={trendTab === 'feeding' ? 'var(--feeding)' : 'var(--sleep)'}
+                    stopOpacity={0.02}
                   />
-                  <Area
-                    type="monotone"
-                    dataKey={trendView.dataKey}
-                    stroke={trendTab === 'feeding' ? 'var(--feeding)' : 'var(--sleep)'}
-                    strokeWidth={2.2}
-                    fill="url(#trendMetricFill)"
-                    isAnimationActive={false}
-                  />
-                </AreaChart>
-              </ChartContainer>
-            )}
-          </CardContent>
-        </Card>
+                </linearGradient>
+              </defs>
+              <CartesianGrid vertical={false} strokeDasharray="3 3" />
+              <XAxis
+                dataKey="label"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                minTickGap={trendDays > 7 ? 24 : 8}
+              />
+              <YAxis tickLine={false} axisLine={false} tickMargin={8} />
+              <ChartTooltip
+                content={<DashboardTrendTooltip tab={trendTab} isDirectBreastMode={trendView.isDirectBreastMode} />}
+              />
+              <Area
+                type="monotone"
+                dataKey={trendView.dataKey}
+                stroke={trendTab === 'feeding' ? 'var(--feeding)' : 'var(--sleep)'}
+                strokeWidth={2.2}
+                fill="url(#trendMetricFill)"
+                isAnimationActive={false}
+              />
+            </AreaChart>
+          </ChartContainer>
+        </ChartCard>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>每日照护节律</CardTitle>
-            <CardDescription>近 {trendDays} 日各时段照护次数</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {trendsQuery.isLoading ? (
-              <Skeleton className="h-60 w-full rounded-xl" />
-            ) : trendsQuery.isError ? (
-              <div className="flex h-60 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border/80 bg-muted/20 p-6 text-center">
-                <p className="text-sm text-muted-foreground">节律分布加载失败</p>
-                <Button variant="outline" size="sm" onClick={() => void trendsQuery.refetch()}>
-                  <RotateCw className="size-3.5" />
-                  重新加载
-                </Button>
-              </div>
-            ) : !trendView.hasSlotData ? (
-              <div className="flex h-60 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border/80 bg-muted/20 p-6 text-center">
-                <p className="text-sm font-medium text-foreground">暂无时段分布</p>
-                <p className="text-xs text-muted-foreground">记下几笔日常后这里会呈现宝宝的活跃节律</p>
-              </div>
-            ) : (
-              <ChartContainer config={slotChartConfig} className="aspect-auto h-60 w-full">
-                <BarChart data={trends?.slots ?? []} margin={{ top: 8, right: 8, left: -22, bottom: 0 }}>
-                  <CartesianGrid vertical={false} strokeDasharray="3 3" />
-                  <XAxis dataKey="slot" tickLine={false} axisLine={false} tickMargin={8} />
-                  <YAxis tickLine={false} axisLine={false} allowDecimals={false} />
-                  <ChartTooltip content={<ChartTooltipContent unit="次" />} />
-                  <Bar
-                    dataKey="count"
-                    fill="var(--sleep)"
-                    radius={[8, 8, 2, 2]}
-                    maxBarSize={32}
-                    isAnimationActive={false}
-                  />
-                </BarChart>
-              </ChartContainer>
-            )}
-          </CardContent>
-        </Card>
+        <ChartCard
+          title="每日照护节律"
+          description={`近 ${trendDays} 日各时段照护次数`}
+          status={{
+            isLoading: trendsQuery.isLoading,
+            isError: trendsQuery.isError,
+            errorMessage: '节律分布加载失败',
+            onRetry: () => void trendsQuery.refetch(),
+          }}
+          empty={{
+            isEmpty: !trendView.hasSlotData,
+            title: '暂无时段分布',
+            description: '记下几笔日常后这里会呈现宝宝的活跃节律',
+          }}
+        >
+          <CareRhythmBarChart slots={trends?.slots ?? []} maxBarSize={32} />
+        </ChartCard>
       </div>
 
       {/* 2 列「成长与免疫」双卡：疫苗接种计划 + 最新生长发育 */}

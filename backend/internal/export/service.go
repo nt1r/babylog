@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -18,14 +17,14 @@ const (
 	minExportDays     = 1
 	maxExportDays     = 366
 
-	catFeeding = "feeding"
-	catSleep   = "sleep"
-	catCare    = "care"
-	catHealth  = "health"
-	catGrowth  = "growth"
+	catFeeding = records.WindowCategoryFeeding
+	catSleep   = records.WindowCategorySleep
+	catCare    = records.WindowCategoryCare
+	catHealth  = records.WindowCategoryHealth
+	catGrowth  = records.WindowCategoryGrowth
 )
 
-var canonicalCategories = []string{catFeeding, catSleep, catCare, catHealth, catGrowth}
+var canonicalCategories = []records.WindowCategory{catFeeding, catSleep, catCare, catHealth, catGrowth}
 
 // ValidationError 表示导出查询参数不合法，映射为 HTTP 400 中文错误提示。
 type ValidationError struct {
@@ -82,8 +81,8 @@ type resolvedQuery struct {
 	endDay     time.Time
 	windowEnd  time.Time
 	dateKeys   []string
-	categories []string
-	catSet     map[string]bool
+	categories []records.WindowCategory
+	catSet     map[records.WindowCategory]bool
 }
 
 func (s *Service) resolveQuery(params Params, loc *time.Location) (resolvedQuery, error) {
@@ -131,7 +130,7 @@ func (s *Service) resolveQuery(params Params, loc *time.Location) (resolvedQuery
 	if err != nil {
 		return resolvedQuery{}, err
 	}
-	catSet := make(map[string]bool, len(cats))
+	catSet := make(map[records.WindowCategory]bool, len(cats))
 	for _, c := range cats {
 		catSet[c] = true
 	}
@@ -151,7 +150,7 @@ func (s *Service) resolveQuery(params Params, loc *time.Location) (resolvedQuery
 	}, nil
 }
 
-func parseCategories(raw string, provided bool) ([]string, error) {
+func parseCategories(raw string, provided bool) ([]records.WindowCategory, error) {
 	trimmed := strings.TrimSpace(raw)
 	if !provided && trimmed == "" {
 		return slices.Clone(canonicalCategories), nil
@@ -159,15 +158,15 @@ func parseCategories(raw string, provided bool) ([]string, error) {
 	if trimmed == "" {
 		return nil, &ValidationError{Message: "导出指标类型无效"}
 	}
-	seen := make(map[string]bool, len(canonicalCategories))
+	seen := make(map[records.WindowCategory]bool, len(canonicalCategories))
 	for _, part := range strings.Split(trimmed, ",") {
-		token := strings.TrimSpace(part)
+		token := records.WindowCategory(strings.TrimSpace(part))
 		if token == "" || !slices.Contains(canonicalCategories, token) {
 			return nil, &ValidationError{Message: "导出指标类型无效"}
 		}
 		seen[token] = true
 	}
-	result := make([]string, 0, len(seen))
+	result := make([]records.WindowCategory, 0, len(seen))
 	for _, c := range canonicalCategories {
 		if seen[c] {
 			result = append(result, c)
@@ -191,52 +190,19 @@ func (s *Service) BuildXLSX(ctx context.Context, params Params) (*Result, error)
 		return nil, err
 	}
 
-	// ReadWindow 对睡眠记录按区间交集查询（ended_at > start AND started_at < end），
+	// ReadWindow 按所选分类直查并按时间升序返回，对睡眠按区间交集查询（ended_at > start AND started_at < end），
 	// 因此跨窗口起点的夜觉会出现在「睡眠明细」中并仅将落入窗口内的分钟数切分到「按日汇总」。
-	snap, err := s.store.ReadWindow(ctx, params.BabyID, q.startDay, q.windowEnd)
+	snap, err := s.store.ReadWindow(ctx, params.BabyID, records.WindowQuery{
+		Start:      q.startDay,
+		End:        q.windowEnd,
+		Categories: q.categories,
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	// 按时间升序排列明细记录（时间戳相同时以 ID 升序破平局），便于按时间轴审阅或就医查看。
-	sort.Slice(snap.Feedings, func(i, j int) bool {
-		if snap.Feedings[i].RecordedAt != snap.Feedings[j].RecordedAt {
-			return snap.Feedings[i].RecordedAt < snap.Feedings[j].RecordedAt
-		}
-		return snap.Feedings[i].ID < snap.Feedings[j].ID
-	})
-	sort.Slice(snap.Sleeps, func(i, j int) bool {
-		if snap.Sleeps[i].StartedAt != snap.Sleeps[j].StartedAt {
-			return snap.Sleeps[i].StartedAt < snap.Sleeps[j].StartedAt
-		}
-		return snap.Sleeps[i].ID < snap.Sleeps[j].ID
-	})
-	sort.Slice(snap.Cares, func(i, j int) bool {
-		if snap.Cares[i].RecordedAt != snap.Cares[j].RecordedAt {
-			return snap.Cares[i].RecordedAt < snap.Cares[j].RecordedAt
-		}
-		return snap.Cares[i].ID < snap.Cares[j].ID
-	})
-	sort.Slice(snap.Healths, func(i, j int) bool {
-		if snap.Healths[i].RecordedAt != snap.Healths[j].RecordedAt {
-			return snap.Healths[i].RecordedAt < snap.Healths[j].RecordedAt
-		}
-		return snap.Healths[i].ID < snap.Healths[j].ID
-	})
-
-	var clinicalHealths []records.HealthRecord
-	var growthRecords []records.HealthRecord
-	for _, r := range snap.Healths {
-		switch r.Subtype {
-		case records.HealthSubtypeTemperature, records.HealthSubtypeMedicine:
-			clinicalHealths = append(clinicalHealths, r)
-		case records.HealthSubtypeGrowth, records.HealthSubtypeTeeth:
-			growthRecords = append(growthRecords, r)
-		}
-	}
-
 	sheets := make([]sheetSpec, 0, 1+len(q.categories))
-	sheets = append(sheets, buildDailySummarySheet(q, snap, clinicalHealths, growthRecords, loc))
+	sheets = append(sheets, buildDailySummarySheet(q, snap, loc))
 
 	for _, cat := range q.categories {
 		switch cat {
@@ -247,9 +213,9 @@ func (s *Service) BuildXLSX(ctx context.Context, params Params) (*Result, error)
 		case catCare:
 			sheets = append(sheets, buildCareDetailSheet(snap.Cares, loc))
 		case catHealth:
-			sheets = append(sheets, buildHealthDetailSheet(clinicalHealths, loc))
+			sheets = append(sheets, buildHealthDetailSheet(snap.Healths, loc))
 		case catGrowth:
-			sheets = append(sheets, buildGrowthDetailSheet(growthRecords, loc))
+			sheets = append(sheets, buildGrowthDetailSheet(snap.Growths, loc))
 		}
 	}
 
@@ -287,20 +253,7 @@ func sanitizeFilenameSegment(raw string) string {
 	return strings.TrimSpace(b.String())
 }
 
-type growthDaySummary struct {
-	weightKg *float64
-	heightCm *float64
-	headCm   *float64
-	teeth    []string
-}
-
-func buildDailySummarySheet(
-	q resolvedQuery,
-	snap *records.WindowSnapshot,
-	clinicalHealths []records.HealthRecord,
-	growthRecords []records.HealthRecord,
-	loc *time.Location,
-) sheetSpec {
+func buildDailySummarySheet(q resolvedQuery, snap *records.WindowSnapshot, loc *time.Location) sheetSpec {
 	headers := []string{"日期"}
 	if q.catSet[catFeeding] {
 		headers = append(headers, "总奶量(ml)", "配方奶(ml)", "配方奶次数", "瓶喂母乳(ml)", "瓶喂母乳次数", "亲喂时长(分钟)", "亲喂次数", "辅食次数", "喂养总次数")
@@ -318,67 +271,16 @@ func buildDailySummarySheet(
 		headers = append(headers, "体重(kg)", "身高(cm)", "头围(cm)", "出牙记录")
 	}
 
-	var feedingByDay map[string]records.FeedingDailySummary
-	if q.catSet[catFeeding] {
-		feedingByDay = records.SummarizeFeedingByLocalDay(snap.Feedings, loc)
-	}
-
-	var sleepByDay map[string]records.SleepDailySummary
-	if q.catSet[catSleep] {
-		sleepByDay = records.SummarizeSleepByLocalDay(snap.Sleeps, loc)
-	}
-
-	var careByDay map[string]records.CareDailySummary
-	if q.catSet[catCare] {
-		careByDay = records.SummarizeCareByLocalDay(snap.Cares, loc)
-	}
-
-	var healthByDay map[string]records.ClinicalHealthDayStats
-	if q.catSet[catHealth] {
-		healthByDay = records.SummarizeClinicalHealthByLocalDay(clinicalHealths, loc)
-	}
-
-	growthByDay := make(map[string]*growthDaySummary)
-	if q.catSet[catGrowth] {
-		// 依赖调用方已将 growthRecords 按 (RecordedAt, ID) 升序排列：
-		// 同日存在多条部分体格测量时按字段后者覆盖前者，最终保留当日各维度最新非空测量值。
-		for _, r := range growthRecords {
-			ts, err := timeutil.ParseTimestamp(r.RecordedAt)
-			if err != nil {
-				continue
-			}
-			key := timeutil.LocalDateKey(ts, loc)
-			agg := growthByDay[key]
-			if agg == nil {
-				agg = &growthDaySummary{}
-				growthByDay[key] = agg
-			}
-			if r.Subtype == records.HealthSubtypeGrowth {
-				if r.WeightKg != nil {
-					v := *r.WeightKg
-					agg.weightKg = &v
-				}
-				if r.HeightCm != nil {
-					v := *r.HeightCm
-					agg.heightCm = &v
-				}
-				if r.HeadCm != nil {
-					v := *r.HeadCm
-					agg.headCm = &v
-				}
-			} else if r.Subtype == records.HealthSubtypeTeeth && r.ToothNote != nil && *r.ToothNote != "" {
-				agg.teeth = append(agg.teeth, *r.ToothNote)
-			}
-		}
-	}
+	byDay := snap.SummarizeByLocalDay(loc)
 
 	rows := make([][]cellValue, 0, len(q.dateKeys))
 	for _, key := range q.dateKeys {
 		row := make([]cellValue, 0, len(headers))
 		row = append(row, textCell(key))
+		day := byDay[key]
 
 		if q.catSet[catFeeding] {
-			f := feedingByDay[key]
+			f := day.Feeding
 			row = append(row,
 				intCell(f.TotalML),
 				intCell(f.FormulaML),
@@ -393,18 +295,17 @@ func buildDailySummarySheet(
 		}
 
 		if q.catSet[catSleep] {
-			sl := sleepByDay[key]
-			napMin := max(sl.TotalMin-sl.NightMin, 0)
+			sl := day.Sleep
 			row = append(row,
-				numCell(round1(float64(sl.TotalMin)/60.0)),
-				numCell(round1(float64(sl.NightMin)/60.0)),
-				numCell(round1(float64(napMin)/60.0)),
+				numCell(sl.TotalHours()),
+				numCell(sl.NightHours()),
+				numCell(sl.NapHours()),
 				intCell(sl.NapCount),
 			)
 		}
 
 		if q.catSet[catCare] {
-			c := careByDay[key]
+			c := day.Care
 			row = append(row,
 				intCell(c.PeeCount),
 				intCell(c.PoopCount),
@@ -414,7 +315,7 @@ func buildDailySummarySheet(
 		}
 
 		if q.catSet[catHealth] {
-			h := healthByDay[key]
+			h := day.Health
 			if h.MaxTempC != nil {
 				row = append(row, numCell(*h.MaxTempC))
 			} else {
@@ -424,24 +325,24 @@ func buildDailySummarySheet(
 		}
 
 		if q.catSet[catGrowth] {
-			agg := growthByDay[key]
-			if agg != nil && agg.weightKg != nil {
-				row = append(row, numCell(*agg.weightKg))
+			g := day.Growth
+			if g.WeightKg != nil {
+				row = append(row, numCell(*g.WeightKg))
 			} else {
 				row = append(row, textCell(""))
 			}
-			if agg != nil && agg.heightCm != nil {
-				row = append(row, numCell(*agg.heightCm))
+			if g.HeightCm != nil {
+				row = append(row, numCell(*g.HeightCm))
 			} else {
 				row = append(row, textCell(""))
 			}
-			if agg != nil && agg.headCm != nil {
-				row = append(row, numCell(*agg.headCm))
+			if g.HeadCm != nil {
+				row = append(row, numCell(*g.HeadCm))
 			} else {
 				row = append(row, textCell(""))
 			}
-			if agg != nil && len(agg.teeth) > 0 {
-				row = append(row, textCell(strings.Join(agg.teeth, "；")))
+			if len(g.Teeth) > 0 {
+				row = append(row, textCell(strings.Join(g.Teeth, "；")))
 			} else {
 				row = append(row, textCell(""))
 			}
@@ -473,7 +374,7 @@ func buildFeedingDetailSheet(items []records.FeedingRecord, loc *time.Location) 
 				mlCell = intCell(*r.AmountML)
 			}
 		case records.FeedingSubtypeBreast:
-			if r.FeedingMode != nil && *r.FeedingMode == "bottle" {
+			if r.FeedingMode != nil && *r.FeedingMode == records.FeedingModeBottle {
 				kindLabel = "瓶喂母乳"
 				detailLabel = "瓶喂"
 				if r.AmountML != nil {
@@ -687,11 +588,11 @@ func formatBreastSide(p *string) string {
 		return ""
 	}
 	switch *p {
-	case "left":
+	case records.BreastSideLeft:
 		return "左侧"
-	case "right":
+	case records.BreastSideRight:
 		return "右侧"
-	case "both":
+	case records.BreastSideBoth:
 		return "双侧"
 	default:
 		return *p
@@ -703,11 +604,11 @@ func formatAcceptance(p *string) string {
 		return ""
 	}
 	switch *p {
-	case "like":
+	case records.AcceptanceLike:
 		return "爱吃"
-	case "neutral":
+	case records.AcceptanceNeutral:
 		return "一般"
-	case "dislike":
+	case records.AcceptanceDislike:
 		return "抗拒"
 	default:
 		return *p
@@ -719,11 +620,11 @@ func formatDiaperKind(p *string) string {
 		return ""
 	}
 	switch *p {
-	case "pee":
+	case records.DiaperKindPee:
 		return "嘘嘘"
-	case "poop":
+	case records.DiaperKindPoop:
 		return "便便"
-	case "both":
+	case records.DiaperKindBoth:
 		return "嘘嘘 + 便便"
 	default:
 		return *p
@@ -735,13 +636,13 @@ func formatStoolConsistency(p *string) string {
 		return ""
 	}
 	switch *p {
-	case "watery":
+	case records.StoolConsistencyWatery:
 		return "稀水"
-	case "soft":
+	case records.StoolConsistencySoft:
 		return "软便"
-	case "formed":
+	case records.StoolConsistencyFormed:
 		return "成型"
-	case "hard":
+	case records.StoolConsistencyHard:
 		return "偏干"
 	default:
 		return *p
@@ -753,13 +654,13 @@ func formatStoolColor(p *string) string {
 		return ""
 	}
 	switch *p {
-	case "yellow":
+	case records.StoolColorYellow:
 		return "黄色"
-	case "green":
+	case records.StoolColorGreen:
 		return "绿色"
-	case "brown":
+	case records.StoolColorBrown:
 		return "棕色"
-	case "abnormal":
+	case records.StoolColorAbnormal:
 		return "异常色"
 	default:
 		return *p

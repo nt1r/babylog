@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLayoutEffect } from 'react';
-import { ApiError, apiRequest } from '@/lib/http';
+import { invalidateBabyDomain } from '@/lib/baby-api';
+import { apiRequest } from '@/lib/http';
 import { parseOptionalStrictNumber } from '@/lib/number';
-import { babiesQueryKey, babyDashboardQueryKey, babyScopeQueryKey, babyVaccinesQueryKey } from '@/lib/query-client';
+import { babiesQueryKey, babyScopeQueryKey } from '@/lib/query-client';
 import { getBrowserTimeZone } from '@/lib/time';
 import { useAuthStore } from '@/stores/auth';
 import { useBabyStore } from '@/stores/baby';
@@ -112,15 +113,6 @@ export function validateBabyProfileForm(input: {
     },
     errors: {},
   };
-}
-
-/** 统一解析写操作提交时的目标宝宝 ID（优先采用调用方捕获值，兜底读取最新 Store 状态）。 */
-export function resolveMutationBabyId(activeBabyId: number | null): number {
-  const targetBabyId = activeBabyId ?? useBabyStore.getState().activeBabyId;
-  if (targetBabyId === null) {
-    throw new ApiError(400, '请先选择宝宝档案。');
-  }
-  return targetBabyId;
 }
 
 async function fetchBabies(signal?: AbortSignal): Promise<BabyProfile[]> {
@@ -244,8 +236,7 @@ export function useUpdateBabyMutation() {
         );
       }
       // 修改出生日期或出生体重/身高会联动影响疫苗预计接种日与生长概览兜底，同步失效该宝宝的两类缓存。
-      void queryClient.invalidateQueries({ queryKey: babyVaccinesQueryKey(baby.id) });
-      void queryClient.invalidateQueries({ queryKey: babyDashboardQueryKey(baby.id) });
+      invalidateBabyDomain(queryClient, baby.id, 'baby-profile');
     },
   });
 }

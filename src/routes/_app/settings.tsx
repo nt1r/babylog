@@ -61,7 +61,7 @@ import { triggerPwaInstall, usePwaInstallState } from '@/lib/pwa';
 import { formatBabyAge } from '@/lib/time';
 import { cn, getInitials } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth';
-import { useBabyStore } from '@/stores/baby';
+import { useOverlayStore } from '@/stores/overlays';
 import { type ThemeMode, usePreferencesStore } from '@/stores/preferences';
 
 export const Route = createFileRoute('/_app/settings')({
@@ -105,7 +105,7 @@ function SettingsPage() {
   const { confirmOpen, setConfirmOpen, pending, confirmLogout } = useLogoutAction();
 
   const { babies, activeBaby: baby, selectBaby } = useActiveBaby();
-  const setAddDialogOpen = useBabyStore((state) => state.setAddDialogOpen);
+  const openAddBaby = useOverlayStore((state) => state.openAddBaby);
   const updateBaby = useUpdateBabyMutation();
   const deleteBaby = useDeleteBabyMutation();
   const { standalone, canPromptInstall, isIOS } = usePwaInstallState();
@@ -312,13 +312,7 @@ function SettingsPage() {
                   {ageInfo.daysLabel} · {ageInfo.ageLabel}
                 </Badge>
               ) : null}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={atBabyLimit}
-                onClick={() => setAddDialogOpen(true)}
-              >
+              <Button type="button" variant="outline" size="sm" disabled={atBabyLimit} onClick={() => openAddBaby()}>
                 <PlusIcon className="size-3.5" />
                 {atBabyLimit ? '已达上限' : '添加宝宝'}
               </Button>
@@ -537,7 +531,7 @@ function SettingsPage() {
                 <p className="text-sm font-medium text-foreground">当前账号尚未创建宝宝档案</p>
                 <p className="text-xs text-muted-foreground">创建宝宝档案后即可开始记录喂养、睡眠、成长与疫苗接种。</p>
               </div>
-              <Button type="button" onClick={() => setAddDialogOpen(true)}>
+              <Button type="button" onClick={() => openAddBaby()}>
                 <PlusIcon className="size-4" />
                 创建宝宝档案
               </Button>

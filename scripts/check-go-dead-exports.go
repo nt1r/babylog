@@ -1,4 +1,4 @@
-// Command check-go-dead-exports 扫描 backend/internal 下的导出函数与方法，
+// Command check-go-dead-exports 扫描 backend/internal 下的导出函数、方法与类型，
 // 拦截全仓（含测试与各构建标签文件）零引用的孤立导出符号，补齐 staticcheck U1000 仅查未导出符号的盲区。
 package main
 
@@ -71,26 +71,47 @@ func findDeadExports(backendRoot string) ([]exportedFunc, error) {
 		}
 
 		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || !fn.Name.IsExported() {
-				continue
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				if !d.Name.IsExported() {
+					continue
+				}
+				if d.Recv != nil && standardInterfaceMethods[d.Name.Name] {
+					continue
+				}
+				kind := "func"
+				if d.Recv != nil {
+					kind = "method"
+				}
+				relPath, _ := filepath.Rel(backendRoot, path)
+				pos := fset.Position(d.Pos())
+				decls = append(decls, exportedFunc{
+					kind:    kind,
+					pkg:     file.Name.Name,
+					name:    d.Name.Name,
+					pos:     fmt.Sprintf("%s:%d", filepath.ToSlash(relPath), pos.Line),
+					namePos: d.Name.Pos(),
+				})
+			case *ast.GenDecl:
+				if d.Tok != token.TYPE {
+					continue
+				}
+				relPath, _ := filepath.Rel(backendRoot, path)
+				for _, spec := range d.Specs {
+					ts, ok := spec.(*ast.TypeSpec)
+					if !ok || !ts.Name.IsExported() {
+						continue
+					}
+					pos := fset.Position(ts.Pos())
+					decls = append(decls, exportedFunc{
+						kind:    "type",
+						pkg:     file.Name.Name,
+						name:    ts.Name.Name,
+						pos:     fmt.Sprintf("%s:%d", filepath.ToSlash(relPath), pos.Line),
+						namePos: ts.Name.Pos(),
+					})
+				}
 			}
-			if fn.Recv != nil && standardInterfaceMethods[fn.Name.Name] {
-				continue
-			}
-			kind := "func"
-			if fn.Recv != nil {
-				kind = "method"
-			}
-			relPath, _ := filepath.Rel(backendRoot, path)
-			pos := fset.Position(fn.Pos())
-			decls = append(decls, exportedFunc{
-				kind:    kind,
-				pkg:     file.Name.Name,
-				name:    fn.Name.Name,
-				pos:     fmt.Sprintf("%s:%d", filepath.ToSlash(relPath), pos.Line),
-				namePos: fn.Name.Pos(),
-			})
 		}
 		return nil
 	})
@@ -98,11 +119,11 @@ func findDeadExports(backendRoot string) ([]exportedFunc, error) {
 		return nil, err
 	}
 
-	// 统计同名函数声明次数，确保同一名称被多次声明为函数时精确扣除声明节点本身。
-	funcDeclCounts := map[string]int{}
+	// 统计同名顶层函数/类型声明次数，确保同一名称在多包声明时精确扣除声明节点本身。
+	topDeclCounts := map[string]int{}
 	for _, d := range decls {
-		if d.kind == "func" {
-			funcDeclCounts[d.name]++
+		if d.kind == "func" || d.kind == "type" {
+			topDeclCounts[d.name]++
 		}
 	}
 
@@ -114,8 +135,8 @@ func findDeadExports(backendRoot string) ([]exportedFunc, error) {
 			}
 			continue
 		}
-		// 顶层导出函数：总 Ident 计数扣除自身声明节点后为 0 即全仓零引用。
-		if identUses[d.name]-funcDeclCounts[d.name] <= 0 {
+		// 顶层导出函数或类型：总 Ident 计数扣除自身声明节点后为 0 即全仓零引用。
+		if identUses[d.name]-topDeclCounts[d.name] <= 0 {
 			dead = append(dead, d)
 		}
 	}
@@ -135,6 +156,8 @@ func runSelfTest() error {
 	files := map[string]string{
 		"internal/demo/demo.go": `package demo
 type Store struct{}
+type UsedType struct{}
+type DeadType struct{}
 func (Store) TableName() string { return "demo" }
 func (s *Store) UsedMethod() {}
 func (s *Store) DeadMethod() {}
@@ -145,6 +168,7 @@ func DeadFunc() {}
 import "example/internal/demo"
 func main() {
 	var s demo.Store
+	var _ demo.UsedType
 	s.UsedMethod()
 	demo.UsedFunc()
 }
@@ -169,7 +193,7 @@ func main() {
 		got = append(got, d.kind+":"+d.name)
 	}
 	slices.Sort(got)
-	want := []string{"func:DeadFunc", "method:DeadMethod"}
+	want := []string{"func:DeadFunc", "method:DeadMethod", "type:DeadType"}
 	if !slices.Equal(got, want) {
 		return fmt.Errorf("self-test mismatch: got %v, want %v", got, want)
 	}
@@ -195,7 +219,7 @@ func main() {
 		os.Exit(1)
 	}
 	if len(dead) > 0 {
-		fmt.Fprintln(os.Stderr, "Found unreferenced exported Go functions/methods in backend/internal/ (delete or unexport):")
+		fmt.Fprintln(os.Stderr, "Found unreferenced exported Go functions/methods/types in backend/internal/ (delete or unexport):")
 		for _, d := range dead {
 			fmt.Fprintf(os.Stderr, "  %s - %s %s.%s\n", d.pos, d.kind, d.pkg, d.name)
 		}

@@ -19,11 +19,11 @@ import { SidebarTrigger } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useActiveBabyId } from '@/lib/baby';
 import { findNavItemByPath, isAccountLevelRoute, openContextualCreate } from '@/navigation/menu';
-import { useCommandPaletteStore } from '@/stores/command-palette';
+import { useOverlayStore } from '@/stores/overlays';
 
 export function AdminHeader() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const openCommandPalette = useCommandPaletteStore((state) => state.setOpen);
+  const openCommandPalette = useOverlayStore((state) => state.openCommandPalette);
   const activeBabyId = useActiveBabyId();
   const currentItem = findNavItemByPath(pathname);
   const accountRoute = isAccountLevelRoute(pathname);
@@ -63,7 +63,7 @@ export function AdminHeader() {
                   variant="outline"
                   size="sm"
                   aria-label="打开快捷操作面板"
-                  onClick={() => openCommandPalette(true)}
+                  onClick={() => openCommandPalette()}
                   className="hidden h-8 gap-2 px-2.5 text-muted-foreground hover:text-foreground md:inline-flex"
                 />
               }

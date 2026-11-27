@@ -2,42 +2,28 @@
 
 根据 `AGENTS.md`，纳入 Git 的自动化测试仅限后端 Go 测试；前端纯逻辑（codec、视图模型、列表聚合等）通过系统临时目录（`$TMPDIR`）执行 `in-process` 断言验证，任务结束立即清理。编辑完前后端代码后建议先执行 `pnpm format`，再串联 `pnpm check && pnpm lint`，避免因格式差异触发额外重试。
 
-## 在 `$TMPDIR` 下加载工作区 TS 模块（避免 `ERR_MODULE_NOT_FOUND`）
+## 在 `$TMPDIR` 下加载工作区 TS 模块（推荐 `pnpm verify:ts`）
 
-由于临时脚本位于 Git 工作区之外，Node ESM 无法直接按裸包名 `import 'vite'` 解析工作区 `node_modules`。通过 `pathToFileURL` 指向当前工作区的 Vite 入口并调用 `ssrLoadModule`，即可复用 `@/` 路径别名与 TypeScript 转译；脚本开头务必启用 `set -euo pipefail` 与 `trap`，防止前置步骤失败后残留临时文件或误入交互式 `node` REPL：
+由于临时脚本位于 Git 工作区之外，直接用 `node` 执行无法解析 TypeScript 与 `@/` 路径别名。使用仓库内置的轻量运行器 `pnpm verify:ts`（[scripts/run-ts-check.mjs](../scripts/run-ts-check.mjs)）可自动托管 Vite `ssrLoadModule` 生命周期并在结束后关闭服务；脚本开头务必启用 `set -euo pipefail` 与 `trap`，防止前置步骤失败后残留临时文件：
 
 ```bash
 set -euo pipefail
 [ -d node_modules ] || pnpm install --frozen-lockfile
-TMP_TEST="${TMPDIR:-/tmp}/verify-frontend-$$.mjs"
+TMP_TEST="${TMPDIR:-/tmp}/verify-frontend-$$.mts"
 trap 'rm -f "$TMP_TEST"' EXIT
 
 cat <<'EOF' > "$TMP_TEST"
 import assert from 'node:assert/strict';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { useOverlayStore } from '@/stores/overlays';
 
-const { createServer } = await import(
-  pathToFileURL(path.resolve(process.cwd(), 'node_modules/vite/dist/node/index.js')).href
-);
-const server = await createServer({
-  root: process.cwd(),
-  server: { middlewareMode: true },
-  appType: 'custom',
-  logLevel: 'error',
-});
-
-try {
-  const mod = await server.ssrLoadModule('/src/lib/dashboard.ts');
-  // 在此编写 assert 断言
-  assert.ok(mod);
-} finally {
-  await server.close();
-}
+assert.equal(useOverlayStore.getState().active, null);
+console.log('verify ok');
 EOF
 
-node "$TMP_TEST"
+pnpm verify:ts "$TMP_TEST"
 ```
+
+如需在异步 `export default async function ({ load })` 中按需动态加载模块，`pnpm verify:ts` 也会自动注入 `load('/src/...')` 助手并在 `finally` 中关闭 Vite 服务。
 
 ## 免登录隔离 UI 组件视觉预览（按需用于新页面/大幅排版与配色调整）
 
@@ -163,4 +149,4 @@ const router = createRouter({ routeTree, history: createMemoryHistory({ initialE
 ## 约束提醒
 
 - 始终在 `finally` 或信号处理中关闭 Vite server，并在退出前清理系统临时目录中的所有脚本与截图。
-- 不将临时验证脚本、截图或 Mock 预览入口写入仓库、`.gitignore` 目录、常驻 `package.json` 脚本或 CI。
+- 不将具体验证用例脚本、截图或 Mock 预览入口写入仓库、`.gitignore` 目录或 CI（仅保留通用运行器 `pnpm verify:ts`）。

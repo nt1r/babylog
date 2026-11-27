@@ -1,6 +1,7 @@
 import { differenceInCalendarDays } from 'date-fns';
+import { buildBabyApiPath } from '@/lib/baby-api';
 import { ApiError, apiFetchBlob, triggerBlobDownload } from '@/lib/http';
-import { getBrowserTimeZone, parseLocalDateKey } from '@/lib/time';
+import { parseLocalDateKey } from '@/lib/time';
 
 export type ExportCategoryKey = 'feeding' | 'sleep' | 'care' | 'health' | 'growth';
 export type ExportRangePreset = '7' | '14' | '30' | '90' | 'custom';
@@ -54,17 +55,15 @@ export function validateExportSelection(input: ExportFormInput): string | null {
 }
 
 /** 构造导出接口 URL（包含时区、预设天数或自定义起止日期及已勾选类别）。 */
-function buildExportXlsxUrl(babyId: number, input: ExportFormInput, timeZone: string = getBrowserTimeZone()): string {
-  const params = new URLSearchParams();
-  params.set('tz', timeZone);
-  params.set('categories', input.categories.join(','));
-  if (input.preset === 'custom') {
-    params.set('start', input.startDate);
-    params.set('end', input.endDate);
-  } else {
-    params.set('days', input.preset);
-  }
-  return `/api/babies/${babyId}/export/xlsx?${params.toString()}`;
+function buildExportXlsxUrl(babyId: number, input: ExportFormInput, timeZone?: string): string {
+  return buildBabyApiPath(babyId, '/export/xlsx', {
+    tz: true,
+    timeZone,
+    query: {
+      categories: input.categories.join(','),
+      ...(input.preset === 'custom' ? { start: input.startDate, end: input.endDate } : { days: input.preset }),
+    },
+  });
 }
 
 function parseDownloadFilename(contentDisposition: string | null, fallback: string): string {

@@ -52,6 +52,32 @@ const (
 	HealthSubtypeMedicine    = "medicine"
 	HealthSubtypeGrowth      = "growth"
 	HealthSubtypeTeeth       = "teeth"
+
+	// 喂养方式、亲喂侧别、辅食接受度与排泄观察的标准枚举常量，供校验、汇总、看板与导出共用。
+	FeedingModeDirect = "direct"
+	FeedingModeBottle = "bottle"
+
+	BreastSideLeft  = "left"
+	BreastSideRight = "right"
+	BreastSideBoth  = "both"
+
+	AcceptanceLike    = "like"
+	AcceptanceNeutral = "neutral"
+	AcceptanceDislike = "dislike"
+
+	DiaperKindPee  = "pee"
+	DiaperKindPoop = "poop"
+	DiaperKindBoth = "both"
+
+	StoolConsistencyWatery = "watery"
+	StoolConsistencySoft   = "soft"
+	StoolConsistencyFormed = "formed"
+	StoolConsistencyHard   = "hard"
+
+	StoolColorYellow   = "yellow"
+	StoolColorGreen    = "green"
+	StoolColorBrown    = "brown"
+	StoolColorAbnormal = "abnormal"
 )
 
 // ValidationError 表示记录字段不符合业务校验规则，映射为 HTTP 400。
@@ -308,13 +334,40 @@ type SmartDefaults struct {
 	Care    CareDefaults    `json:"care"`
 }
 
-// WindowSnapshot 封装时间窗口 [start, end) 内的全部四类日常记录，
-// 其中喂养/护理/健康按 recorded_at 落入窗口筛选，睡眠按与窗口存在交集筛选。
+// WindowCategory 标识时间窗口快照读取与按日汇总涵盖的逻辑业务分类，
+// 临床健康（health）与生长发育（growth）在接口层显式分离，底层继续共享 health_records 表。
+type WindowCategory string
+
+const (
+	// WindowCategoryFeeding 表示喂养分类。
+	WindowCategoryFeeding WindowCategory = "feeding"
+	// WindowCategorySleep 表示睡眠分类。
+	WindowCategorySleep WindowCategory = "sleep"
+	// WindowCategoryCare 表示护理分类。
+	WindowCategoryCare WindowCategory = "care"
+	// WindowCategoryHealth 表示临床健康观察分类（体温与用药）。
+	WindowCategoryHealth WindowCategory = "health"
+	// WindowCategoryGrowth 表示生长发育分类（体格测量与长牙）。
+	WindowCategoryGrowth WindowCategory = "growth"
+)
+
+// WindowQuery 描述时间窗口快照查询的 [Start, End) 区间与可选分类集合；
+// Categories 为空时默认读取全部 5 类记录。
+type WindowQuery struct {
+	Start      time.Time
+	End        time.Time
+	Categories []WindowCategory
+}
+
+// WindowSnapshot 封装时间窗口 [Start, End) 内按时间升序（同时间戳按 ID 升序）排列的各分类日常记录；
+// 其中喂养/护理/健康/生长按 recorded_at 落入窗口筛选，睡眠按与窗口存在交集筛选，
+// 且临床健康（temperature / medicine）与生长发育（growth / teeth）已在读取时分离到 Healths 与 Growths。
 type WindowSnapshot struct {
 	Feedings []FeedingRecord
 	Sleeps   []SleepRecord
 	Cares    []CareRecord
 	Healths  []HealthRecord
+	Growths  []HealthRecord
 }
 
 // MedicineSummary 汇总时间窗口内的用药次数，以及按 RecordedAt 与 ID 确定性解析的最近一次用药信息。
@@ -328,6 +381,23 @@ type MedicineSummary struct {
 type ClinicalHealthDayStats struct {
 	MaxTempC      *float64
 	MedicineCount int
+}
+
+// GrowthDailySummary 汇总某一本地自然日内的体格测量最新非空值（同日多条部分测量按字段覆盖保留最新）与出牙说明列表。
+type GrowthDailySummary struct {
+	WeightKg *float64
+	HeightCm *float64
+	HeadCm   *float64
+	Teeth    []string
+}
+
+// DailyWindowSummary 聚合某一本地自然日内全部五类照护记录的统一按日小计。
+type DailyWindowSummary struct {
+	Feeding FeedingDailySummary
+	Sleep   SleepDailySummary
+	Care    CareDailySummary
+	Health  ClinicalHealthDayStats
+	Growth  GrowthDailySummary
 }
 
 // GrowthHighlights 汇总跨时间窗口独立解析的最新体格测量值与累计出牙记录数，

@@ -17,9 +17,9 @@ func (s *Store) GetSmartDefaults(ctx context.Context, babyID int64) (*SmartDefau
 			FrequentMilkML:        []int{60, 90, 120},
 			LastFeedingSubtype:    FeedingSubtypeFormula,
 			LastMilkSubtype:       FeedingSubtypeFormula,
-			LastBreastMode:        "direct",
+			LastBreastMode:        FeedingModeDirect,
 			LastBreastDurationMin: DefaultStarterBreastMin,
-			SuggestedBreastSide:   "left",
+			SuggestedBreastSide:   BreastSideLeft,
 			RecentSolids:          []SolidFoodPreset{},
 		},
 		Sleep: SleepDefaults{
@@ -82,23 +82,23 @@ func (s *Store) GetSmartDefaults(ctx context.Context, babyID int64) (*SmartDefau
 			}
 		}
 		if !hasLastBreastMode && f.Subtype == FeedingSubtypeBreast && f.FeedingMode != nil &&
-			(*f.FeedingMode == "direct" || *f.FeedingMode == "bottle") {
+			(*f.FeedingMode == FeedingModeDirect || *f.FeedingMode == FeedingModeBottle) {
 			defaults.Feeding.LastBreastMode = *f.FeedingMode
 			hasLastBreastMode = true
 		}
 		// 亲喂侧别推荐：命中最近一次亲喂后，自动建议交替使用另一侧（上次左侧→建议右侧，其余→建议左侧）。
-		if !hasLastBreast && f.Subtype == FeedingSubtypeBreast && f.FeedingMode != nil && *f.FeedingMode == "direct" && f.BreastSide != nil {
+		if !hasLastBreast && f.Subtype == FeedingSubtypeBreast && f.FeedingMode != nil && *f.FeedingMode == FeedingModeDirect && f.BreastSide != nil {
 			side := *f.BreastSide
 			defaults.Feeding.LastBreastSide = &side
 			switch side {
-			case "left":
-				defaults.Feeding.SuggestedBreastSide = "right"
+			case BreastSideLeft:
+				defaults.Feeding.SuggestedBreastSide = BreastSideRight
 			default:
-				defaults.Feeding.SuggestedBreastSide = "left"
+				defaults.Feeding.SuggestedBreastSide = BreastSideLeft
 			}
 			hasLastBreast = true
 		}
-		if !hasLastBreastDur && f.Subtype == FeedingSubtypeBreast && f.FeedingMode != nil && *f.FeedingMode == "direct" &&
+		if !hasLastBreastDur && f.Subtype == FeedingSubtypeBreast && f.FeedingMode != nil && *f.FeedingMode == FeedingModeDirect &&
 			f.DurationMin != nil && *f.DurationMin > 0 {
 			defaults.Feeding.LastBreastDurationMin = *f.DurationMin
 			hasLastBreastDur = true

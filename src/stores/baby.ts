@@ -1,6 +1,5 @@
 import { create } from 'zustand';
-import { useGrowthRecordStore } from '@/stores/growth-record';
-import { useQuickRecordStore } from '@/stores/quick-record';
+import { useOverlayStore } from '@/stores/overlays';
 
 const STORAGE_KEY_PREFIX = 'babylog:active-baby:';
 
@@ -53,31 +52,25 @@ function resolveActiveBabyId(
 interface BabyStoreState {
   activeBabyId: number | null;
   syncedUserId: number | null;
-  addDialogOpen: boolean;
   setActiveBabyId: (userId: number | null, babyId: number | null) => void;
-  setAddDialogOpen: (open: boolean) => void;
   syncActiveBaby: (userId: number, babies: ReadonlyArray<{ readonly id: number }>) => number | null;
   reset: () => void;
 }
 
-/** 当前选中宝宝状态 Store，按 userId 命名空间隔离本地持久化，并在切娃时重置全局录入抽屉。 */
+/** 当前选中宝宝状态 Store，按 userId 命名空间隔离本地持久化，并在切娃时统一收口 baby-scoped 全局浮层。 */
 export const useBabyStore = create<BabyStoreState>((set, get) => ({
   activeBabyId: null,
   syncedUserId: null,
-  addDialogOpen: false,
 
   setActiveBabyId: (userId, babyId) => {
     const prev = get().activeBabyId;
     if (prev !== babyId) {
-      // 切换宝宝时关闭并重置快捷记录与生长发育抽屉，避免把前一个宝宝的编辑/复用目标带入新宝宝。
-      useQuickRecordStore.getState().reset();
-      useGrowthRecordStore.getState().reset();
+      // 切换宝宝时收口所有 baby-scoped 全局浮层与保留意图，防止前一个宝宝的编辑或草稿带入新宝宝。
+      useOverlayStore.getState().resetBabyScoped();
     }
     writePersistedActiveBabyId(userId, babyId);
     set({ activeBabyId: babyId, syncedUserId: userId });
   },
-
-  setAddDialogOpen: (open) => set({ addDialogOpen: open }),
 
   syncActiveBaby: (userId, babies) => {
     const state = get();
@@ -86,8 +79,7 @@ export const useBabyStore = create<BabyStoreState>((set, get) => ({
     const next = resolveActiveBabyId(babies, prev, persisted);
     if (prev !== next || state.syncedUserId !== userId) {
       if (prev !== null && prev !== next) {
-        useQuickRecordStore.getState().reset();
-        useGrowthRecordStore.getState().reset();
+        useOverlayStore.getState().resetBabyScoped();
       }
       set({ activeBabyId: next, syncedUserId: userId });
     }
@@ -97,5 +89,5 @@ export const useBabyStore = create<BabyStoreState>((set, get) => ({
     return next;
   },
 
-  reset: () => set({ activeBabyId: null, syncedUserId: null, addDialogOpen: false }),
+  reset: () => set({ activeBabyId: null, syncedUserId: null }),
 }));

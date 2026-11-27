@@ -17,25 +17,25 @@ const (
 	maxTrackedFailureKeys = 1024
 )
 
-// LoginGuard 提供零外部依赖的内存登录防爆破限流（按归一化用户名滑动窗口）与全局 scrypt 并发保护。
-type LoginGuard struct {
+// loginGuard 为 Store 内部的零外部依赖内存防爆破限流（按归一化用户名滑动窗口）与全局 scrypt 并发保护。
+type loginGuard struct {
 	mu       sync.Mutex
 	now      func() time.Time
 	failures map[string][]time.Time
 	sem      chan struct{}
 }
 
-// NewLoginGuard 创建默认配置的登录防护守卫实例。
-func NewLoginGuard() *LoginGuard {
-	return &LoginGuard{
+// newLoginGuard 创建默认配置的内部登录防护守卫实例。
+func newLoginGuard() *loginGuard {
+	return &loginGuard{
 		now:      time.Now,
 		failures: make(map[string][]time.Time),
 		sem:      make(chan struct{}, maxConcurrentScrypt),
 	}
 }
 
-// WithClock 替换内部时钟函数（用于确定性测试 15 分钟窗口过期恢复），返回自身以支持链式调用。
-func (g *LoginGuard) WithClock(fn func() time.Time) *LoginGuard {
+// setClock 替换内部时钟函数（随 Store.WithClock 同步，用于确定性测试 15 分钟窗口过期恢复）。
+func (g *loginGuard) setClock(fn func() time.Time) *loginGuard {
 	if fn != nil {
 		g.mu.Lock()
 		g.now = fn
@@ -44,8 +44,8 @@ func (g *LoginGuard) WithClock(fn func() time.Time) *LoginGuard {
 	return g
 }
 
-// CheckAllowed 校验目标归一化用户名在当前 15 分钟窗口内是否未达失败上限；超限时返回 [ErrRateLimited]。
-func (g *LoginGuard) CheckAllowed(username string) error {
+// checkAllowed 校验目标归一化用户名在当前 15 分钟窗口内是否未达失败上限；超限时返回 [ErrRateLimited]。
+func (g *loginGuard) checkAllowed(username string) error {
 	key := NormalizeUsername(username)
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -63,8 +63,8 @@ func (g *LoginGuard) CheckAllowed(username string) error {
 	return nil
 }
 
-// RecordFailure 记录一次针对目标归一化用户名的登录失败；桶数触达上限时清理过期桶并淘汰最冷桶，确保内存严格有界。
-func (g *LoginGuard) RecordFailure(username string) {
+// recordFailure 记录一次针对目标归一化用户名的登录失败；桶数触达上限时清理过期桶并淘汰最冷桶，确保内存严格有界。
+func (g *loginGuard) recordFailure(username string) {
 	key := NormalizeUsername(username)
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -101,17 +101,17 @@ func (g *LoginGuard) RecordFailure(username string) {
 	g.failures[key] = kept
 }
 
-// RecordSuccess 在目标用户登录成功后清零其失败计数桶。
-func (g *LoginGuard) RecordSuccess(username string) {
+// recordSuccess 在目标用户登录成功后清零其失败计数桶。
+func (g *loginGuard) recordSuccess(username string) {
 	key := NormalizeUsername(username)
 	g.mu.Lock()
 	delete(g.failures, key)
 	g.mu.Unlock()
 }
 
-// AcquireScrypt 尝试占用一个全局 scrypt 并发槽位；槽满时立即返回 [ErrRateLimited]，
+// acquireScrypt 尝试占用一个全局 scrypt 并发槽位；槽满时立即返回 [ErrRateLimited]，
 // 成功时返回一次性释放函数（须通过 defer 调用）。
-func (g *LoginGuard) AcquireScrypt() (func(), error) {
+func (g *loginGuard) acquireScrypt() (func(), error) {
 	select {
 	case g.sem <- struct{}{}:
 		var once sync.Once

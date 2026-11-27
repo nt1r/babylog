@@ -83,6 +83,124 @@
           }
         }
       }
+    },
+    {
+      "includes": ["src/components/**", "!src/components/quick-record/**", "!src/components/quick-record-drawer.tsx"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/components/quick-record/codecs/**"],
+                    "message": "跨特性共享的编解码规则应下沉至 src/lib/，禁止横向导入 quick-record 内部 codecs。"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/components/**", "!src/components/batch-record/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/components/batch-record/batch-codec"],
+                    "message": "跨特性共享的编解码规则应下沉至 src/lib/，禁止横向导入 batch-record 内部 codec。"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/components/**", "!src/components/growth/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/components/growth/growth-codec"],
+                    "message": "跨特性共享的编解码规则应下沉至 src/lib/，禁止横向导入 growth 内部 codec。"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/components/**", "!src/components/vaccines/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@/components/vaccines/vaccine-codec"],
+                    "message": "跨特性共享的编解码规则应下沉至 src/lib/，禁止横向导入 vaccines 内部 codec。"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/components/chart-card.tsx",
+        "src/components/date-time-input-row.tsx",
+        "src/components/delete-confirm-dialog.tsx",
+        "src/components/entity-drawer.tsx",
+        "src/components/list-page-card.tsx"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "@/lib/auth",
+                      "@/lib/baby",
+                      "@/lib/baby-api",
+                      "@/lib/dashboard",
+                      "@/lib/export",
+                      "@/lib/growth",
+                      "@/lib/insights",
+                      "@/lib/record-codecs",
+                      "@/lib/records",
+                      "@/lib/vaccines",
+                      "@/stores/**"
+                    ],
+                    "message": "根级通用展示/容器组件须保持业务无关，请通过 props 或结构类型传入数据，禁止反向依赖业务域模块或 Store。"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
     }
   ]
 }

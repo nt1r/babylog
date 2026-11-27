@@ -5,39 +5,51 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/nt1r/babylog/backend/internal/auth"
 	"github.com/nt1r/babylog/backend/internal/baby"
 	"github.com/nt1r/babylog/backend/internal/dashboard"
+	"github.com/nt1r/babylog/backend/internal/database"
 	"github.com/nt1r/babylog/backend/internal/export"
 	"github.com/nt1r/babylog/backend/internal/records"
 	"github.com/nt1r/babylog/backend/internal/vaccines"
 )
 
-// Options 控制 HTTP 路由装配所需的依赖与运行参数。
+// Options 控制 HTTP 路由装配所需的底层数据库（DB 为必填项）、时钟与外部运行参数。
 type Options struct {
-	Store           *auth.Store
-	LoginGuard      *auth.LoginGuard
+	DB              *database.DB
+	Clock           func() time.Time
 	CookieSecure    bool
-	BabyStore       *baby.Store
-	RecordStore     *records.Store
-	DashboardSvc    *dashboard.Service
-	ExportSvc       *export.Service
-	VaccineStore    *vaccines.Store
 	DistDir         string
 	FallbackDistDir string
 	Logger          *slog.Logger
 }
 
 // NewRouter 装配 Gin 引擎、安全中间件、认证、管理员用户管理、多宝宝档案、日常记录、首页看板、数据导出、疫苗管理与静态前端回退处理。
-// 调用方应在进程启动入口（而非路由构造函数内）设置 gin.SetMode，避免全局状态并发竞争。
+// 调用方须提供有效的 opts.DB，并应在进程启动入口（而非路由构造函数内）设置 gin.SetMode，避免全局状态并发竞争。
 func NewRouter(opts Options) *gin.Engine {
+	if opts.DB == nil || opts.DB.Gorm() == nil {
+		panic("httpapi.NewRouter: opts.DB 不能为空")
+	}
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
+	clock := opts.Clock
+	if clock == nil {
+		clock = time.Now
+	}
+
+	gormDB := opts.DB.Gorm()
+	authStore := auth.NewStore(gormDB).WithClock(clock)
+	babyStore := baby.NewStore(gormDB).WithClock(clock)
+	recordStore := records.NewStore(gormDB).WithClock(clock)
+	dashboardSvc := dashboard.NewService(recordStore).WithClock(clock)
+	exportSvc := export.NewService(recordStore).WithClock(clock)
+	vaccineStore := vaccines.NewStore(gormDB).WithClock(clock)
 
 	r := gin.New()
 	r.RedirectTrailingSlash = false
@@ -49,11 +61,7 @@ func NewRouter(opts Options) *gin.Engine {
 	r.Use(requestLoggerMiddleware(logger))
 	r.Use(apiSecurityMiddleware())
 
-	loginGuard := opts.LoginGuard
-	if loginGuard == nil {
-		loginGuard = auth.NewLoginGuard()
-	}
-	authH := newAuthHandler(opts.Store, loginGuard, opts.CookieSecure, logger)
+	authH := newAuthHandler(authStore, opts.CookieSecure, logger)
 	staticH := newStaticHandler(opts.DistDir, opts.FallbackDistDir, logger)
 
 	api := r.Group("/api")
@@ -66,7 +74,7 @@ func NewRouter(opts Options) *gin.Engine {
 
 		// 已认证路由组：允许处于强制改密态的用户完成自助改密。
 		protected := api.Group("")
-		protected.Use(requireAuthMiddleware(opts.Store, logger, opts.CookieSecure))
+		protected.Use(requireAuthMiddleware(authStore, logger, opts.CookieSecure))
 		{
 			protected.POST("/auth/change-password", authH.changePassword)
 
@@ -74,44 +82,34 @@ func NewRouter(opts Options) *gin.Engine {
 			ready := protected.Group("")
 			ready.Use(requirePasswordChangedMiddleware())
 			{
-				adminUsersH := newAdminUsersHandler(opts.Store, loginGuard, logger)
+				adminUsersH := newAdminUsersHandler(authStore, logger)
 				adminGroup := ready.Group("/admin/users", requireAdminMiddleware())
 				adminUsersH.registerRoutes(adminGroup)
 
-				if opts.BabyStore != nil {
-					babyH := newBabyHandler(opts.BabyStore, logger)
-					ready.GET("/babies", babyH.listProfiles)
-					ready.POST("/babies", babyH.createProfile)
-					ready.PUT("/babies/:babyId", babyH.updateProfile)
-					ready.DELETE("/babies/:babyId", babyH.deleteProfile)
+				babyH := newBabyHandler(babyStore, logger)
+				ready.GET("/babies", babyH.listProfiles)
+				ready.POST("/babies", babyH.createProfile)
+				ready.PUT("/babies/:babyId", babyH.updateProfile)
+				ready.DELETE("/babies/:babyId", babyH.deleteProfile)
 
-					// 宝宝作用域业务路由组：统一按 (babyId, user.ID) 校验归属，未命中返回 404 防枚举。
-					babyGroup := ready.Group("/babies/:babyId", requireBabyOwnershipMiddleware(opts.BabyStore, logger))
-					{
-						if opts.RecordStore != nil {
-							recH := newRecordsHandler(opts.RecordStore, logger)
-							recH.registerRoutes(babyGroup.Group("/records"))
-						}
+				// 宝宝作用域业务路由组：统一按 (babyId, user.ID) 校验归属，未命中返回 404 防枚举。
+				babyGroup := ready.Group("/babies/:babyId", requireBabyOwnershipMiddleware(babyStore, logger))
+				{
+					recH := newRecordsHandler(recordStore, logger)
+					recH.registerRoutes(babyGroup.Group("/records"))
 
-						if opts.DashboardSvc != nil {
-							dashH := newDashboardHandler(opts.DashboardSvc, logger)
-							dashGroup := babyGroup.Group("/dashboard")
-							dashGroup.GET("/summary", dashH.getSummary)
-							dashGroup.GET("/trends", dashH.getTrends)
-						}
+					dashH := newDashboardHandler(dashboardSvc, logger)
+					dashGroup := babyGroup.Group("/dashboard")
+					dashGroup.GET("/summary", dashH.getSummary)
+					dashGroup.GET("/trends", dashH.getTrends)
 
-						if opts.ExportSvc != nil {
-							expH := newExportHandler(opts.ExportSvc, logger)
-							babyGroup.GET("/export/xlsx", expH.exportXLSX)
-						}
+					expH := newExportHandler(exportSvc, logger)
+					babyGroup.GET("/export/xlsx", expH.exportXLSX)
 
-						if opts.VaccineStore != nil {
-							vacH := newVaccinesHandler(opts.VaccineStore, logger)
-							vacGroup := babyGroup.Group("/vaccines")
-							vacGroup.PUT("/default-clinic", babyH.updateDefaultClinic)
-							vacH.registerRoutes(vacGroup)
-						}
-					}
+					vacH := newVaccinesHandler(vaccineStore, logger)
+					vacGroup := babyGroup.Group("/vaccines")
+					vacGroup.PUT("/default-clinic", babyH.updateDefaultClinic)
+					vacH.registerRoutes(vacGroup)
 				}
 			}
 		}

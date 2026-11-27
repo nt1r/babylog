@@ -1,7 +1,7 @@
-import { FEEDING_BOUNDS } from '@/components/quick-record/codecs/feeding';
 import { NumberStepperCard } from '@/components/quick-record/record-controls';
 import { QuickChip } from '@/components/ui/choice-controls';
 import { parseStrictInt } from '@/lib/number';
+import { FEEDING_BOUNDS } from '@/lib/record-codecs';
 
 interface MilkAmountControlProps {
   readonly valueText: string;

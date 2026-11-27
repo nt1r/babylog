@@ -457,7 +457,7 @@ func TestRecordsBatchCreateAtomicityAndSummaryIntegration(t *testing.T) {
 /*
  * Spec: daily-records / Filtered, timezone-scoped listing with pagination and daily subtotals / Filter feeding records by subtype and date range; Filter health records by comma-separated subtype group; Reject invalid or empty token in comma-separated health subtype filter
  * 测试场景：喂养记录时区筛选与稀疏跨月分页完整小计，以及健康记录逗号多子类型严格隔离与非法 token 拒绝。
- * 业务背景：喂养页与拆分后的健康(/health)/生长(/growth)工作区均依赖后端按筛选条件准确计算每日小计，分页不得截断同日小计，非法逗号 token 须明确报错。
+ * 业务背景：喂养页与独立的健康(/health)/生长(/growth)工作区均依赖后端按筛选条件准确计算每日小计，分页不得截断同日小计，非法逗号 token 须明确报错。
  * 前置数据：
  * - 时钟与时区：2026-11-23 10:00+08:00（Asia/Shanghai）
  * - 管理员与会话：已初始化并登录管理员

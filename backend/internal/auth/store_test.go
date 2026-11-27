@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -140,6 +141,52 @@ func TestStoreInfrastructureAndLegacyCompat(t *testing.T) {
 		}
 		if user == nil || user.Username != "legacy-admin" || user.Role != auth.RoleAdmin {
 			t.Fatalf("expected legacy admin authenticated, got %+v", user)
+		}
+	})
+
+	// 校验 Store.Login 外部接口：限流窗口与会话过期共用 WithClock，且停用账号密码正确时返回 ErrUserDisabled 不计入失败。
+	t.Run("Login统一收口限流时钟同步与停用用户语义", func(t *testing.T) {
+		now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+		store, _, _ := openTestStore(t)
+		store.WithClock(func() time.Time { return now })
+
+		if err := store.InitializeAdministrator(ctx, "admin", "admin-secret-123"); err != nil {
+			t.Fatalf("init admin: %v", err)
+		}
+		alice, err := store.CreateUser(ctx, "Alice", "alice-secret-123", false)
+		if err != nil {
+			t.Fatalf("create alice: %v", err)
+		}
+		if _, err := store.SetUserDisabledByID(ctx, alice.ID, true); err != nil {
+			t.Fatalf("disable alice: %v", err)
+		}
+
+		// 停用用户提交正确密码返回 ErrUserDisabled，且连续 11 次不会触发限流。
+		for i := 0; i < 11; i++ {
+			if _, _, err := store.Login(ctx, "ALICE", "alice-secret-123", ""); !errors.Is(err, auth.ErrUserDisabled) {
+				t.Fatalf("停用用户第 %d 次正确密码登录预期 ErrUserDisabled，实际 %v", i+1, err)
+			}
+		}
+
+		// 连续 10 次错误密码触发限流，第 11 次即使密码正确也返回 ErrRateLimited。
+		for i := 0; i < 10; i++ {
+			if _, _, err := store.Login(ctx, "Admin", "wrong-secret-000", ""); !errors.Is(err, auth.ErrInvalidCredentials) {
+				t.Fatalf("第 %d 次错误密码预期 ErrInvalidCredentials，实际 %v", i+1, err)
+			}
+		}
+		if _, _, err := store.Login(ctx, "ADMIN", "admin-secret-123", ""); !errors.Is(err, auth.ErrRateLimited) {
+			t.Fatalf("第 11 次登录预期 ErrRateLimited，实际 %v", err)
+		}
+
+		// 推进 WithClock 满 15 分钟后自动解限并签发有效会话，同时清零失败计数。
+		now = now.Add(15 * time.Minute)
+		user, token, err := store.Login(ctx, "admin", "admin-secret-123", "")
+		if err != nil || user == nil || !auth.IsSessionToken(token) {
+			t.Fatalf("15 分钟窗口滑出后登录应成功，实际 user=%+v tokenLen=%d err=%v", user, len(token), err)
+		}
+		restored, err := store.GetSession(ctx, token)
+		if err != nil || restored == nil || restored.ID != user.ID {
+			t.Fatalf("新签发会话应可正常恢复，实际 restored=%+v err=%v", restored, err)
 		}
 	})
 }

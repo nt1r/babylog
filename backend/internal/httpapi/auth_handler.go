@@ -17,18 +17,13 @@ const maxAuthBodyBytes = 16 * 1024
 
 type authHandler struct {
 	store        *auth.Store
-	guard        *auth.LoginGuard
 	cookieSecure bool
 	logger       *slog.Logger
 }
 
-func newAuthHandler(store *auth.Store, guard *auth.LoginGuard, cookieSecure bool, logger *slog.Logger) *authHandler {
-	if guard == nil {
-		guard = auth.NewLoginGuard()
-	}
+func newAuthHandler(store *auth.Store, cookieSecure bool, logger *slog.Logger) *authHandler {
 	return &authHandler{
 		store:        store,
-		guard:        guard,
 		cookieSecure: cookieSecure,
 		logger:       logger,
 	}
@@ -49,7 +44,7 @@ func (h *authHandler) getSession(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"user": user})
 }
 
-// login 处理 POST /api/auth/login，依次执行请求体校验、按用户名限流、全局 scrypt 并发保护、凭据验证与会话轮换。
+// login 处理 POST /api/auth/login，完成请求体校验并委托 auth.Store 执行限流、凭据验证与会话轮换。
 func (h *authHandler) login(c *gin.Context) {
 	username, password, status, msg := readLoginBody(c)
 	if status != 0 {
@@ -57,39 +52,20 @@ func (h *authHandler) login(c *gin.Context) {
 		return
 	}
 
-	if err := h.guard.CheckAllowed(username); err != nil {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
-		return
-	}
-	release, err := h.guard.AcquireScrypt()
-	if err != nil {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
-		return
-	}
-	defer release()
-
-	user, err := h.store.Authenticate(c.Request.Context(), username, password)
-	if errors.Is(err, auth.ErrUserDisabled) {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-		return
-	}
-	if err != nil {
-		h.logger.Error("authenticate failed", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
-		return
-	}
-	if user == nil {
-		h.guard.RecordFailure(username)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": auth.ErrInvalidCredentials.Error()})
-		return
-	}
-
-	h.guard.RecordSuccess(username)
 	previousToken, _ := readSessionCookie(c.Request)
-	newToken, err := h.store.CreateSession(c.Request.Context(), user.ID, previousToken)
+	user, newToken, err := h.store.Login(c.Request.Context(), username, password, previousToken)
 	if err != nil {
-		h.logger.Error("createSession failed", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
+		switch {
+		case errors.Is(err, auth.ErrRateLimited):
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
+		case errors.Is(err, auth.ErrInvalidCredentials):
+			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		case errors.Is(err, auth.ErrUserDisabled):
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		default:
+			h.logger.Error("login failed", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器暂时无法处理请求"})
+		}
 		return
 	}
 
@@ -110,17 +86,12 @@ func (h *authHandler) changePassword(c *gin.Context) {
 		return
 	}
 
-	release, err := h.guard.AcquireScrypt()
-	if err != nil {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
-		return
-	}
-	defer release()
-
 	updatedUser, newToken, err := h.store.ChangePassword(c.Request.Context(), user.ID, currentPassword, newPassword)
 	if err != nil {
 		var valErr *auth.ValidationError
 		switch {
+		case errors.Is(err, auth.ErrRateLimited):
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
 		case errors.As(err, &valErr):
 			c.JSON(http.StatusBadRequest, gin.H{"error": valErr.Error()})
 		case errors.Is(err, auth.ErrInvalidCredentials):

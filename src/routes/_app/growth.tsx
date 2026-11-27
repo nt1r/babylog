@@ -16,7 +16,7 @@ import {
   useGrowthSummaryQuery,
 } from '@/lib/growth';
 import { type HealthRecord, type RecordRange, useGrowthChartQuery } from '@/lib/records';
-import { useGrowthRecordStore } from '@/stores/growth-record';
+import { useOverlayStore } from '@/stores/overlays';
 
 export const Route = createFileRoute('/_app/growth')({
   component: GrowthPage,
@@ -46,8 +46,8 @@ function describeGrowthRow(rec: HealthRecord, referenceDateStr?: string): Record
 }
 
 function GrowthPage() {
-  const openCreate = useGrowthRecordStore((state) => state.openCreate);
-  const openEdit = useGrowthRecordStore((state) => state.openEdit);
+  const openCreate = useOverlayStore((state) => state.openGrowthCreate);
+  const openEdit = useOverlayStore((state) => state.openGrowthEdit);
 
   const { activeBaby, babiesQuery: babyQuery } = useActiveBaby();
   const summaryQuery = useGrowthSummaryQuery();

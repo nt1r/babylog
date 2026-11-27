@@ -13,24 +13,27 @@ import (
 	"github.com/nt1r/babylog/backend/internal/timeutil"
 )
 
-// Store 基于 GORM + SQLite 管理多用户凭据、单管理员约束、用户生命周期与会话存储。
+// Store 基于 GORM + SQLite 管理多用户凭据、单管理员约束、用户生命周期、会话存储以及内部登录防爆破与 scrypt 并发保护。
 type Store struct {
-	db  *gorm.DB
-	now func() time.Time
+	db    *gorm.DB
+	now   func() time.Time
+	guard *loginGuard
 }
 
 // NewStore 创建认证存储实例。
 func NewStore(db *gorm.DB) *Store {
 	return &Store{
-		db:  db,
-		now: time.Now,
+		db:    db,
+		now:   time.Now,
+		guard: newLoginGuard(),
 	}
 }
 
-// WithClock 替换内部时钟函数（用于确定性测试会话过期等时间行为），返回自身以支持链式调用。
+// WithClock 替换内部时钟函数（同步作用于会话过期与 15 分钟登录限流窗口），返回自身以支持链式调用。
 func (s *Store) WithClock(fn func() time.Time) *Store {
 	if fn != nil {
 		s.now = fn
+		s.guard.setClock(fn)
 	}
 	return s
 }
@@ -46,7 +49,8 @@ func isUniqueConstraintError(err error) bool {
 }
 
 // InitializeAdministrator 初始化全局唯一管理员（role = 'admin'），若已存在管理员则返回 [ErrAdminExists]，
-// 若用户名已被占用则返回 [ErrUsernameExists]。密码派生在数据库事务之外执行，避免长时间占用 SQLite 单写连接。
+// 若用户名已被占用则返回 [ErrUsernameExists]，scrypt 并发槽满时返回 [ErrRateLimited]。
+// 密码派生在数据库事务之外执行并在完成后立即释放并发槽，避免占用 SQLite 单写连接或 CPU 槽位。
 func (s *Store) InitializeAdministrator(ctx context.Context, username, password string) error {
 	if err := ValidateUsername(username); err != nil {
 		return err
@@ -72,7 +76,14 @@ func (s *Store) InitializeAdministrator(ctx context.Context, username, password 
 		return ErrUsernameExists
 	}
 
+	release, err := s.guard.acquireScrypt()
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	saltB64, hashB64, err := deriveEncodedCredentials(password)
+	release()
 	if err != nil {
 		return err
 	}
@@ -101,7 +112,8 @@ func (s *Store) InitializeAdministrator(ctx context.Context, username, password 
 	return nil
 }
 
-// CreateUser 创建普通家庭用户（固定 role = 'user'），重名（忽略大小写）时返回 [ErrUsernameExists]。
+// CreateUser 创建普通家庭用户（固定 role = 'user'），重名（忽略大小写）时返回 [ErrUsernameExists]，
+// scrypt 并发槽满时返回 [ErrRateLimited]。
 func (s *Store) CreateUser(ctx context.Context, username, password string, mustChangePassword bool) (*UserSummary, error) {
 	if err := ValidateUsername(username); err != nil {
 		return nil, err
@@ -119,7 +131,14 @@ func (s *Store) CreateUser(ctx context.Context, username, password string, mustC
 		return nil, ErrUsernameExists
 	}
 
+	release, err := s.guard.acquireScrypt()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	saltB64, hashB64, err := deriveEncodedCredentials(password)
+	release()
 	if err != nil {
 		return nil, err
 	}
@@ -209,15 +228,15 @@ func (s *Store) setUserDisabled(ctx context.Context, locate func(*gorm.DB) *gorm
 	return &summary, nil
 }
 
-// ResetUserPasswordByID 供 Web 管理员接口重置指定普通用户密码（默认拒绝重置唯一管理员并返回 [ErrAdminProtected]），
-// 在单事务内更新哈希、标记 mustChangePassword 并吊销该用户全部活跃会话。
+// ResetUserPasswordByID 供 Web 管理员接口重置指定普通用户密码（默认拒绝重置唯一管理员并返回 [ErrAdminProtected]，
+// scrypt 并发槽满时返回 [ErrRateLimited]），在单事务内更新哈希、标记 mustChangePassword 并吊销该用户全部活跃会话。
 func (s *Store) ResetUserPasswordByID(ctx context.Context, userID int64, newPassword string, mustChangePassword bool) (*UserSummary, error) {
 	return s.resetUserPassword(ctx, func(tx *gorm.DB) *gorm.DB {
 		return tx.Where("id = ?", userID)
 	}, newPassword, mustChangePassword, false)
 }
 
-// ResetUserPasswordByUsername 供宿主机 CLI 重置任意用户（包含唯一管理员救灾场景）密码，
+// ResetUserPasswordByUsername 供宿主机 CLI 重置任意用户（包含唯一管理员救灾场景）密码（scrypt 并发槽满时返回 [ErrRateLimited]），
 // 在单事务内更新哈希、设置 mustChangePassword 并吊销该用户全部活跃会话。
 func (s *Store) ResetUserPasswordByUsername(ctx context.Context, username, newPassword string, mustChangePassword bool) (*UserSummary, error) {
 	if err := ValidateUsername(username); err != nil {
@@ -245,7 +264,14 @@ func (s *Store) resetUserPassword(ctx context.Context, locate func(*gorm.DB) *go
 		return nil, ErrAdminProtected
 	}
 
+	release, err := s.guard.acquireScrypt()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	saltB64, hashB64, err := deriveEncodedCredentials(newPassword)
+	release()
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +304,38 @@ func (s *Store) resetUserPassword(ctx context.Context, locate func(*gorm.DB) *go
 	return &summary, nil
 }
 
-// Authenticate 按不区分大小写的归一化用户名校验用户凭据：
+// Login 执行完整用户登录流程：按归一化用户名防爆破限流、获取全局 scrypt 并发槽、常量时间校验凭据、
+// 按结果更新失败计数并轮换签发新会话令牌。停用账号密码正确时返回 [ErrUserDisabled]（不计入失败次数）；
+// 凭据错误记录失败并返回 [ErrInvalidCredentials]；触发限流或并发槽满返回 [ErrRateLimited]。
+func (s *Store) Login(ctx context.Context, username, password, previousToken string) (*AuthUser, string, error) {
+	if err := s.guard.checkAllowed(username); err != nil {
+		return nil, "", err
+	}
+	release, err := s.guard.acquireScrypt()
+	if err != nil {
+		return nil, "", err
+	}
+	defer release()
+
+	user, err := s.Authenticate(ctx, username, password)
+	release()
+	if err != nil {
+		return nil, "", err
+	}
+	if user == nil {
+		s.guard.recordFailure(username)
+		return nil, "", ErrInvalidCredentials
+	}
+
+	s.guard.recordSuccess(username)
+	newToken, err := s.CreateSession(ctx, user.ID, previousToken)
+	if err != nil {
+		return nil, "", err
+	}
+	return user, newToken, nil
+}
+
+// Authenticate 按不区分大小写的归一化用户名执行底层凭据校验（不含防爆破限流与 scrypt 并发保护，HTTP 登录须统一调用 [Store.Login]）：
 // 无论账号是否存在都会执行完整 scrypt 派生与常量时间比对，缓解时序侧信道；
 // 仅当密码校验通过且账号被停用时返回 [ErrUserDisabled]，其余凭据错误统一返回 (nil, nil)。
 func (s *Store) Authenticate(ctx context.Context, username, password string) (*AuthUser, error) {
@@ -322,7 +379,7 @@ func (s *Store) Authenticate(ctx context.Context, username, password string) (*A
 	return user.toAuthUser(), nil
 }
 
-// ChangePassword 校验当前密码并更新用户新密码，清除 must_change_password 标记，
+// ChangePassword 校验当前密码并更新用户新密码（scrypt 并发槽满时返回 [ErrRateLimited]），清除 must_change_password 标记，
 // 同时在单事务内吊销该用户全部历史会话并签发轮换后的新会话令牌。
 func (s *Store) ChangePassword(ctx context.Context, userID int64, currentPassword, newPassword string) (*AuthUser, string, error) {
 	if err := ValidatePassword(newPassword); err != nil {
@@ -348,6 +405,12 @@ func (s *Store) ChangePassword(ctx context.Context, userID int64, currentPasswor
 	if err != nil {
 		return nil, "", fmt.Errorf("解析用户密码哈希失败: %w", err)
 	}
+	release, err := s.guard.acquireScrypt()
+	if err != nil {
+		return nil, "", err
+	}
+	defer release()
+
 	actual, err := derivePassword(currentPassword, decodedSalt)
 	if err != nil {
 		return nil, "", fmt.Errorf("校验当前密码失败: %w", err)
@@ -360,6 +423,7 @@ func (s *Store) ChangePassword(ctx context.Context, userID int64, currentPasswor
 	}
 
 	saltB64, hashB64, err := deriveEncodedCredentials(newPassword)
+	release()
 	if err != nil {
 		return nil, "", err
 	}

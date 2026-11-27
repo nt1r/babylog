@@ -1,8 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
-import { useActiveBabyId } from '@/lib/baby';
-import { ApiError, apiRequest } from '@/lib/http';
-import { babyDashboardSummaryQueryKey } from '@/lib/query-client';
-import { formatShortCnDate, getBrowserTimeZone, getLocalDateKeyFromISO } from '@/lib/time';
+import { dashboardSummaryQueryOptions, useBabyQuery } from '@/lib/baby-api';
+import { formatShortCnDate, getLocalDateKeyFromISO } from '@/lib/time';
 
 export interface GrowthSummary {
   latest_weight_kg: number | null;
@@ -117,24 +114,14 @@ function selectGrowthSummaryView(data: GrowthSummaryEnvelope): GrowthSummaryView
 }
 
 /**
- * 非轮询生长概览查询：与首页看板共享 babyDashboardSummaryQueryKey 缓存，并通过 select 投影生长字段，
- * 避免 `/growth` 页面与录入抽屉触发 60 秒轮询，消除调用方漏传 refetchInterval 的隐患。
- *
- * 隐性契约：由于与 useDashboardSummaryQuery 共享同一缓存键，queryFn 必须原样请求并返回完整的
- * `/api/babies/:babyId/dashboard/summary` 响应载荷（不得在此处裁剪字段或改调精简接口而不更换 queryKey），
- * 否则冷启动先访问 `/growth` 再切回首页看板时会污染共享缓存。
+ * 非轮询生长概览查询：直接复用 dashboardSummaryQueryOptions 共享缓存键与请求路径，
+ * 并通过 select 投影生长字段，避免 `/growth` 页面与录入抽屉触发 60 秒轮询。
  */
 export function useGrowthSummaryQuery(enabled = true) {
-  const activeBabyId = useActiveBabyId();
-  return useQuery({
-    queryKey: babyDashboardSummaryQueryKey(activeBabyId),
-    queryFn: ({ signal }) => {
-      if (activeBabyId === null) throw new ApiError(400, '请先选择宝宝档案。');
-      const tz = encodeURIComponent(getBrowserTimeZone());
-      return apiRequest<GrowthSummaryEnvelope>(`/api/babies/${activeBabyId}/dashboard/summary?tz=${tz}`, { signal });
-    },
+  return useBabyQuery({
+    ...dashboardSummaryQueryOptions<GrowthSummaryEnvelope>(),
     select: selectGrowthSummaryView,
-    enabled: enabled && activeBabyId !== null,
+    enabled,
     refetchInterval: false,
   });
 }

@@ -410,7 +410,7 @@ func (s *Store) ListFeeding(ctx context.Context, babyID int64, f ListFilter) (*L
 		allowedSubtypes: feedingSubtypes,
 		invalidMsg:      "喂养子类型筛选参数无效",
 		recordedAt:      func(r FeedingRecord) string { return r.RecordedAt },
-		accumulate:      AccumulateFeedingSummary,
+		accumulate:      accumulateFeedingSummary,
 	})
 }
 
@@ -630,7 +630,7 @@ func (s *Store) ListCare(ctx context.Context, babyID int64, f ListFilter) (*List
 		allowedSubtypes: careSubtypes,
 		invalidMsg:      "护理子类型筛选参数无效",
 		recordedAt:      func(r CareRecord) string { return r.RecordedAt },
-		accumulate:      AccumulateCareSummary,
+		accumulate:      accumulateCareSummary,
 	})
 }
 
@@ -714,39 +714,103 @@ func (s *Store) ListHealth(ctx context.Context, babyID int64, f ListFilter) (*Li
 
 // --- 时间窗口快照与最近标记读取 ---
 
-// ReadWindow 读取指定宝宝在 [start, end) 时间窗口内的全部四类日常记录快照，
-// 供首页看板等聚合模块使用，避免外部模块直接耦合记录表结构与 SQL 谓词。
-func (s *Store) ReadWindow(ctx context.Context, babyID int64, start, end time.Time) (*WindowSnapshot, error) {
+// ReadWindow 读取指定宝宝在 [q.Start, q.End) 时间窗口内所选分类的有序日常记录快照（按时间升序、同时间戳按 ID 升序），
+// 供首页看板与数据导出等聚合模块使用，对外隐藏表结构、SQL 谓词与 health_records 单表双工作区拆分细节。
+func (s *Store) ReadWindow(ctx context.Context, babyID int64, q WindowQuery) (*WindowSnapshot, error) {
 	snap := &WindowSnapshot{}
-	if !end.After(start) {
+	if !q.End.After(q.Start) {
 		return snap, nil
 	}
 
-	startUTC := timeutil.FormatUTC(start)
-	endUTC := timeutil.FormatUTC(end)
+	wantFeeding, wantSleep, wantCare, wantHealth, wantGrowth, err := resolveWindowCategories(q.Categories)
+	if err != nil {
+		return nil, err
+	}
+	startUTC := timeutil.FormatUTC(q.Start)
+	endUTC := timeutil.FormatUTC(q.End)
 
-	if err := s.db.WithContext(ctx).
-		Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, startUTC, endUTC).
-		Find(&snap.Feedings).Error; err != nil {
-		return nil, err
+	if wantFeeding {
+		if err := s.db.WithContext(ctx).
+			Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, startUTC, endUTC).
+			Order("recorded_at ASC, id ASC").
+			Find(&snap.Feedings).Error; err != nil {
+			return nil, err
+		}
 	}
-	if err := s.db.WithContext(ctx).
-		Where("baby_id = ? AND ended_at > ? AND started_at < ?", babyID, startUTC, endUTC).
-		Find(&snap.Sleeps).Error; err != nil {
-		return nil, err
+	if wantSleep {
+		if err := s.db.WithContext(ctx).
+			Where("baby_id = ? AND ended_at > ? AND started_at < ?", babyID, startUTC, endUTC).
+			Order("started_at ASC, id ASC").
+			Find(&snap.Sleeps).Error; err != nil {
+			return nil, err
+		}
 	}
-	if err := s.db.WithContext(ctx).
-		Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, startUTC, endUTC).
-		Find(&snap.Cares).Error; err != nil {
-		return nil, err
+	if wantCare {
+		if err := s.db.WithContext(ctx).
+			Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, startUTC, endUTC).
+			Order("recorded_at ASC, id ASC").
+			Find(&snap.Cares).Error; err != nil {
+			return nil, err
+		}
 	}
-	if err := s.db.WithContext(ctx).
-		Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, startUTC, endUTC).
-		Find(&snap.Healths).Error; err != nil {
-		return nil, err
+	if wantHealth && wantGrowth {
+		var allHealth []HealthRecord
+		if err := s.db.WithContext(ctx).
+			Where("baby_id = ? AND recorded_at >= ? AND recorded_at < ?", babyID, startUTC, endUTC).
+			Order("recorded_at ASC, id ASC").
+			Find(&allHealth).Error; err != nil {
+			return nil, err
+		}
+		for _, r := range allHealth {
+			switch r.Subtype {
+			case HealthSubtypeTemperature, HealthSubtypeMedicine:
+				snap.Healths = append(snap.Healths, r)
+			case HealthSubtypeGrowth, HealthSubtypeTeeth:
+				snap.Growths = append(snap.Growths, r)
+			}
+		}
+	} else if wantHealth {
+		if err := s.db.WithContext(ctx).
+			Where("baby_id = ? AND subtype IN ? AND recorded_at >= ? AND recorded_at < ?",
+				babyID, []string{HealthSubtypeTemperature, HealthSubtypeMedicine}, startUTC, endUTC).
+			Order("recorded_at ASC, id ASC").
+			Find(&snap.Healths).Error; err != nil {
+			return nil, err
+		}
+	} else if wantGrowth {
+		if err := s.db.WithContext(ctx).
+			Where("baby_id = ? AND subtype IN ? AND recorded_at >= ? AND recorded_at < ?",
+				babyID, []string{HealthSubtypeGrowth, HealthSubtypeTeeth}, startUTC, endUTC).
+			Order("recorded_at ASC, id ASC").
+			Find(&snap.Growths).Error; err != nil {
+			return nil, err
+		}
 	}
 
 	return snap, nil
+}
+
+func resolveWindowCategories(cats []WindowCategory) (feeding, sleep, care, health, growth bool, err error) {
+	if len(cats) == 0 {
+		return true, true, true, true, true, nil
+	}
+	for _, c := range cats {
+		switch c {
+		case WindowCategoryFeeding:
+			feeding = true
+		case WindowCategorySleep:
+			sleep = true
+		case WindowCategoryCare:
+			care = true
+		case WindowCategoryHealth:
+			health = true
+		case WindowCategoryGrowth:
+			growth = true
+		default:
+			return false, false, false, false, false, &ValidationError{Message: "未知的时间窗口分类"}
+		}
+	}
+	return feeding, sleep, care, health, growth, nil
 }
 
 type growthMetricKind uint8
